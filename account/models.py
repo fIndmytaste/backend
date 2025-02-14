@@ -64,12 +64,26 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class Profile(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
-
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return f"{self.user.email} - {self.university_id}"
 
 
+
+
+class Vendor(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    name = models.CharField(max_length=64)
+    email = models.EmailField()
+    phone_number = models.CharField(max_length=20, null=True,blank=True)
+    address = models.CharField(max_length=256)
+    description = models.TextField(null=True, blank=True)
+    logo = models.ImageField(upload_to='vendor_image', null=True, blank=True)
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
+    is_active = models.BooleanField(default=True)
+    category = models.ForeignKey('product.SystemCategory' , on_delete=models.SET_NULL, null=True,blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
