@@ -3,7 +3,8 @@ from django.db.models import Q
 from account.models import Vendor
 from helpers.permissions import IsVendor
 from rest_framework.permissions import IsAuthenticated
-from product.models import Product, ProductImage, VendorCategory
+from product.models import Order, Product, ProductImage, VendorCategory
+from product.serializers import OrderSerializer
 from .serializers import VendorCategorySerializer, ProductSerializer,VendorRegisterBusinessSerializer
 from helpers.response.response_format import success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
@@ -295,3 +296,54 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         product = Product.objects.get(id=product_id)
         product.delete()
         return success_response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+
+
+
+class VendorOrderListView(generics.ListAPIView):
+    """
+    View to list all orders for a specific vendor.
+    - The vendor can filter the orders based on order status, payment status, and date range.
+    """
+    permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
+    serializer_class = OrderSerializer
+
+    def get_queryset(self):
+        """
+        Optionally filter orders for the vendor by status, payment status, or date range.
+        """
+        vendor = Vendor.objects.get(user=self.request.user) 
+        
+        queryset = Order.objects.filter(vendor=vendor).order_by('-created_at')
+        
+        # Filter by order status
+        status = self.request.GET.get('status', None)
+        if status:
+            queryset = queryset.filter(status=status)
+        
+        # Filter by payment status
+        payment_status = self.request.GET.get('payment_status', None)
+        if payment_status:
+            queryset = queryset.filter(payment_status=payment_status)
+        
+        # Filter by date range (created_at)
+        start_date = self.request.GET.get('start_date', None)
+        end_date = self.request.GET.get('end_date', None)
+        if start_date and end_date:
+            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        
+        # Allow for searching by order ID (or other fields if desired)
+        order_id = self.request.GET.get('order_id', None)
+        if order_id:
+            queryset = queryset.filter(id=order_id)
+
+        return queryset
+
+    def get(self, request, *args, **kwargs):
+        """
+        Return a list of orders for the vendor, with optional filters.
+        """
+        queryset = self.get_queryset()
+        serializer = self.serializer_class(queryset, many=True)
+        return success_response(data=serializer.data)

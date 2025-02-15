@@ -106,7 +106,7 @@ class ProductImage(models.Model):
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the product image was last")
     is_primary = models.BooleanField(default=False, help_text="Is this the primary image for the product")
     is_active = models.BooleanField(default=True, help_text="Is this image active")
-    
+
 
 class Order(models.Model):
     PENDING = 'pending'
@@ -119,7 +119,8 @@ class Order(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders', help_text="The user who placed the order.")
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,blank=True, related_name='orders', help_text="The user who placed the order.")
+    vendor = models.ForeignKey('account.Vendor', on_delete=models.SET_NULL,null=True,blank=True, related_name='vendors', help_text="The vendor who owns the order.")
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the order was created.")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the order was last updated.")
     status = models.CharField(max_length=20, choices=[('pending', 'Pending'), ('shipped', 'Shipped'), ('delivered', 'Delivered')], default='pending', help_text="The current status of the order.")

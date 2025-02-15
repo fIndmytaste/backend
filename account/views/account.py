@@ -101,11 +101,13 @@ class UserAddressUpdateView(generics.GenericAPIView):
         if already_exist:
             return bad_request_response(message="Address already exist")
 
+
         address_object = Address.objects.create(
             user=request.user,
             country=country,
             state=state,
             city=city,
+            is_primary= not Address.objects.filter(user=request.user).exists(),
             address=address,
         )
         return success_response(UserAddressSerializer(address_object).data, status_code=201)

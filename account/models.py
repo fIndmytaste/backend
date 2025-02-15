@@ -79,6 +79,7 @@ class Address(models.Model):
     state = models.CharField(max_length=64, null=True,blank=True)
     city = models.CharField(max_length=64, null=True,blank=True)
     address = models.TextField(null=True,blank=True)
+    is_primary = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
