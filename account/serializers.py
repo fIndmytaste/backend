@@ -1,7 +1,7 @@
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Profile, User
+from account.models import Address, Profile, User
 
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField(max_length=100)  
@@ -23,6 +23,11 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 
+
+class UserAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Address
+        fields = ['id',  'country', 'state','city','address','created_at','updated_at']
 
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
@@ -51,6 +56,15 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 
+class UserAddressCreateSerializer(serializers.Serializer):
+    country = serializers.CharField()
+    state = serializers.CharField()
+    city = serializers.CharField()
+    address = serializers.CharField()
+
+
+
+
 class PasswordChangeSerializer(serializers.Serializer):
     current_password = serializers.CharField(required=True)
     new_password = serializers.CharField(required=True)
@@ -62,3 +76,72 @@ class PasswordChangeSerializer(serializers.Serializer):
             raise ValidationError("New passwords do not match.")
         return data
     
+
+
+
+
+class RegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=20,required=True)
+    phone_number = serializers.CharField(max_length=20,required=True)
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value.lower()).exists():
+            raise ValidationError("Email already exists.")
+        return value
+    
+
+    def validate_email(self, value):
+        if User.objects.filter(username=value).exists():
+            raise ValidationError("Username already exists.")
+        return value
+
+
+    def create(self, validated_data):
+        # Create a User object
+        user = User.objects.create(
+            email=validated_data['email'],
+            phone_number=validated_data['phone_number'],
+            username=validated_data['username'],
+            is_verified=True,
+        )
+        user.set_password(validated_data['password'])
+        user.save()
+        return user
+
+
+
+
+class RegisterVendorSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=20,required=True)
+    phone_number = serializers.CharField(max_length=20,required=True)
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, min_length=8)
+
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value.lower()).exists():
+            raise ValidationError("Email already exists.")
+        return value
+    
+
+    def validate_email(self, value):
+        if User.objects.filter(username=value).exists():
+            raise ValidationError("Username already exists.")
+        return value
+
+
+    def create(self, validated_data):
+        # Create a User object
+        user = User.objects.create(
+            email=validated_data['email'],
+            phone_number=validated_data['phone_number'],
+            username=validated_data['username'],
+            is_verified=False
+        )
+        user.set_password(validated_data['password'])
+        user.save()
+        return user
+

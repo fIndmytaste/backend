@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'product',
     'helpers',
     'vendor',
+    'wallet',
 ]
 
 MIDDLEWARE = [
