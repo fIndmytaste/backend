@@ -1,12 +1,70 @@
 from rest_framework import status, generics
 from django.db.models import Q
+from account.models import Vendor
 from helpers.permissions import IsVendor
-from product.models import Product, VendorCategory
-from .serializers import VendorCategorySerializer, ProductSerializer
-from helpers.response.response_format import success_response
+from rest_framework.permissions import IsAuthenticated
+from product.models import Product, ProductImage, VendorCategory
+from .serializers import VendorCategorySerializer, ProductSerializer,VendorRegisterBusinessSerializer
+from helpers.response.response_format import success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
 # Vendor Views
+
+
+class VendorRegisterBusinessView(generics.GenericAPIView):
+    """
+    View to handle vendor categories.
+    - Vendors can retrieve their own categories or create new ones.
+    """
+    permission_classes = [IsVendor]
+    serializer_class = VendorRegisterBusinessSerializer
+
+    @swagger_auto_schema(
+        operation_description="",
+        query_serializer=None,
+        responses={200: VendorRegisterBusinessSerializer()}
+    )
+    def post(self, request):
+        serializer  = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        name = serializer.validated_data['name']
+        category = serializer.validated_data['category']
+        description = serializer.validated_data['description']
+        email = serializer.validated_data['email']
+        phone_number = serializer.validated_data['phone_number']
+        open_time = serializer.validated_data['open_time']
+        close_time = serializer.validated_data['close_time']
+
+        # validate the categoru
+        try:
+            category_obj = VendorCategory.objects.get(id=category)
+        except VendorCategory.DoesNotExist:
+            return bad_request_response(
+                message="Invalid category"
+            )
+        
+        vendor_exist = Vendor.objects.filter(email=email).first()
+        if vendor_exist:
+            return bad_request_response(
+                message="Vendor already exist"
+                )
+        
+        new_vendor = Vendor.objects.create(
+            name=name,
+            category=category_obj,
+            description=description,
+            email=email,
+            phone_number=phone_number,
+            open_time=open_time,
+            close_time=close_time
+        )
+
+
+        return success_response(
+            message="Vendor created successfully",
+        )
+    
 
 class VendorCategoryView(generics.GenericAPIView):
     """
@@ -76,14 +134,9 @@ class ProductsListCreateView(generics.GenericAPIView):
     - Vendors can retrieve a list of their products with filters.
     - Vendors can also create new products.
     """
-    permission_classes = [IsVendor]
+    permission_classes = [IsVendor] 
     serializer_class = ProductSerializer
 
-    @swagger_auto_schema(
-        operation_description="Retrieve a list of products with optional search and filter parameters.",
-        query_serializer=None,
-        responses={200: ProductSerializer(many=True)}
-    )
     def get(self, request):
         """
         Retrieve a list of products for a vendor with optional search and filters.
@@ -138,11 +191,6 @@ class ProductsListCreateView(generics.GenericAPIView):
         serializer = ProductSerializer(products, many=True)
         return success_response(serializer.data)
 
-    @swagger_auto_schema(
-        operation_description="Create a new product.",
-        request_body=ProductSerializer,
-        responses={201: ProductSerializer}
-    )
     def post(self, request):
         """
         Create a new product for the vendor.
@@ -160,11 +208,27 @@ class ProductsListCreateView(generics.GenericAPIView):
         Returns:
         - The newly created product.
         """
+        # Handle product data
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return success_response(serializer.data, status_code=status.HTTP_201_CREATED)
+        product = serializer.save()
 
+        # Handle product images if present in the request
+        images = request.FILES.getlist('images')  # Expecting images as a list of files
+
+        if images:
+            # Iterate over the uploaded images and create ProductImage instances
+            for index, img in enumerate(images):
+                # For the first image, mark it as the primary image
+                is_primary = True if index == 0 else False
+                ProductImage.objects.create(
+                    product=product,
+                    image=img,
+                    is_primary=is_primary,
+                    is_active=True
+                )
+
+        return success_response(serializer.data, status_code=status.HTTP_201_CREATED)
 
 
 class ProductGetUpdateDeleteView(generics.GenericAPIView):

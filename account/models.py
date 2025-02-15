@@ -1,3 +1,4 @@
+import random
 import uuid
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
@@ -97,7 +98,69 @@ class Vendor(models.Model):
     category = models.ForeignKey('product.SystemCategory' , on_delete=models.SET_NULL, null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    open_time = models.TimeField(auto_now=True)
+    close_time = models.TimeField(auto_now=True)
+    open_day = models.CharField(
+        max_length=10,
+        choices=[
+            ('Monday', 'Monday'),
+            ('Tuesday', 'Tuesday'),
+            ('Wednesday', 'Wednesday'),
+            ('Thursday', 'Thursday'),
+            ('Friday', 'Friday'),
+            ('Saturday', 'Saturday'),
+            ('Sunday', 'Sunday'),
+        ],
+        default='Monday'
+    )
+    close_day = models.CharField(
+        max_length=10,
+        choices=[
+            ('Monday', 'Monday'),
+            ('Tuesday', 'Tuesday'),
+            ('Wednesday', 'Wednesday'),
+            ('Thursday', 'Thursday'),
+            ('Friday', 'Friday'),
+            ('Saturday', 'Saturday'),
+            ('Sunday', 'Sunday'),
+        ],
+        default='Monday'
+    )
 
 
 
 
+class VerificationCode(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    code = models.CharField(max_length=6, unique=True)
+    verification_type = models.CharField(
+        max_length=32,
+        choices=[
+            ('email', 'Email Verification'),
+            ('phone', 'Phone Verification'),
+            ('password', 'Password Reset'),
+        ]
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+
+    @classmethod
+    def generate_unique_six_digit_code(cls):
+        """Generate a unique six-digit verification code."""
+        while True:
+            code = str(random.randint(100000, 999999))  
+            if not cls.objects.filter(code=code).exists(): 
+                return code
+
+    def save(self, *args, **kwargs):
+        """Override save method to generate code before saving."""
+        if not self.code:
+            self.code = VerificationCode.generate_unique_six_digit_code()
+        super().save(*args, **kwargs)  # Call the original save method
+
+    def __str__(self):
+        return f"VerificationCode for {self.user.username} ({self.verification_type})"

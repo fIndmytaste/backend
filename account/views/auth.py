@@ -4,7 +4,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
-from account.models import User
+from account.models import User, VerificationCode
 from account.serializers import LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterSerializer, RegisterVendorSerializer, UserSerializer
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.tokens import TokenManager
@@ -126,12 +126,23 @@ class RegisterVendorAPIView(generics.GenericAPIView):
             "tokens" : tokens , 
             'user' : UserSerializer(valid_user).data 
         }
+        # generate six code 
 
+        code_obj = VerificationCode.objects.create(
+            user=valid_user,
+            verification_type='email'
+        )
+
+        print(code_obj.code)
+        print(code_obj.code)
+        print(code_obj.code)
         # send verification code to email
         return success_response(
             data=response_data,
             message='Account created successfully.'
         )
+
+
 
 class PasswordResetConfirmView(generics.GenericAPIView):
     """
@@ -227,3 +238,5 @@ class PasswordResetRequestView(generics.GenericAPIView):
         subject = "Password Reset Request"
 
         return success_response(message="Password reset email sent.")
+
+

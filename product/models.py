@@ -98,6 +98,16 @@ class Product(models.Model):
 
 
 
+class ProductImage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    image = models.ImageField(upload_to="product_images", help_text="Product image")
+    created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the product image was")
+    updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the product image was last")
+    is_primary = models.BooleanField(default=False, help_text="Is this the primary image for the product")
+    is_active = models.BooleanField(default=True, help_text="Is this image active")
+    
+
 class Order(models.Model):
     PENDING = 'pending'
     PAID = 'paid'
