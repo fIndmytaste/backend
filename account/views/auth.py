@@ -20,8 +20,9 @@ class LoginAPIView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Log in a user with email and password.",
+        operation_summary="Log in a user by providing email and password",
         request_body=LoginSerializer,
-        responses={}
+        responses={200: 'Login successful', 400: 'Invalid credentials or inactive user'}
     )
     def post(self, request, *args, **kwargs):
         """
@@ -47,13 +48,14 @@ class LoginAPIView(generics.GenericAPIView):
                 valid_user = User.objects.get(pk=user.id)
                 tokens = TokenManager.get_tokens_for_user(user)
                 response_data = {
-                    "tokens" : tokens , 
-                    'user' : UserSerializer(valid_user).data 
+                    "tokens": tokens,
+                    'user': UserSerializer(valid_user).data
                 }
                 return success_response(message='Login successfully.', data=response_data)
             else:
                 # Invalid credentials or inactive user
                 return bad_request_response(message='Invalid credentials or user is not active.')
+
 
 class RegisterAPIView(generics.GenericAPIView):
     """
@@ -63,8 +65,9 @@ class RegisterAPIView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Register a new user and return the created user data and tokens.",
+        operation_summary="Register a new user and return their details and authentication tokens.",
         request_body=RegisterSerializer,
-        responses={}
+        responses={201: 'Account created successfully.', 400: 'Validation errors or bad input data'}
     )
     def post(self, request, *args, **kwargs):
         """
@@ -85,13 +88,14 @@ class RegisterAPIView(generics.GenericAPIView):
         valid_user = User.objects.get(pk=user.id)
         tokens = TokenManager.get_tokens_for_user(user)
         response_data = {
-            "tokens" : tokens , 
-            'user' : UserSerializer(valid_user).data 
+            "tokens": tokens,
+            'user': UserSerializer(valid_user).data
         }
         return success_response(
             data=response_data,
             message='Account created successfully.'
         )
+
 
 class RegisterVendorAPIView(generics.GenericAPIView):
     """
@@ -101,8 +105,9 @@ class RegisterVendorAPIView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Register a new vendor and return the created user data and tokens.",
+        operation_summary="Register a new vendor and return vendor details and authentication tokens.",
         request_body=RegisterVendorSerializer,
-        responses={}
+        responses={201: 'Vendor account created successfully.', 400: 'Validation errors or bad input data'}
     )
     def post(self, request, *args, **kwargs):
         """
@@ -123,25 +128,23 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         valid_user = User.objects.get(pk=user.id)
         tokens = TokenManager.get_tokens_for_user(user)
         response_data = {
-            "tokens" : tokens , 
-            'user' : UserSerializer(valid_user).data 
+            "tokens": tokens,
+            'user': UserSerializer(valid_user).data
         }
-        # generate six code 
-
+        
+        # Generate six code
         code_obj = VerificationCode.objects.create(
             user=valid_user,
             verification_type='email'
         )
 
+        # Send verification code to email (not implemented here)
         print(code_obj.code)
-        print(code_obj.code)
-        print(code_obj.code)
-        # send verification code to email
+
         return success_response(
             data=response_data,
             message='Account created successfully.'
         )
-
 
 
 class PasswordResetConfirmView(generics.GenericAPIView):
@@ -152,11 +155,9 @@ class PasswordResetConfirmView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Reset the user's password using the token sent via email.",
+        operation_summary="Confirm the password reset using the provided token and new password.",
         request_body=PasswordResetConfirmSerializer,
-        responses={
-            200: 'Password successfully reset.',
-            400: 'Invalid token or user ID.'
-        }
+        responses={200: 'Password successfully reset.', 400: 'Invalid token or user ID.'}
     )
     def post(self, request, uidb64, token, *args, **kwargs):
         """
@@ -191,6 +192,7 @@ class PasswordResetConfirmView(generics.GenericAPIView):
 
         return success_response(message="Password successfully reset.")
 
+
 class PasswordResetRequestView(generics.GenericAPIView):
     """
     View to handle the password reset request.
@@ -199,11 +201,9 @@ class PasswordResetRequestView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Send a password reset link to the user's email.",
+        operation_summary="Request a password reset link to be sent to the user's email.",
         request_body=PasswordResetRequestSerializer,
-        responses={
-            200: 'Password reset email sent.',
-            400: 'User with this email does not exist.'
-        }
+        responses={200: 'Password reset email sent.', 400: 'User with this email does not exist.'}
     )
     def post(self, request, *args, **kwargs):
         """
@@ -234,9 +234,7 @@ class PasswordResetRequestView(generics.GenericAPIView):
         # Construct the reset link
         reset_link = f"/password-reset/{uid}/{token}/"
 
-        # Send the email with the reset link
+        # Send the email with the reset link (not implemented here)
         subject = "Password Reset Request"
 
         return success_response(message="Password reset email sent.")
-
-

@@ -230,6 +230,9 @@ class OrderListCreateView(generics.ListCreateAPIView):
             401: "Unauthorized",
         }
     )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
     def get_queryset(self):
         """Only return orders belonging to the authenticated user."""
         return Order.objects.filter(user=self.request.user)
@@ -256,6 +259,9 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
             401: "Unauthorized",
         }
     )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
     def get_queryset(self):
         """Only return orders belonging to the authenticated user."""
         return Order.objects.filter(user=self.request.user)
@@ -273,6 +279,9 @@ class UserFavoriteListView(generics.ListAPIView):
             401: "Unauthorized",
         }
     )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
     def get_queryset(self):
         return Favorite.objects.filter(user=self.request.user).order_by('-created_at')
 
