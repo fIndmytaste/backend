@@ -14,6 +14,7 @@ class UserDetailView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Retrieve the details of the authenticated user.",
+        operation_summary="Get details of the authenticated user.",
         responses={
             200: UserSerializer,
             400: 'Bad Request',
@@ -32,12 +33,14 @@ class UserDetailView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+
 class UserAddressUpdateView(generics.GenericAPIView):
     serializer_class = UserAddressCreateSerializer
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get all the delivery addresses of the authenticated user.",
+        operation_summary="Retrieve all delivery addresses of the authenticated user.",
         responses={
             200: openapi.Response(
                 description="A list of user addresses",
@@ -57,8 +60,10 @@ class UserAddressUpdateView(generics.GenericAPIView):
         delivery_addresses = Address.objects.filter(user=request.user).order_by('created_at')
         return success_response(UserAddressSerializer(delivery_addresses, many=True).data)
 
+
     @swagger_auto_schema(
         operation_description="Create a new address for the authenticated user.",
+        operation_summary="Create a new delivery address for the user.",
         request_body=UserAddressCreateSerializer,
         responses={
             201: openapi.Response(
@@ -101,7 +106,6 @@ class UserAddressUpdateView(generics.GenericAPIView):
         if already_exist:
             return bad_request_response(message="Address already exist")
 
-
         address_object = Address.objects.create(
             user=request.user,
             country=country,
@@ -113,12 +117,14 @@ class UserAddressUpdateView(generics.GenericAPIView):
         return success_response(UserAddressSerializer(address_object).data, status_code=201)
 
 
+
 class PasswordChangeView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = PasswordChangeSerializer
 
     @swagger_auto_schema(
         operation_description="Change the password for the authenticated user.",
+        operation_summary="Change password for the authenticated user.",
         request_body=PasswordChangeSerializer,
         responses={
             200: openapi.Response(
@@ -155,3 +161,5 @@ class PasswordChangeView(generics.GenericAPIView):
         user.save()
 
         return success_response(message="Password successfully changed.")
+
+

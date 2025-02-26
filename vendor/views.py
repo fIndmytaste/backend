@@ -21,8 +21,8 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
     serializer_class = VendorRegisterBusinessSerializer
 
     @swagger_auto_schema(
-        operation_description="",
-        query_serializer=None,
+        operation_summary="Register a new vendor business.",
+        operation_description="Create a new vendor business with details such as name, category, and contact info.",
         responses={200: VendorRegisterBusinessSerializer()}
     )
     def post(self, request):
@@ -76,8 +76,8 @@ class VendorCategoryView(generics.GenericAPIView):
     serializer_class = VendorCategorySerializer
 
     @swagger_auto_schema(
+        operation_summary="Retrieve a list of vendor categories.",
         operation_description="Retrieve a list of vendor categories with optional search functionality.",
-        query_serializer=None,
         responses={200: VendorCategorySerializer(many=True)}
     )
     def get(self, request):
@@ -107,7 +107,8 @@ class VendorCategoryView(generics.GenericAPIView):
         return success_response(serializer.data)
 
     @swagger_auto_schema(
-        operation_description="Create a new vendor category.",
+        operation_summary="Create a new vendor category.",
+        operation_description="Create a new vendor category with details such as name and description.",
         request_body=VendorCategorySerializer,
         responses={201: VendorCategorySerializer}
     )
@@ -138,6 +139,11 @@ class ProductsListCreateView(generics.GenericAPIView):
     permission_classes = [IsVendor] 
     serializer_class = ProductSerializer
 
+    @swagger_auto_schema(
+        operation_summary="Retrieve a list of products for the vendor.",
+        operation_description="Retrieve a list of products for the vendor with optional search, category, and price filters.",
+        responses={200: ProductSerializer(many=True)}
+    )
     def get(self, request):
         """
         Retrieve a list of products for a vendor with optional search and filters.
@@ -192,6 +198,12 @@ class ProductsListCreateView(generics.GenericAPIView):
         serializer = ProductSerializer(products, many=True)
         return success_response(serializer.data)
 
+    @swagger_auto_schema(
+        operation_summary="Create a new product for the vendor.",
+        operation_description="Create a new product with details such as name, description, price, and category.",
+        request_body=ProductSerializer,
+        responses={201: ProductSerializer}
+    )
     def post(self, request):
         """
         Create a new product for the vendor.
@@ -240,7 +252,8 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
     serializer_class = ProductSerializer
 
     @swagger_auto_schema(
-        operation_description="Retrieve a product by its ID.",
+        operation_summary="Retrieve a product by its ID.",
+        operation_description="Retrieve the details of a product by its unique ID.",
         responses={200: ProductSerializer}
     )
     def get(self, request, product_id):
@@ -258,7 +271,8 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         return success_response(serializer.data)
 
     @swagger_auto_schema(
-        operation_description="Update a product's information.",
+        operation_summary="Update a product's details.",
+        operation_description="Update the product's details such as name, description, and price.",
         request_body=ProductSerializer,
         responses={200: ProductSerializer}
     )
@@ -280,7 +294,8 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         return success_response(serializer.data)
 
     @swagger_auto_schema(
-        operation_description="Delete a product by its ID.",
+        operation_summary="Delete a product by its ID.",
+        operation_description="Delete a product from the vendor's list by its unique ID.",
         responses={204: 'No Content'}
     )
     def delete(self, request, product_id):
@@ -309,6 +324,7 @@ class VendorOrderListView(generics.ListAPIView):
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
     serializer_class = OrderSerializer
 
+    
     def get_queryset(self):
         """
         Optionally filter orders for the vendor by status, payment status, or date range.
@@ -340,6 +356,11 @@ class VendorOrderListView(generics.ListAPIView):
 
         return queryset
 
+    @swagger_auto_schema(
+        operation_summary="Retrieve a list of orders for the vendor.",
+        operation_description="Retrieve a list of orders with optional filters for status, payment, and date range.",
+        responses={200: OrderSerializer(many=True)}
+    )
     def get(self, request, *args, **kwargs):
         """
         Return a list of orders for the vendor, with optional filters.

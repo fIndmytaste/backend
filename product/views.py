@@ -1,5 +1,8 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
+
+from django.db.models import F
+
 from account.models import Vendor
 from product.serializers import FavoriteSerializer, OrderSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
@@ -18,6 +21,7 @@ class SystemCategoryListView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Get a list of all system categories.",
+        operation_summary="Retrieve a list of all system categories.",
         responses={
             200: SystemCategorySerializer(many=True),
             401: "Unauthorized",
@@ -29,6 +33,7 @@ class SystemCategoryListView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+
 class ProductBySystemCategoryView(generics.GenericAPIView):
     """
     Endpoint to get products by system category.
@@ -38,6 +43,7 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Get a list of products belonging to a system category.",
+        operation_summary="Retrieve products by system category.",
         responses={
             200: ProductSerializer(many=True),
             400: "Bad Request",
@@ -57,12 +63,14 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         serializer = self.serializer_class(products, many=True)
         return success_response(serializer.data)
 
+
 class HotPickProductsView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ProductSerializer
 
     @swagger_auto_schema(
         operation_description="Get hot pick products by combining user favorites, top viewed, and highest rated products.",
+        operation_summary="Retrieve hot pick products (favorites, top viewed, highest rated).",
         responses={
             200: ProductSerializer(many=True),
             400: "Bad Request",
@@ -103,6 +111,7 @@ class HotPickProductsView(generics.GenericAPIView):
         serializer = self.serializer_class(filtered_products[:limit], many=True)
         return success_response(serializer.data)
 
+
     def get_user_favorites(self, user):
         """
         Get all the user's favorited products.
@@ -141,6 +150,7 @@ class ProductDetailView(generics.GenericAPIView):
 
     @swagger_auto_schema(
         operation_description="Get the details of a product.",
+        operation_summary="Retrieve the details of a specific product.",
         responses={
             200: ProductSerializer,
             404: "Product Not Found",
@@ -153,12 +163,14 @@ class ProductDetailView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+
 class VendorDetailView(generics.GenericAPIView):
     serializer_class = VendorSerializer
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",
+        operation_summary="Retrieve the details of a specific vendor.",
         responses={
             200: VendorSerializer,
             404: "Vendor Not Found",
@@ -171,12 +183,14 @@ class VendorDetailView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+
 class ProductByVendorCategoryView(generics.GenericAPIView):
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get products by vendor category.",
+        operation_summary="Retrieve products by vendor category.",
         responses={
             200: ProductSerializer(many=True),
             400: "Bad Request",
@@ -208,6 +222,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
 
     @swagger_auto_schema(
         operation_description="List and create orders for the authenticated user.",
+        operation_summary="Retrieve and create orders.",
         responses={
             200: OrderSerializer(many=True),
             201: "Order Created",
@@ -233,6 +248,7 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     @swagger_auto_schema(
         operation_description="Retrieve, update, or delete a specific order.",
+        operation_summary="Retrieve, update, or delete an order.",
         responses={
             200: OrderSerializer,
             404: "Order Not Found",
@@ -251,6 +267,7 @@ class UserFavoriteListView(generics.ListAPIView):
 
     @swagger_auto_schema(
         operation_description="List all products in the user's favorites.",
+        operation_summary="Retrieve products from the user's favorites.",
         responses={
             200: FavoriteSerializer(many=True),
             401: "Unauthorized",
@@ -264,6 +281,7 @@ class AddToFavoritesView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
+        operation_summary="Add a product to the user's favorites.",  # Operation summary added here
         operation_description="Add a product to the user's favorites.",
         responses={
             201: FavoriteSerializer,
@@ -289,6 +307,7 @@ class AddToFavoritesView(generics.GenericAPIView):
         return success_response(serializer.data, status_code=201)
 
     @swagger_auto_schema(
+        operation_summary="Remove a product from the user's favorites.",  # Operation summary added here
         operation_description="Remove a product from the user's favorites.",
         responses={
             204: "No Content",
