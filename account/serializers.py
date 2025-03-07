@@ -144,3 +144,12 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ["id","title","content","read","created_at"]
+
+
+
+
+class UpdateBankAccountSerializer(serializers.Serializer):
+    bank_account = serializers.CharField(required=True )
+    bank_name = serializers.CharField(required=True )
+    bank_account_name = serializers.CharField(required=True )
+

@@ -8,4 +8,5 @@ urlpatterns = [
     path('delivery-address', UserAddressUpdateView.as_view(), name='current-user-address'),
     path('password/change/', PasswordChangeView.as_view(), name='password-change'),
     path('notification', NotificationListView.as_view(), name='password-change'),
+    path('bank-account', NotificationListView.as_view(), name='password-change'),
 ]

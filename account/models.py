@@ -101,6 +101,9 @@ class Vendor(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     open_time = models.TimeField(auto_now=True)
     close_time = models.TimeField(auto_now=True)
+    bank_account = models.CharField(max_length=20,null=True,blank=True)
+    bank_name = models.CharField(max_length=64,null=True,blank=True)
+    bank_account_name = models.CharField(max_length=64,null=True,blank=True)
     open_day = models.CharField(
         max_length=10,
         choices=[
