@@ -5,7 +5,7 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
 from account.models import User, VerificationCode
-from account.serializers import LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterSerializer, RegisterVendorSerializer, UserSerializer
+from account.serializers import LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterSerializer, RegisterVendorSerializer, RegisterVerifySerializer, UserSerializer
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.tokens import TokenManager
 from drf_yasg.utils import swagger_auto_schema
@@ -38,11 +38,11 @@ class LoginAPIView(generics.GenericAPIView):
         """
         serializer = self.serializer_class(data=request.data)
         if serializer.is_valid(raise_exception=True):
-            identifier = serializer.validated_data['identifier']
+            email = serializer.validated_data['email']
             password = serializer.validated_data['password']
 
             # Try to authenticate the user with email or university_id
-            user = authenticate(request, email=identifier, password=password)
+            user = authenticate(request, email=email, password=password)
             if user is not None and user.is_active:
                 # User found and is active
                 valid_user = User.objects.get(pk=user.id)
@@ -74,7 +74,7 @@ class RegisterAPIView(generics.GenericAPIView):
         POST request to register a new user.
 
         **Request Body:**
-        - username: The username of the user.
+        - full_name: The full name of the user.
         - email: The email of the user.
         - password: The password for the new account.
 
@@ -86,16 +86,24 @@ class RegisterAPIView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         valid_user = User.objects.get(pk=user.id)
-        tokens = TokenManager.get_tokens_for_user(user)
-        response_data = {
-            "tokens": tokens,
-            'user': UserSerializer(valid_user).data
-        }
-        return success_response(
-            data=response_data,
-            message='Account created successfully.'
+        # tokens = TokenManager.get_tokens_for_user(user)
+        # response_data = {
+        #     "tokens": tokens,
+        #     'user': UserSerializer(valid_user).data
+        # }
+         # Generate six code
+        code_obj = VerificationCode.objects.create(
+            user=valid_user,
+            verification_type='email'
         )
 
+        #!TODO Send verification code to email (not implemented here)
+
+        return success_response(
+            # add message that verification code has been sent to their email
+            message=f'Verification code has been sent to your email. :: {code_obj.code}',
+
+        )
 
 class RegisterVendorAPIView(generics.GenericAPIView):
     """
@@ -114,7 +122,7 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         POST request to register a new vendor.
 
         **Request Body:**
-        - username: The vendor's username.
+        - full_name: The vendor's full name.
         - email: The vendor's email.
         - password: The vendor's password.
 
@@ -126,11 +134,11 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         valid_user = User.objects.get(pk=user.id)
-        tokens = TokenManager.get_tokens_for_user(user)
-        response_data = {
-            "tokens": tokens,
-            'user': UserSerializer(valid_user).data
-        }
+        # tokens = TokenManager.get_tokens_for_user(user)
+        # response_data = {
+        #     "tokens": tokens,
+        #     'user': UserSerializer(valid_user).data
+        # }
         
         # Generate six code
         code_obj = VerificationCode.objects.create(
@@ -138,13 +146,53 @@ class RegisterVendorAPIView(generics.GenericAPIView):
             verification_type='email'
         )
 
-        # Send verification code to email (not implemented here)
-        print(code_obj.code)
+        #!TODO Send verification code to email (not implemented here)
 
         return success_response(
-            data=response_data,
-            message='Account created successfully.'
+            # add message that verification code has been sent to their email
+            message=f'Verification code has been sent to your email. :: {code_obj.code}',
+
         )
+
+
+
+class RegisterAccountVerifyAPIView(generics.GenericAPIView):
+    """
+    View to register a new vendor.
+    """
+    serializer_class = RegisterVerifySerializer
+
+    @swagger_auto_schema(
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        code = serializer.validated_data['code']
+
+       
+        # Generate six code
+        try:
+            code_obj = VerificationCode.objects.get( code=code,verification_type='email' )
+        except:
+            return bad_request_response(
+                message='Invalid or expired verification code.'
+            )
+
+        if not code_obj.is_active:
+            return bad_request_response(
+                message='Invalid or expired verification code.'
+            )
+        
+        user = code_obj.user
+        user.is_verified = True
+        user.is_active = True
+        user.save()
+        code_obj.delete()
+        return success_response(
+            message='Account verified successfully.'
+        )
+
+
 
 
 class PasswordResetConfirmView(generics.GenericAPIView):

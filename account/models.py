@@ -43,8 +43,8 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    username = models.CharField(max_length=64,unique=True)
     email = models.EmailField(unique=True)
+    full_name = models.CharField(max_length=64, null=True, blank=True)
     first_name = models.CharField(max_length=64, null=True, blank=True)
     last_name = models.CharField(max_length=64, null=True, blank=True)
     is_superuser = models.BooleanField(default=False)
@@ -165,3 +165,15 @@ class VerificationCode(models.Model):
 
     def __str__(self):
         return f"VerificationCode for {self.user.username} ({self.verification_type})"
+
+
+
+
+class Notification(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    title = models.CharField(max_length=100)
+    content = models.TextField(null=True,blank=True)
+    read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

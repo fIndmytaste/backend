@@ -2,8 +2,8 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
-from account.models import Address, User
-from account.serializers import PasswordChangeSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer
+from account.models import Address, Notification, User
+from account.serializers import NotificationSerializer, PasswordChangeSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer
 from helpers.response.response_format import bad_request_response, success_response
 
 
@@ -163,3 +163,21 @@ class PasswordChangeView(generics.GenericAPIView):
         return success_response(message="Password successfully changed.")
 
 
+
+class NotificationListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSerializer
+
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user).order_by("-created_at")
+
+
+    def get(self,request,*args,**kwargs):
+        """
+        This endpoint allows the authenticated user to view their notifications.
+        """
+        return success_response(
+            data=self.serializer_class(self.get_queryset(), many=True).data,
+        )
+        
