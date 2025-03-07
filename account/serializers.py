@@ -1,7 +1,7 @@
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, Notification, Profile, User
+from account.models import Address, Notification, Profile, User, VendorRating
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)  
@@ -153,3 +153,16 @@ class UpdateBankAccountSerializer(serializers.Serializer):
     bank_name = serializers.CharField(required=True )
     bank_account_name = serializers.CharField(required=True )
 
+
+
+
+class VendorRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VendorRating
+        fields = ['id', 'vendor', 'user', 'rating', 'comment', 'created_at']
+        read_only_fields = ['id', 'created_at', 'user']  # user is set automatically in the view
+
+    def validate_rating(self, value):
+        if value < 1 or value > 5:
+            raise serializers.ValidationError("Rating must be between 1 and 5.")
+        return value

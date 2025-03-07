@@ -7,10 +7,14 @@ from product.views import (
     OrderListCreateView,
     ProductBySystemCategoryView, 
     ProductByVendorCategoryView, 
-    ProductDetailView, 
+    ProductDetailView,
+    ProductRatingCreateView,
+    ProductRatingListView, 
     SystemCategoryListView,
     UserFavoriteListView, 
-    VendorDetailView
+    VendorDetailView,
+    VendorRatingCreateView,
+    VendorRatingListView
 )
 
 
@@ -19,7 +23,11 @@ urlpatterns = [
     path('hot-picks/', HotPickProductsView.as_view(), name='hot-pick-products'),
     path('product/system-category/<uuid:system_category_id>/', ProductBySystemCategoryView.as_view(), name='products_by_system_category'),
     path('product/<uuid:product_id>/', ProductDetailView.as_view(), name='product_detail'),
+    path('product/<uuid:product_id>/ratings', ProductRatingListView.as_view(), name='product-rating-list'),
+    path('product/<uuid:product_id>/rating', ProductRatingCreateView.as_view(), name='product-rating-create'),
     path('vendor/<uuid:vendor_id>/', VendorDetailView.as_view(), name='vendor_detail'),
+    path('vendor/<uuid:vendor_id>/ratings/', VendorRatingListView.as_view(), name='vendor-rating-list'),
+    path('vendor/<uuid:vendor_id>/rating/', VendorRatingCreateView.as_view(), name='vendor-rating-create'),
     path('product/vendor-category/<uuid:vendor_category_id>/', ProductByVendorCategoryView.as_view(), name='products_by_vendor_category'),
 
     # Order Endpoints

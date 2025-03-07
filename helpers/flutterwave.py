@@ -1,6 +1,6 @@
 import requests
 from findmytaste import settings
-from account.models import Transaction, Vendor
+from account.models import Vendor
 from django.urls import reverse
 
 from helpers.response.response_format import bad_request_response, success_response
@@ -27,7 +27,7 @@ class FlutterwaveManager:
         return header
 
     
-    def make_withdrawal(self,request,vendor:Vendor,amount, transaction_obj:Transaction):
+    def make_withdrawal(self,request,vendor:Vendor,amount, transaction_obj):
         account_bank = None
         account_number = None
         print(vendor.bank_name , vendor.bank_account_name)

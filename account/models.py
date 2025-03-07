@@ -134,6 +134,23 @@ class Vendor(models.Model):
 
 
 
+
+class VendorRating(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(Vendor, related_name='ratings', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    rating = models.DecimalField(max_digits=3, decimal_places=2)  # e.g., 4.5 out of 5
+    comment = models.TextField(null=True, blank=True)  
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('vendor', 'user')  # Ensure each user can rate a vendor only once
+
+    def __str__(self):
+        return f"Rating for {self.vendor.name} by {self.user.email}"
+
+
+
 class VerificationCode(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE)

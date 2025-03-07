@@ -1,12 +1,13 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
-
+from drf_yasg import openapi
 from django.db.models import F
 
-from account.models import Vendor
-from product.serializers import FavoriteSerializer, OrderSerializer
+from account.models import Vendor, VendorRating
+from account.serializers import VendorRatingSerializer
+from product.serializers import FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
-from .models import Favorite, Order, SystemCategory, Product
+from .models import Favorite, Order, Rating, SystemCategory, Product
 from helpers.response.response_format import success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
@@ -164,6 +165,64 @@ class ProductDetailView(generics.GenericAPIView):
 
 
 
+class ProductRatingCreateView(generics.CreateAPIView):
+    serializer_class = RatingSerializer
+    permission_classes = [IsAuthenticated]
+
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+        return success_response(
+            serializer.data,
+        )
+
+    
+    @swagger_auto_schema(
+        operation_description="Submit a rating for a specific product.",
+        operation_summary="Submit a rating for a product.",
+        request_body=RatingSerializer,
+        responses={
+            201: openapi.Response(
+                description="Product rating successfully created.",
+                schema=RatingSerializer
+            ),
+            400: "Bad request if the rating data is invalid.",
+            401: "Authentication required."
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+
+
+class ProductRatingListView(generics.ListAPIView):
+    serializer_class = RatingSerializer
+    permission_classes = [IsAuthenticated]
+
+    
+    def get_queryset(self):
+        product_id = self.kwargs['product_id']
+        try:
+            product = Product.objects.get(id=product_id)
+            return Rating.objects.filter(product=product)
+        except Product.DoesNotExist:
+            return Rating.objects.none()  
+        
+    @swagger_auto_schema(
+        operation_description="Get all ratings for a specific product.",
+        operation_summary="Retrieve ratings for a product.",
+        responses={
+            200: RatingSerializer(many=True),
+            404: "Product not found.",
+            401: "Authentication required."
+        }
+    )
+    def get(self,request,*args,**kwargs):
+        return success_response(
+            data=self.serializer_class(self.get_queryset()).data
+        )
+
+
 class VendorDetailView(generics.GenericAPIView):
     serializer_class = VendorSerializer
     permission_classes = [IsAuthenticated]
@@ -183,6 +242,33 @@ class VendorDetailView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+
+
+class VendorRatingCreateView(generics.CreateAPIView):
+    serializer_class = VendorRatingSerializer
+    permission_classes = [IsAuthenticated]
+
+    
+    def perform_create(self, serializer):
+        # Automatically associate the user with the rating
+        serializer.save(user=self.request.user)
+        return success_response(serializer.data)
+
+    @swagger_auto_schema(
+        operation_description="Submit a rating for a specific vendor.",
+        operation_summary="Submit a rating for a vendor.",
+        request_body=VendorRatingSerializer,
+        responses={
+            201: openapi.Response(
+                description="Vendor rating successfully created.",
+                schema=VendorRatingSerializer
+            ),
+            400: "Bad request if the rating data is invalid.",
+            401: "Authentication required."
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
 class ProductByVendorCategoryView(generics.GenericAPIView):
     serializer_class = ProductSerializer
@@ -211,6 +297,32 @@ class ProductByVendorCategoryView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+class VendorRatingListView(generics.ListAPIView):
+    serializer_class = VendorRatingSerializer
+    permission_classes = [IsAuthenticated]
+
+    
+    def get_queryset(self):
+        vendor_id = self.kwargs['vendor_id']
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+            return VendorRating.objects.filter(vendor=vendor)
+        except Vendor.DoesNotExist:
+            return VendorRating.objects.none()  
+
+    @swagger_auto_schema(
+        operation_description="Get all ratings for a specific vendor.",
+        operation_summary="Retrieve ratings for a vendor.",
+        responses={
+            200: VendorRatingSerializer(many=True),
+            404: "Vendor not found.",
+            401: "Authentication required."
+        }
+    )
+    def get(self,request,*args,**kwargs):
+        return success_response(
+            data=self.serializer_class(self.get_queryset()).data
+        )
 class OrderListCreateView(generics.ListCreateAPIView):
     """
     View to list and create orders.
