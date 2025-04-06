@@ -1,7 +1,7 @@
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, Notification, Profile, User, VendorRating
+from account.models import Address, Notification, Profile, User, Vendor, VendorRating
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)  
@@ -135,6 +135,8 @@ class RegisterVendorSerializer(serializers.Serializer):
         )
         user.set_password(validated_data['password'])
         user.save()
+        # create a vendor object for the user
+        vendor , created = Vendor.objects.get_or_create(user=user)
         return user
 
 

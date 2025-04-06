@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'helpers',
     'vendor',
     'wallet',
+    'rider',
 ]
 
 MIDDLEWARE = [
