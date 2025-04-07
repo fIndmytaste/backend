@@ -8,6 +8,7 @@ from account.models import User, VerificationCode
 from account.serializers import LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterSerializer, RegisterVendorSerializer, RegisterVerifySerializer, UserSerializer
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.tokens import TokenManager
+from helpers.email import emailService
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
@@ -97,13 +98,22 @@ class RegisterAPIView(generics.GenericAPIView):
             verification_type='email'
         )
 
-        #!TODO Send verification code to email (not implemented here)
+        try:
+            # Send verification code via email
+            emailService.send_verification_code(
+                user_email=valid_user.email,
+                user_name=valid_user.full_name,
+                verification_code=code_obj.code
+            )
+        except Exception as e:
+            print(f"Error sending email: {e}")    
 
         return success_response(
             # add message that verification code has been sent to their email
             message=f'Verification code has been sent to your email. :: {code_obj.code}',
 
         )
+
 
 class RegisterVendorAPIView(generics.GenericAPIView):
     """
@@ -145,6 +155,15 @@ class RegisterVendorAPIView(generics.GenericAPIView):
             user=valid_user,
             verification_type='email'
         )
+        # Send email with verification code
+        try:
+            emailService.send_verification_code(
+                email=valid_user.email,
+                user_name=valid_user.full_name,
+                verification_code=code_obj.code
+            )
+        except Exception as e:
+            print(f"Error sending email: {e}")
 
         #!TODO Send verification code to email (not implemented here)
 
