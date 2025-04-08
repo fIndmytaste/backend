@@ -84,13 +84,13 @@ class RegisterSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=20,required=True)
     phone_number = serializers.CharField(max_length=20,required=True)
     email = serializers.EmailField(required=True)
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True)
 
 
-    def validate_email(self, value):
-        if User.objects.filter(email=value.lower()).exists():
-            raise ValidationError("Email already exists.")
-        return value
+    # def validate_email(self, value):
+    #     if User.objects.filter(email=value.lower()).exists():
+    #         raise ValidationError("Email already exists.")
+    #     return value
     
 
     def create(self, validated_data):
@@ -116,13 +116,13 @@ class RegisterVendorSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=20,required=True)
     phone_number = serializers.CharField(max_length=20,required=True)
     email = serializers.EmailField(required=True)
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True)
 
 
-    def validate_email(self, value):
-        if User.objects.filter(email=value.lower()).exists():
-            raise ValidationError("Email already exists.")
-        return value
+    # def validate_email(self, value):
+    #     if User.objects.filter(email=value.lower()).exists():
+    #         raise ValidationError("Email already exists.")
+    #     return value
     
 
     def create(self, validated_data):

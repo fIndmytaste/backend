@@ -85,6 +85,10 @@ class RegisterAPIView(generics.GenericAPIView):
         """
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        # check if email already exists
+        if User.objects.filter(email=email).exists():
+            return bad_request_response(message='Email already exists.')
         user = serializer.save()
         valid_user = User.objects.get(pk=user.id)
         # tokens = TokenManager.get_tokens_for_user(user)
@@ -142,6 +146,11 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         """
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data['email']
+        # check if email already exists
+        if User.objects.filter(email=email).exists():
+            return bad_request_response(message='Email already exists.')
         user = serializer.save()
         valid_user = User.objects.get(pk=user.id)
         # tokens = TokenManager.get_tokens_for_user(user)
