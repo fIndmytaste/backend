@@ -111,6 +111,10 @@ class RegisterVerifySerializer(serializers.Serializer):
     code = serializers.CharField(max_length=6,required=True)
 
 
+class RegisterOTPResedSerializer(serializers.Serializer):
+    email = serializers.EmailField(max_length=6,required=True)
+
+
 
 class RegisterVendorSerializer(serializers.Serializer):
     full_name = serializers.CharField(max_length=20,required=True)
