@@ -173,7 +173,8 @@ class VerificationCode(models.Model):
     def generate_unique_six_digit_code(cls):
         """Generate a unique six-digit verification code."""
         while True:
-            code = str(random.randint(100000, 999999))  
+            # generate a random four-digit number:: changed
+            code = str(random.randint(1000, 9999))  
             if not cls.objects.filter(code=code).exists(): 
                 return code
 
