@@ -236,6 +236,7 @@ class ResendOTPAPIView(generics.GenericAPIView):
         return success_response(
             message=f"Verification code has been resent to your email. :: {code_obj.code}"
         )
+
 class RegisterAccountVerifyAPIView(generics.GenericAPIView):
     """
     View to register a new vendor.
