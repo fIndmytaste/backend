@@ -200,7 +200,7 @@ class EmailService:
             template_data={
                 "user_name": user_name,
                 "verification_code": verification_code,
-                "expiry_time": "24 hours",  # You could make this dynamic
+                "expiry_time": "24 hours", 
                 "app_name": settings.APP_NAME if hasattr(settings, 'APP_NAME') else "Our App",
             },
             subject="Verify Your Account",
@@ -214,8 +214,8 @@ class EmailService:
             template_name="emails/account_login.html",
             template_data={
                 "user_name": user_name,
-                "verification_code": verification_code,
-                "expiry_time": "24 hours",  # You could make this dynamic
+                "otp_code": verification_code,
+                "expiry_time": "24 hours", 
                 "app_name": settings.APP_NAME if hasattr(settings, 'APP_NAME') else "Our App",
             },
             subject="Verify Your Account",
