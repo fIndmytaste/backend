@@ -11,8 +11,127 @@ from helpers.tokens import TokenManager
 from helpers.email import emailService
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+from django.utils import timezone
+from datetime import timedelta
+
 
 class LoginAPIView(generics.GenericAPIView):
+    """
+    View to handle user login via email.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = LoginSerializer
+
+    @swagger_auto_schema(
+        operation_description="Log in a user with email and password.",
+        operation_summary="Log in a user by providing email and password",
+        request_body=LoginSerializer,
+        responses={200: 'Login successful', 400: 'Invalid credentials or inactive user'}
+    )
+    def post(self, request, *args, **kwargs):
+        """
+        POST request to log in the user using email and password.
+        """
+        serializer = self.serializer_class(data=request.data)
+        if serializer.is_valid(raise_exception=True):
+            email = serializer.validated_data['email']
+            password = serializer.validated_data['password']
+
+            # Try to authenticate the user
+            user = authenticate(request, email=email, password=password)
+            if user is not None and user.is_active:
+                # Create a verification code for the user
+                code_obj = VerificationCode.objects.create(
+                    user=user,
+                    verification_type='login' 
+                )
+
+                # Send verification code via email
+                try:
+                    emailService.send_login_verification_code(
+                        user_email=user.email,
+                        user_name=user.full_name,
+                        verification_code=code_obj.code
+                    )
+                except Exception as e:
+                    return bad_request_response(message='Error sending email')
+
+                
+                return success_response(
+                    message= 'Please verify your email with the OTP sent.'
+                )
+
+            else:
+                return bad_request_response(message="Invalid credentials or user is not active.")
+
+
+
+
+class VerifyOTPAPIView(generics.GenericAPIView):
+    """
+    View to confirm OTP for user login.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = RegisterVerifySerializer
+
+    @swagger_auto_schema(
+        operation_description="Confirm OTP for user login.",
+        operation_summary="Confirm OTP provided by user",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'code': openapi.Schema(type=openapi.TYPE_STRING),
+                'email': openapi.Schema(type=openapi.TYPE_STRING)
+            }
+        ),
+        responses={200: 'OTP successfully confirmed', 400: 'Invalid OTP or expired'}
+    )
+    def post(self, request, *args, **kwargs):
+        """
+        POST request to confirm the OTP and complete the login process.
+        """
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        code = serializer.validated_data['code']
+        email = serializer.validated_data['email'].lower()
+
+        try:
+            user = User.objects.get(email=email)
+        except:
+            return bad_request_response(
+                message='Invalid or expired verification code.'
+            )
+       
+
+        # Get the latest verification code for the user
+        try:
+            verification_code = VerificationCode.objects.filter(
+                user=request.user,
+                code=code,
+                verification_type='login',
+                created_at__gte=timezone.now() - timedelta(minutes=10) 
+            ).last()
+
+            if not verification_code:
+                return bad_request_response(message='Invalid OTP or OTP has expired.')
+
+
+            tokens = TokenManager.get_tokens_for_user(user)
+            response_data = {
+                "tokens": tokens,
+                'user': UserSerializer(user).data
+            }
+
+            return success_response(
+                message="OTP successfully confirmed. You are now logged in.",
+                data=response_data
+            )
+
+        except VerificationCode.DoesNotExist:
+            return bad_request_response(message='Invalid OTP or OTP has expired.')
+
+
+class LoginAPIViewOld(generics.GenericAPIView):
     """
     View to handle user login via email.
     """
@@ -45,6 +164,20 @@ class LoginAPIView(generics.GenericAPIView):
             # Try to authenticate the user with email or university_id
             user = authenticate(request, email=email, password=password)
             if user is not None and user.is_active:
+
+                code_obj = VerificationCode.objects.create(
+                    user=valid_user,
+                    verification_type='email'
+                )
+                try:
+                    # Send verification code via email
+                    emailService.send_verification_code(
+                        user_email=valid_user.email,
+                        user_name=valid_user.full_name,
+                        verification_code=code_obj.code
+                    )
+                except Exception as e:
+                    print(f"Error sending email: {e}")   
                 # User found and is active
                 valid_user = User.objects.get(pk=user.id)
                 tokens = TokenManager.get_tokens_for_user(user)
@@ -85,7 +218,7 @@ class RegisterAPIView(generics.GenericAPIView):
         """
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        email = serializer.validated_data['email']
+        email = serializer.validated_data['email'].lower()
         # check if email already exists
         if User.objects.filter(email=email).exists():
             return bad_request_response(message='Email already exists.')
@@ -205,7 +338,7 @@ class ResendOTPAPIView(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        email = serializer.validated_data['email']
+        email = serializer.validated_data['email'].lower()
 
         try:
             user = User.objects.get(email=email)
@@ -249,15 +382,24 @@ class RegisterAccountVerifyAPIView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         code = serializer.validated_data['code']
+        email = serializer.validated_data['email'].lower()
 
-       
-        # Generate six code
         try:
-            code_obj = VerificationCode.objects.get( code=code,verification_type='email' )
+            user = User.objects.get(email=email)
         except:
             return bad_request_response(
                 message='Invalid or expired verification code.'
             )
+       
+        # Generate six code
+        try:
+            code_obj = VerificationCode.objects.get( code=code,verification_type='email',user=user )
+        except:
+            return bad_request_response(
+                message='Invalid or expired verification code.'
+            )
+        
+        
 
         if not code_obj.is_active:
             return bad_request_response(

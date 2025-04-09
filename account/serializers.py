@@ -109,6 +109,7 @@ class RegisterSerializer(serializers.Serializer):
 
 class RegisterVerifySerializer(serializers.Serializer):
     code = serializers.CharField(max_length=6,required=True)
+    email = serializers.EmailField(required=True)
 
 
 class RegisterOTPResedSerializer(serializers.Serializer):

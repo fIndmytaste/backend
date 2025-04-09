@@ -207,6 +207,21 @@ class EmailService:
         )
 
 
+    def send_login_verification_code(self, user_email, user_name, verification_code):
+        """Send account activation code to a user"""
+        return self.send_email_with_template(
+            email=user_email,
+            template_name="emails/account_login.html",
+            template_data={
+                "user_name": user_name,
+                "verification_code": verification_code,
+                "expiry_time": "24 hours",  # You could make this dynamic
+                "app_name": settings.APP_NAME if hasattr(settings, 'APP_NAME') else "Our App",
+            },
+            subject="Verify Your Account",
+        )
+
+
 emailService = EmailService()
 
 
