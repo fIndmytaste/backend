@@ -54,7 +54,7 @@ class LoginAPIView(generics.GenericAPIView):
                         verification_code=code_obj.code
                     )
                 except Exception as e:
-                    return bad_request_response(message='Error sending email')
+                    return bad_request_response(message=f'Error sending email :: {code_obj.code}')
 
                 
                 return success_response(
@@ -106,7 +106,7 @@ class VerifyOTPAPIView(generics.GenericAPIView):
         # Get the latest verification code for the user
         try:
             verification_code = VerificationCode.objects.filter(
-                user=request.user,
+                user=user,
                 code=code,
                 verification_type='login',
                 created_at__gte=timezone.now() - timedelta(minutes=10) 

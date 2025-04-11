@@ -153,7 +153,7 @@ class VendorRating(models.Model):
 
 class VerificationCode(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE) 
     code = models.CharField(max_length=6, unique=True)
     verification_type = models.CharField(
         max_length=32,
