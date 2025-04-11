@@ -53,12 +53,12 @@ class LoginAPIView(generics.GenericAPIView):
                         user_name=user.full_name,
                         verification_code=code_obj.code
                     )
-                except Exception as e:
-                    return bad_request_response(message=f'Error sending email :: {code_obj.code}')
+                except Exception as e:pass
+                    # return bad_request_response(message=f'Error sending email :: {code_obj.code}')
 
                 
                 return success_response(
-                    message= 'Please verify your email with the OTP sent.'
+                    message= f'Please verify your email with the OTP sent. :: {code_obj.code}'
                 )
 
             else:
