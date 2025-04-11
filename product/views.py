@@ -8,7 +8,7 @@ from account.serializers import VendorRatingSerializer
 from product.serializers import FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
 from .models import Favorite, Order, Rating, SystemCategory, Product
-from helpers.response.response_format import success_response, bad_request_response
+from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
 
@@ -91,13 +91,13 @@ class HotPickProductsView(generics.GenericAPIView):
         limit = int(request.GET.get('limit', 10))
 
         # Get the user's favorited products
-        favorite_products = self.get_user_favorites(request.user)
+        favorite_products = list(self.get_user_favorites(request.user))
 
         # Get top viewed products
-        top_viewed_products = self.get_top_viewed_products(limit)
+        top_viewed_products = list(self.get_top_viewed_products(limit))
 
         # Get highest rated products (assuming rating logic exists in your system)
-        highest_rated_products = self.get_highest_rated_products(limit)
+        highest_rated_products = list(self.get_highest_rated_products(limit))
 
         # Combine products: Avoid duplicates using set()
         combined_products = set(favorite_products + top_viewed_products + highest_rated_products)
@@ -110,7 +110,14 @@ class HotPickProductsView(generics.GenericAPIView):
 
         # Limit the results to 'limit' number of products
         serializer = self.serializer_class(filtered_products[:limit], many=True)
-        return success_response(serializer.data)
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            filtered_products[:limit],
+            limit
+        )
+        # return success_response(serializer.data)
+
 
 
     def get_user_favorites(self, user):
@@ -144,6 +151,8 @@ class HotPickProductsView(generics.GenericAPIView):
         Get products filtered by their system categories.
         """
         return Product.objects.filter(system_category__in=system_categories)
+
+
 
 class ProductDetailView(generics.GenericAPIView):
     serializer_class = ProductSerializer
