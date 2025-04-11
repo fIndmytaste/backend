@@ -224,6 +224,7 @@ class RegisterAPIView(generics.GenericAPIView):
             return bad_request_response(message='Email already exists.')
         user = serializer.save()
         valid_user = User.objects.get(pk=user.id)
+        
         # tokens = TokenManager.get_tokens_for_user(user)
         # response_data = {
         #     "tokens": tokens,
@@ -289,6 +290,8 @@ class RegisterVendorAPIView(generics.GenericAPIView):
             return bad_request_response(message='Email already exists.')
         user = serializer.save()
         valid_user = User.objects.get(pk=user.id)
+        valid_user.role = 'vendor'
+        valid_user.save()
         # tokens = TokenManager.get_tokens_for_user(user)
         # response_data = {
         #     "tokens": tokens,
@@ -321,6 +324,75 @@ class RegisterVendorAPIView(generics.GenericAPIView):
 
         )
 
+
+
+class RegisterRiderAPIView(generics.GenericAPIView):
+    """
+    View to register a new vendor.
+    """
+    serializer_class = RegisterVendorSerializer
+
+    @swagger_auto_schema(
+        operation_description="Register a new vendor and return the created user data and tokens.",
+        operation_summary="Register a new vendor and return vendor details and authentication tokens.",
+        request_body=RegisterVendorSerializer,
+        responses={201: 'Vendor account created successfully.', 400: 'Validation errors or bad input data'}
+    )
+    def post(self, request, *args, **kwargs):
+        """
+        POST request to register a new vendor.
+
+        **Request Body:**
+        - full_name: The vendor's full name.
+        - email: The vendor's email.
+        - password: The vendor's password.
+
+        **Responses:**
+        - 201: Successfully created the vendor account with user data and tokens.
+        - 400: Validation errors or bad input data.
+        """
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data['email']
+        # check if email already exists
+        if User.objects.filter(email=email).exists():
+            return bad_request_response(message='Email already exists.')
+        user = serializer.save()
+        valid_user = User.objects.get(pk=user.id)
+        valid_user.role = 'rider'
+        valid_user.save()
+        # tokens = TokenManager.get_tokens_for_user(user)
+        # response_data = {
+        #     "tokens": tokens,
+        #     'user': UserSerializer(valid_user).data
+        # }
+        
+        # Generate six code
+        code_obj = VerificationCode.objects.create(
+            user=valid_user,
+            verification_type='email'
+        )
+        # Send email with verification code
+        try:
+            emailService.send_verification_code(
+                email=valid_user.email,
+                user_name=valid_user.full_name,
+                verification_code=code_obj.code
+            )
+        except Exception as e:
+            print(f"Error sending email: {e}")
+
+        #!TODO Send verification code to email (not implemented here)
+
+        return success_response(
+            # add message that verification code has been sent to their email
+            message=f'Verification code has been sent to your email. :: {code_obj.code}',
+            data={
+                "email":email
+            }
+
+        )
 
 
 class ResendOTPAPIView(generics.GenericAPIView):

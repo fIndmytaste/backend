@@ -31,6 +31,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
         extra_fields.setdefault('is_admin', True)
+        extra_fields.setdefault('role', 'admin')
 
 
 
@@ -55,6 +56,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_verified = models.BooleanField(default=False, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    role = models.CharField(max_length=10, choices=(
+        ('admin', 'Admin'),
+        ('buyer','buyer'),
+        ('vendor','vendor'),
+        ('rider','rider'),
+    ), default='buyer')
 
     objects = UserManager()
     USERNAME_FIELD = "email"
