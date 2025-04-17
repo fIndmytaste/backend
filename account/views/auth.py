@@ -34,7 +34,7 @@ class LoginAPIView(generics.GenericAPIView):
         """
         serializer = self.serializer_class(data=request.data)
         if serializer.is_valid(raise_exception=True):
-            email = serializer.validated_data['email']
+            email = serializer.validated_data['email'].lower()
             password = serializer.validated_data['password']
 
             # Try to authenticate the user
@@ -284,7 +284,7 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        email = serializer.validated_data['email']
+        email = serializer.validated_data['email'].lower()
         # check if email already exists
         if User.objects.filter(email=email).exists():
             return bad_request_response(message='Email already exists.')
@@ -354,7 +354,7 @@ class RegisterRiderAPIView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        email = serializer.validated_data['email']
+        email = serializer.validated_data['email'].lower()
         # check if email already exists
         if User.objects.filter(email=email).exists():
             return bad_request_response(message='Email already exists.')
