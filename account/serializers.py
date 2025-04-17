@@ -96,7 +96,7 @@ class RegisterSerializer(serializers.Serializer):
     def create(self, validated_data):
         # Create a User object
         user = User.objects.create(
-            email=validated_data['email'],
+            email=validated_data['email'].lower(),
             phone_number=validated_data['phone_number'],
             full_name=validated_data['full_name'],
             is_verified=True,
@@ -133,7 +133,7 @@ class RegisterVendorSerializer(serializers.Serializer):
     def create(self, validated_data):
         # Create a User object
         user = User.objects.create(
-            email=validated_data['email'],
+            email=validated_data['email'].lower(),
             phone_number=validated_data['phone_number'],
             full_name=validated_data['full_name'],
             is_verified=False
