@@ -562,7 +562,7 @@ class PasswordResetRequestView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        email = serializer.validated_data['email']
+        email = serializer.validated_data['email'].lower()
         user_model = get_user_model()
 
         try:
