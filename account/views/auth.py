@@ -482,9 +482,16 @@ class RegisterAccountVerifyAPIView(generics.GenericAPIView):
         user.is_verified = True
         user.is_active = True
         user.save()
-        code_obj.delete()
+        code_obj.delete() 
+        tokens = TokenManager.get_tokens_for_user(user)
+        response_data = {
+            "tokens": tokens,
+            'user': UserSerializer(user).data
+        }
+
         return success_response(
-            message='Account verified successfully.'
+            message='Account verified successfully.',
+            data=response_data
         )
 
 
