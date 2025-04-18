@@ -1,6 +1,10 @@
 from django.urls import path
 
-from admin_manager.views import products as admin_product_view
+from admin_manager.views import (
+    products as admin_product_view,
+    vendor as admin_vendor_view,
+)
+
 
 
 urlpatterns = [ 
@@ -10,4 +14,8 @@ urlpatterns = [
     path('product/system-category/<uuid:system_category_id>/', admin_product_view.AdminProductBySystemCategoryView.as_view(), name='admin_product_view-products_by_system_category'),
     path('product/<uuid:product_id>/', admin_product_view.AdminProductDetailView.as_view(), name='admin_product_view-product_detail'),
     path('product/<uuid:product_id>/ratings', admin_product_view.AdminProductRatingListView.as_view(), name='admin_product_view-product-rating-list'),
+
+    # vendor
+    path('vendors', admin_vendor_view.AdminVendorListView.as_view(), name='admin_product_view-vendor_list'),
+    path('vendor/<uuid:vendor_id>/', admin_vendor_view.AdminVendorDetailView.as_view(), name='admin_product_view-vendor_detail'),
 ]
