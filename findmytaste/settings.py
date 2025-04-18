@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'vendor',
     'wallet',
     'rider',
+    'admin_manager'
 ]
 
 MIDDLEWARE = [
