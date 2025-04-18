@@ -1,10 +1,16 @@
 import uuid
+import string
+import random
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
 User = get_user_model()  
 
+
+def generate_track_id(length=8):
+    """Generate a random alphanumeric string for track_id."""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 # System Category model
 class SystemCategory(models.Model):
@@ -123,7 +129,7 @@ class Order(models.Model):
     vendor = models.ForeignKey('account.Vendor', on_delete=models.SET_NULL,null=True,blank=True, related_name='vendors', help_text="The vendor who owns the order.")
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the order was created.")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the order was last updated.")
-    status = models.CharField(max_length=20, choices=[('pending', 'Pending'), ('shipped', 'Shipped'), ('delivered', 'Delivered')], default='pending', help_text="The current status of the order.")
+    status = models.CharField(max_length=20, choices=[('pending', 'Pending'), ('shipped', 'Shipped'), ('canceled', 'Canceled'), ('delivered', 'Delivered')], default='pending', help_text="The current status of the order.")
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The total amount of the order.")
     payment_status = models.CharField(
         max_length=20,
@@ -131,6 +137,8 @@ class Order(models.Model):
         default=PENDING,
         help_text="The payment status of the order."
     )
+
+    track_id = models.CharField(max_length=100, help_text="Unique tracking ID per user")
 
     def __str__(self):
         return f"Order #{self.id}"
@@ -141,6 +149,17 @@ class Order(models.Model):
         self.total_amount = total
         self.save()
 
+
+    def save(self, *args, **kwargs):
+        # Auto-generate track_id if it's not provided
+        if not self.track_id and self.user:
+            while True:
+                new_track_id = generate_track_id()
+                if not Order.objects.filter(user=self.user, track_id=new_track_id).exists():
+                    self.track_id = new_track_id
+                    break
+
+        super().save(*args, **kwargs)
 
 
 class OrderItem(models.Model):
