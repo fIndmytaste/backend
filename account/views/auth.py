@@ -436,7 +436,7 @@ class ResendOTPAPIView(generics.GenericAPIView):
             )
         except Exception as e:
             print(f"Error sending email: {e}")
-            return bad_request_response(message="Failed to send verification code.")
+            # return bad_request_response(message="Failed to send verification code.")
 
         return success_response(
             message=f"Verification code has been resent to your email. :: {code_obj.code}"

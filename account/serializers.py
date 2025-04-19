@@ -136,7 +136,7 @@ class RegisterVerifySerializer(serializers.Serializer):
 
 
 class RegisterOTPResedSerializer(serializers.Serializer):
-    email = serializers.EmailField(max_length=6,required=True)
+    email = serializers.EmailField(required=True)
 
 
 
