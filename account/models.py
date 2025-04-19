@@ -159,6 +159,39 @@ class VendorRating(models.Model):
 
 
 
+
+MODE_OF_TRANSPORTATION = [
+    ('bicycle', 'Bicycle'),
+    ('bike', 'Bike'),
+    ('car', 'Car'),
+    ('van', 'Van'),
+    ('truck', 'Truck'),
+]
+
+RIDER_STATUS = [
+    ('active', 'Active'),
+    ('inactive', 'Inactive'),
+    ('suspended', 'Suspended'),
+]
+
+class Rider(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    mode_of_transport = models.CharField(max_length=50, choices=MODE_OF_TRANSPORTATION)
+    vehicle_number = models.CharField(max_length=20, null=True,blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    status = models.CharField(max_length=50, choices=RIDER_STATUS, default='inactive')
+    is_verified = models.BooleanField(default=False)
+
+    # license docs
+    drivers_license_front = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the drivers license front.")
+    drivers_license_back = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the driver's license back.")
+    vehicle_insurance = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's insurance.")
+    vehicle_registration = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
+
+
 class VerificationCode(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE) 
