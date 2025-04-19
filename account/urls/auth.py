@@ -8,6 +8,7 @@ urlpatterns = [
     path('vendor-register', auth_view.RegisterVendorAPIView.as_view(), name='vendor-register'),
     path('rider-register', auth_view.RegisterRiderAPIView.as_view(), name='rider-register'),
     path('resend-otp', auth_view.ResendOTPAPIView.as_view(), name='resend-otp'),
+    path('resend-otp-login', auth_view.ResendOTPLoginAPIView.as_view(), name='resend-ot-login'),
     path('verify', auth_view.RegisterAccountVerifyAPIView.as_view(), name='vendor-register'),
     path('verify-login', auth_view.VerifyOTPAPIView.as_view(), name='verify-otp'),
     path('password/reset/', auth_view.PasswordResetRequestView.as_view(), name='password-reset-request'),

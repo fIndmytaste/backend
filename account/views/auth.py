@@ -442,6 +442,50 @@ class ResendOTPAPIView(generics.GenericAPIView):
             message=f"Verification code has been resent to your email. :: {code_obj.code}"
         )
 
+class ResendOTPLoginAPIView(generics.GenericAPIView):
+    """
+    View to resend the OTP to the user's email.
+    """
+    serializer_class = RegisterOTPResedSerializer
+
+    @swagger_auto_schema(
+        operation_description="Resend the OTP to the user's email.",
+        operation_summary="Resend OTP to the user's email.",
+        request_body=RegisterOTPResedSerializer,
+        responses={200: 'OTP resent successfully.', 400: 'Invalid user or email.'}
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email'].lower()
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return bad_request_response(message="User with this email does not exist.")
+
+        # Generate a new verification code
+        code_obj = VerificationCode.objects.create(
+            user=user,
+            verification_type='login'
+        )
+
+        # Send the new verification code via email
+        try:
+            emailService.send_verification_code(
+                user_email=user.email,
+                user_name=user.full_name,
+                verification_code=code_obj.code
+            )
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            # return bad_request_response(message="Failed to send verification code.")
+
+        return success_response(
+            message=f"Verification code has been resent to your email. :: {code_obj.code}"
+        )
+
+
 class RegisterAccountVerifyAPIView(generics.GenericAPIView):
     """
     View to register a new vendor.
