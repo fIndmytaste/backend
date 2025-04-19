@@ -1,7 +1,8 @@
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, Notification, Profile, User, Vendor, VendorRating
+from account.models import Address, Notification, Profile, Rider, User, Vendor, VendorRating
+from vendor.serializers import VendorSerializer
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)  
@@ -34,6 +35,12 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = Profile
         fields = ['id',  'created_at', 'updated_at']
 
+
+class  RiderSerializer(serializers.Serializer):
+    class Meta:
+        model = Rider
+        fields = '__all__'
+
 class UserSerializer(serializers.ModelSerializer):
     staff_profile = ProfileSerializer(read_only=True)  
     password = serializers.CharField(write_only=True)
@@ -42,6 +49,22 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'full_name', 'is_active','role',"password",
                  'is_verified', 'created_at', 'updated_at', 'staff_profile']
+        
+
+    
+    def to_representation(self, instance):
+        if instance.role == 'rider':
+            representation = super().to_representation(instance)
+            rider_obj , created = Rider.objects.get_or_create(user=instance)
+            representation['rider'] = RiderSerializer(rider_obj).data
+            return representation
+        
+        elif instance.role == 'vendor':
+            representation = super().to_representation(instance)
+            rider_obj , created = Vendor.objects.get_or_create(user=instance)
+            representation['vendor'] = VendorSerializer(rider_obj).data
+            return representation
+        return super().to_representation(instance)
 
 
     def create(self, validated_data):
