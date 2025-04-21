@@ -2,6 +2,7 @@ from django.urls import path
 
 from product.views import ( 
     AddToFavoritesView,
+    AllProductsView,
     HotPickProductsView,
     OrderDetailView,
     OrderListCreateView,
@@ -21,6 +22,7 @@ from product.views import (
 urlpatterns = [ 
     path('system-categories/', SystemCategoryListView.as_view(), name='system_categories'),
     path('hot-picks/', HotPickProductsView.as_view(), name='hot-pick-products'),
+    path('internal-all-products', AllProductsView.as_view(), name='hot-pick-products'),
     path('product/system-category/<uuid:system_category_id>/', ProductBySystemCategoryView.as_view(), name='products_by_system_category'),
     path('product/<uuid:product_id>/', ProductDetailView.as_view(), name='product_detail'),
     path('product/<uuid:product_id>/ratings', ProductRatingListView.as_view(), name='product-rating-list'),

@@ -35,6 +35,21 @@ class SystemCategoryListView(generics.GenericAPIView):
 
 
 
+
+class AllProductsView(generics.GenericAPIView):
+    """
+    Endpoint to get products by system category.
+    """
+    # permission_classes = [IsAuthenticated]
+    serializer_class = ProductSerializer
+    
+    def get(self, request):
+        products = Product.objects.all()
+        serializer = self.serializer_class(products, many=True)
+        return success_response(serializer.data)
+
+
+
 class ProductBySystemCategoryView(generics.GenericAPIView):
     """
     Endpoint to get products by system category.

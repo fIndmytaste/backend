@@ -29,6 +29,12 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = '__all__'
 
+    def to_representation(self, instance: Product):
+        images = ProductImage.objects.filter(product=instance)
+        data = super().to_representation(instance)
+        data['images'] = ProductImageSerializer(images,many=True).data
+        return data
+
     def get_discounted_price(self, obj):
         return obj.get_discounted_price()
 
