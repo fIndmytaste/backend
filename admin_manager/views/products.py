@@ -60,7 +60,7 @@ class AdminProductBySystemCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, system_category_id):
-        products = Product.objects.filter(system_category_id=system_category_id)
+        products = Product.objects.filter(system_category_id=system_category_id,context={'request': request})
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
@@ -85,7 +85,7 @@ class AdminProductDetailView(generics.GenericAPIView):
     )
     def get(self, request, product_id):
         product = Product.objects.get(id=product_id)
-        serializer = self.serializer_class(product)
+        serializer = self.serializer_class(product,context={'request': request})
         return success_response(serializer.data)
 
 

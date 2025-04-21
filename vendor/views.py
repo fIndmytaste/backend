@@ -195,7 +195,7 @@ class ProductsListCreateView(generics.GenericAPIView):
         products = Product.objects.filter(query_filter)
 
         # Serialize the filtered products
-        serializer = ProductSerializer(products, many=True)
+        serializer = ProductSerializer(products, many=True, context={'request': request})
         return success_response(serializer.data)
 
     @swagger_auto_schema(
@@ -267,7 +267,7 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         - The details of the requested product.
         """
         product = Product.objects.get(id=product_id)
-        serializer = ProductSerializer(product)
+        serializer = ProductSerializer(product,context={'request': request})
         return success_response(serializer.data)
 
     @swagger_auto_schema(

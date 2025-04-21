@@ -45,7 +45,7 @@ class AllProductsView(generics.GenericAPIView):
     
     def get(self, request):
         products = Product.objects.all()
-        serializer = self.serializer_class(products, many=True)
+        serializer = self.serializer_class(products, many=True,context={'request': request})
         return success_response(serializer.data)
 
 
