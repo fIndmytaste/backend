@@ -41,6 +41,20 @@ class LoginAPIView(generics.GenericAPIView):
             user = authenticate(request, email=email, password=password)
             if user is not None and user.is_active:
                 # Create a verification code for the user
+
+
+                if user.role == 'admin':
+                    tokens = TokenManager.get_tokens_for_user(user)
+                    response_data = {
+                        "tokens": tokens,
+                        'user': UserSerializer(user).data
+                    }
+
+                    return success_response(
+                        message="You are now logged in.",
+                        data=response_data
+                    )
+                
                 code_obj = VerificationCode.objects.create(
                     user=user,
                     verification_type='login' 
