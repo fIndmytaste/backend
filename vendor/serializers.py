@@ -16,9 +16,17 @@ class VendorCategorySerializer(serializers.ModelSerializer):
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
+
     class Meta:
         model = ProductImage
         fields = ['id', 'image', 'is_primary', 'is_active']
+
+    def get_image(self, obj):
+        request = self.context.get('request')
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url if obj.image else None
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -32,7 +40,7 @@ class ProductSerializer(serializers.ModelSerializer):
     def to_representation(self, instance: Product):
         images = ProductImage.objects.filter(product=instance)
         data = super().to_representation(instance)
-        data['images'] = ProductImageSerializer(images,many=True).data
+        data['images'] = ProductImageSerializer(images, many=True, context=self.context).data
         return data
 
     def get_discounted_price(self, obj):
