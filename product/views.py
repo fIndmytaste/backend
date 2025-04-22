@@ -80,6 +80,55 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         return success_response(serializer.data)
 
 
+class VendorBySystemCategoryView(generics.GenericAPIView):
+    """
+    Endpoint to get vendors by system category.
+    """
+    # permission_classes = [IsAuthenticated]
+    # serializer_class = ProductSerializer
+
+    # @swagger_auto_schema(
+    #     operation_description="Get a list of products belonging to a system category.",
+    #     operation_summary="Retrieve products by system category.",
+    #     responses={
+    #         200: ProductSerializer(many=True),
+    #         400: "Bad Request",
+    #         401: "Unauthorized",
+    #     },
+    #     parameters=[
+    #         {
+    #             'name': 'system_category_id',
+    #             'description': 'The ID of the system category to filter products by.',
+    #             'required': True,
+    #             'type': 'integer',
+    #         }
+    #     ]
+    # )
+    # def get(self, request, system_category_id):
+    #     products = Product.objects.filter(system_category_id=system_category_id)
+    #     serializer = self.serializer_class(products, many=True)
+    #     return success_response(serializer.data)
+
+    serializer_class = VendorSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Vendor.objects.all()
+
+    @swagger_auto_schema(
+        operation_description="Get vendors by system category",
+        operation_summary="vendors by system category",
+        responses={
+            200: VendorSerializer,
+        }
+    )
+    def get(self, request , system_category_id):
+
+        queryset = Vendor.objects.filter(category__id=system_category_id)
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            queryset,
+            page_size=int(request.GET.get('page_size',20))
+        )
 class HotPickProductsView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ProductSerializer

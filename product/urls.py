@@ -12,7 +12,8 @@ from product.views import (
     ProductRatingCreateView,
     ProductRatingListView, 
     SystemCategoryListView,
-    UserFavoriteListView, 
+    UserFavoriteListView,
+    VendorBySystemCategoryView, 
     VendorDetailView,
     VendorRatingCreateView,
     VendorRatingListView
@@ -24,6 +25,7 @@ urlpatterns = [
     path('hot-picks/', HotPickProductsView.as_view(), name='hot-pick-products'),
     path('internal-all-products', AllProductsView.as_view(), name='hot-pick-products'),
     path('product/system-category/<uuid:system_category_id>/', ProductBySystemCategoryView.as_view(), name='products_by_system_category'),
+    path('product/system-category/<uuid:system_category_id>/vendors', VendorBySystemCategoryView.as_view(), name='VendorBySystemCategoryView'),
     path('product/<uuid:product_id>/', ProductDetailView.as_view(), name='product_detail'),
     path('product/<uuid:product_id>/ratings', ProductRatingListView.as_view(), name='product-rating-list'),
     path('product/<uuid:product_id>/rating', ProductRatingCreateView.as_view(), name='product-rating-create'),
