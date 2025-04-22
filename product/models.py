@@ -46,7 +46,7 @@ class Product(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2, help_text="The regular price of the product.")
     system_category = models.ForeignKey('SystemCategory', on_delete=models.CASCADE, null=True,blank=True, help_text="The system category to which this product belongs.")
     category = models.ForeignKey('VendorCategory', on_delete=models.CASCADE,null=True,blank=True, help_text="The vendor category of this product.")
-    image = models.ImageField(upload_to='products/', blank=True, null=True, help_text="An image of the product.")
+    # image = models.ImageField(upload_to='products/', blank=True, null=True, help_text="An image of the product.")
     stock = models.IntegerField(default=0, help_text="The number of units available in stock.")
     is_active = models.BooleanField(default=True, help_text="Indicates whether the product is active and available for sale.")
     is_delete = models.BooleanField(default=False, help_text="Indicates whether the product is marked for deletion.")

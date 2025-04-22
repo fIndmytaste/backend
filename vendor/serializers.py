@@ -35,7 +35,10 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = '__all__'
+        fields = [
+            'id','name','description','price',
+            'system_category','category','stock','is_active',
+            'is_delete','is_featured','views','discounted_price','images']
 
     def to_representation(self, instance: Product):
         images = ProductImage.objects.filter(product=instance)
@@ -45,6 +48,17 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def get_discounted_price(self, obj):
         return obj.get_discounted_price()
+
+    
+    
+    def create(self, validated_data):
+        user = self.context['request'].user  # Get the current user from the request
+        vendor = Vendor.objects.get(user=user)  # Assuming Vendor is a model related to User
+
+        # Add the vendor to the validated data
+        validated_data['vendor'] = vendor
+
+        return super().create(validated_data)
 
 
 
