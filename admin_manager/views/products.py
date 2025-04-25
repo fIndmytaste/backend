@@ -363,7 +363,7 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
             request,
             self.serializer_class,
             self.get_queryset(),
-            page_size=int(request.GET.get('page_size'))
+            page_size=int(request.GET.get('page_size',20))
         )
 
 
