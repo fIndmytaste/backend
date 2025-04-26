@@ -22,6 +22,8 @@ from product.views import (
 
 urlpatterns = [ 
     path('system-categories/', SystemCategoryListView.as_view(), name='system_categories'),
+    path('system-categories/<uuid:system_category_id>', ProductBySystemCategoryView.as_view(), name='ProductBySystemCategoryView'),
+    path('system-categories/<uuid:system_category_id>/vendors', VendorBySystemCategoryView.as_view(), name='VendorBySystemCategoryView-'),
     path('hot-picks/', HotPickProductsView.as_view(), name='hot-pick-products'),
     path('internal-all-products', AllProductsView.as_view(), name='hot-pick-products'),
     path('product/system-category/<uuid:system_category_id>/', ProductBySystemCategoryView.as_view(), name='products_by_system_category'),
