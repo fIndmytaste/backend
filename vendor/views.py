@@ -436,3 +436,20 @@ class HotPickVendorsView(generics.GenericAPIView):
         Get the most active vendors (e.g., based on recent updates or activity).
         """
         return Vendor.objects.filter(is_active=True).order_by('-updated_at')[:limit]
+
+
+
+
+
+
+class FeaturedVendorsView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorSerializer
+    queryset = Vendor.objects.filter(is_featured=True)
+    
+    def get(self, request):
+        return success_response(
+            self.serializer_class(self.get_queryset(),many=True)
+        )
+
+   

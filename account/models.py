@@ -104,6 +104,7 @@ class Vendor(models.Model):
     logo = models.ImageField(upload_to='vendor_image', null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False)
     category = models.ForeignKey('product.SystemCategory' , on_delete=models.SET_NULL, null=True,blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
