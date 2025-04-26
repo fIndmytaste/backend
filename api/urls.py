@@ -7,5 +7,6 @@ urlpatterns = [
     path('auth/',include("account.urls.auth")),
     path('products/',include("product.urls")),
     path('vendor/',include("vendor.urls")),
+    path('vendors/',include("vendor.urls")),
     path('wallet/',include("wallet.urls")),
 ]
