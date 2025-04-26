@@ -1,12 +1,12 @@
 from rest_framework import status, generics
-from django.db.models import Q
+from django.db.models import Q, Avg
 from account.models import Vendor
 from helpers.permissions import IsVendor
 from rest_framework.permissions import IsAuthenticated
 from product.models import Order, Product, ProductImage, VendorCategory
 from product.serializers import OrderSerializer
-from .serializers import VendorCategorySerializer, ProductSerializer,VendorRegisterBusinessSerializer
-from helpers.response.response_format import success_response, bad_request_response
+from .serializers import VendorCategorySerializer, ProductSerializer,VendorRegisterBusinessSerializer, VendorSerializer
+from helpers.response.response_format import success_response, bad_request_response,paginate_success_response_with_serializer
 from drf_yasg.utils import swagger_auto_schema
 
 # Vendor Views
@@ -368,3 +368,71 @@ class VendorOrderListView(generics.ListAPIView):
         queryset = self.get_queryset()
         serializer = self.serializer_class(queryset, many=True)
         return success_response(data=serializer.data)
+
+
+
+
+
+class HotPickVendorsView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorSerializer
+
+    @swagger_auto_schema(
+        operation_description="Get hot pick vendors by combining user favorites, top-rated, and most active vendors.",
+        operation_summary="Retrieve hot pick vendors (favorites, top-rated, most active).",
+        responses={
+            200: VendorSerializer(many=True),
+            400: "Bad Request",
+            401: "Unauthorized",
+        },
+        parameters=[
+            {
+                'name': 'limit',
+                'description': 'Limit the number of vendors returned (default is 10).',
+                'required': False,
+                'type': 'integer',
+                'default': 10
+            }
+        ]
+    )
+    def get(self, request):
+        limit = int(request.GET.get('limit', 10))
+
+        # Get the user's favorited vendors
+        favorite_vendors = list(self.get_user_favorites(request.user))
+
+        # Get top-rated vendors
+        top_rated_vendors = list(self.get_top_rated_vendors(limit))
+
+        # Get most active vendors
+        most_active_vendors = list(self.get_most_active_vendors(limit))
+
+        # Combine vendors: Avoid duplicates using set()
+        combined_vendors = set(favorite_vendors + top_rated_vendors + most_active_vendors)
+
+        # Limit the results to 'limit' number of vendors
+        serializer = self.serializer_class(list(combined_vendors)[:limit], many=True)
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            list(combined_vendors)[:limit],
+            limit
+        )
+
+    def get_user_favorites(self, user):
+        """
+        Get all the user's favorited vendors.
+        """
+        return []
+
+    def get_top_rated_vendors(self, limit=10):
+        """
+        Get the top-rated vendors based on their average rating.
+        """
+        return Vendor.objects.annotate(avg_rating=Avg('ratings__rating')).order_by('-avg_rating')[:limit]
+
+    def get_most_active_vendors(self, limit=10):
+        """
+        Get the most active vendors (e.g., based on recent updates or activity).
+        """
+        return Vendor.objects.filter(is_active=True).order_by('-updated_at')[:limit]

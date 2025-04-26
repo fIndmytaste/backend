@@ -129,6 +129,8 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
             queryset,
             page_size=int(request.GET.get('page_size',20))
         )
+    
+    
 class HotPickProductsView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ProductSerializer
