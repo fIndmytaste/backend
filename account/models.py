@@ -103,6 +103,7 @@ class Vendor(models.Model):
     address = models.CharField(max_length=256)
     description = models.TextField(null=True, blank=True)
     # logo = models.ImageField(upload_to='vendor_image', null=True, blank=True)
+    thumbnail = CloudinaryField('vendor_images', null=True, blank=True)
     logo = CloudinaryField('vendor_images', null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
