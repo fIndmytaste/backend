@@ -4,6 +4,8 @@ import random
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from cloudinary.models import CloudinaryField
+
 
 User = get_user_model()  
 
@@ -16,6 +18,7 @@ def generate_track_id(length=8):
 class SystemCategory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, help_text="The name of the system category.")
+    logo = CloudinaryField('profile_images', null=True, blank=True)
     description = models.TextField(help_text="A detailed description of the system category.")
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the category was created.")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the category was last updated.")
@@ -107,7 +110,8 @@ class Product(models.Model):
 class ProductImage(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    image = models.ImageField(upload_to="product_images", help_text="Product image")
+    # image = models.ImageField(upload_to="product_images", help_text="Product image")
+    image = CloudinaryField('product_images', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the product image was")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the product image was last")
     is_primary = models.BooleanField(default=False, help_text="Is this the primary image for the product")

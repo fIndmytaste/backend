@@ -3,7 +3,7 @@ import uuid
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
-
+from cloudinary.models import CloudinaryField
 
 
 class UserManager(BaseUserManager):
@@ -51,6 +51,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_superuser = models.BooleanField(default=False)
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    profile_image = CloudinaryField('profile_images', null=True, blank=True)
     is_admin = models.BooleanField(default=False)
     phone_number = models.CharField(max_length=20,null=True,blank=True)
     is_verified = models.BooleanField(default=False, null=True, blank=True)
@@ -101,7 +102,8 @@ class Vendor(models.Model):
     phone_number = models.CharField(max_length=20, null=True,blank=True)
     address = models.CharField(max_length=256)
     description = models.TextField(null=True, blank=True)
-    logo = models.ImageField(upload_to='vendor_image', null=True, blank=True)
+    # logo = models.ImageField(upload_to='vendor_image', null=True, blank=True)
+    logo = CloudinaryField('vendor_images', null=True, blank=True)
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     is_active = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
@@ -187,11 +189,16 @@ class Rider(models.Model):
     is_verified = models.BooleanField(default=False)
 
     # license docs
-    drivers_license_front = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the drivers license front.")
-    drivers_license_back = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the driver's license back.")
-    vehicle_insurance = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's insurance.")
-    vehicle_registration = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
+    # drivers_license_front = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the drivers license front.")
+    # drivers_license_back = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the driver's license back.")
+    # vehicle_insurance = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's insurance.")
+    # vehicle_registration = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
 
+
+    drivers_license_front = CloudinaryField('verification', blank=True, null=True, help_text="An image of the driver's license front.")
+    drivers_license_back = CloudinaryField('verification', blank=True, null=True, help_text="An image of the driver's license back.")
+    vehicle_insurance = CloudinaryField('verification', blank=True, null=True, help_text="An image of the vehicle's insurance.")
+    vehicle_registration = CloudinaryField('verification', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
 
 class VerificationCode(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

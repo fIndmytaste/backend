@@ -34,6 +34,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'drf_yasg',
+    'cloudinary',
+    'cloudinary_storage',
 
     # local apps
     'account',
@@ -135,8 +137,22 @@ STATICFILES_DIRS = [
 ]
 
 
+# MEDIA_URL = '/media/'
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+
+# Cloudinary settings
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': os.getenv('CLOUDINARY_STORAGE_CLOUD_NAME'),
+    'API_KEY': os.getenv('CLOUDINARY_STORAGE_API_KEY'),
+    'API_SECRET': os.getenv('CLOUDINARY_STORAGE_API_SECRET'),
+}
+
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+# Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
@@ -176,3 +192,8 @@ EMAIL_USE_SSL = os.getenv('EMAIL_SECURE', 'false').lower() == 'true'
 EMAIL_HOST_USER = os.getenv('EMAIL_USER', 'programmerolakay@gmail.com')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_PASSWORD', 'yhaxekkagbtdbxha')
 DEFAULT_FROM_EMAIL = f"{os.getenv('EMAIL_FROM_NAME', 'EMGS')} <{os.getenv('EMAIL_FROM_ADDRESS', 'programmerolakay@gmail.com')}>"
+
+
+
+
+
