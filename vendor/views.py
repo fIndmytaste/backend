@@ -449,7 +449,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
     
     def get(self, request):
         return success_response(
-            self.serializer_class(self.get_queryset(),many=True)
+            self.serializer_class(self.get_queryset(),many=True).data
         )
 
    
