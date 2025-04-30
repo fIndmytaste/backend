@@ -17,7 +17,7 @@ from drf_yasg.utils import swagger_auto_schema
 # Buyer Views
 
 class SystemCategoryListView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     serializer_class = SystemCategorySerializer
 
     @swagger_auto_schema(
