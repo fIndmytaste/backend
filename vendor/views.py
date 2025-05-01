@@ -411,13 +411,13 @@ class HotPickVendorsView(generics.GenericAPIView):
         combined_vendors = set(favorite_vendors + top_rated_vendors + most_active_vendors)
 
         # Limit the results to 'limit' number of vendors
-        return success_response(data=self.serializer_class(list(combined_vendors)[:limit], many=True).data)
-        # return paginate_success_response_with_serializer(
-        #     request,
-        #     self.serializer_class,
-        #     list(combined_vendors)[:limit],
-        #     limit
-        # )
+        # return success_response(data=self.serializer_class(list(combined_vendors)[:limit], many=True).data)
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            list(combined_vendors)[:limit],
+            limit
+        )
 
     def get_user_favorites(self, user):
         """
@@ -448,6 +448,12 @@ class FeaturedVendorsView(generics.GenericAPIView):
     queryset = Vendor.objects.filter(is_featured=True)
     
     def get(self, request):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            page_size=20
+        )
         return success_response(
             self.serializer_class(self.get_queryset(),many=True).data
         )
