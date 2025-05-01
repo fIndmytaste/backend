@@ -205,3 +205,22 @@ DEFAULT_FROM_EMAIL = f"{os.getenv('EMAIL_FROM_NAME', 'EMGS')} <{os.getenv('EMAIL
 
 
 
+"""
+INSTALLED_APPS = [
+    # ... other apps
+    'channels',
+]
+
+ASGI_APPLICATION = 'your_project.asgi.application'
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        # For production, use Redis:
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {
+        #     "hosts": [('127.0.0.1', 6379)],
+        # },
+    },
+}
+"""

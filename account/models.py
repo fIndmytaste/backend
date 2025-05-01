@@ -1,9 +1,12 @@
 import random
 import uuid
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from cloudinary.models import CloudinaryField
+
+
 
 
 class UserManager(BaseUserManager):
@@ -184,16 +187,25 @@ RIDER_STATUS = [
     ('suspended', 'Suspended'),
 ]
 
+
+
 class Rider(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     mode_of_transport = models.CharField(max_length=50, choices=MODE_OF_TRANSPORTATION)
-    vehicle_number = models.CharField(max_length=20, null=True,blank=True)
+    vehicle_number = models.CharField(max_length=20, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     status = models.CharField(max_length=50, choices=RIDER_STATUS, default='inactive')
     is_verified = models.BooleanField(default=False)
+    
+    # Add current location fields
+    current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location_updated_at = models.DateTimeField(null=True, blank=True)
+    is_online = models.BooleanField(default=False, help_text="Whether the rider is currently online and available")
+
 
     # license docs
     # drivers_license_front = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the drivers license front.")
@@ -202,10 +214,75 @@ class Rider(models.Model):
     # vehicle_registration = models.ImageField(upload_to='verification/', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
 
 
+    # Your existing document fields
     drivers_license_front = CloudinaryField('verification', blank=True, null=True, help_text="An image of the driver's license front.")
     drivers_license_back = CloudinaryField('verification', blank=True, null=True, help_text="An image of the driver's license back.")
     vehicle_insurance = CloudinaryField('verification', blank=True, null=True, help_text="An image of the vehicle's insurance.")
     vehicle_registration = CloudinaryField('verification', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
+
+    def __str__(self):
+        return f"Rider: {self.user.get_full_name() or self.user.username}"
+
+    def update_location(self, latitude, longitude):
+        from product.models import  DeliveryTracking
+        """Update the rider's current location and propagate to active deliveries."""
+        self.current_latitude = latitude
+        self.current_longitude = longitude
+        self.location_updated_at = timezone.now()
+        self.save()
+        
+        # Update all active delivery trackings for this rider
+        active_orders = self.orders.filter(
+            status__in=['picked_up', 'in_transit', 'near_delivery']
+        )
+        
+        for order in active_orders:
+            try:
+                tracking = order.delivery_tracking.latest('updated_at')
+                tracking.update_rider_location(latitude, longitude)
+                
+                # Check if rider is near delivery location and update status if needed
+                if order.status == 'in_transit' and tracking.is_near_delivery_location():
+                    order.mark_as_near_delivery()
+                    
+            except DeliveryTracking.DoesNotExist:
+                # Create a new tracking entry if one doesn't exist
+                DeliveryTracking.objects.create(
+                    order=order,
+                    rider_latitude=latitude,
+                    rider_longitude=longitude
+                )
+    
+    def go_online(self):
+        """Set the rider as online and available for deliveries."""
+        self.is_online = True
+        self.save()
+    
+    def go_offline(self):
+        """Set the rider as offline and unavailable for deliveries."""
+        self.is_online = False
+        self.save()
+    
+    @property
+    def current_location(self):
+        """Return the rider's current location as a dictionary."""
+        if self.current_latitude and self.current_longitude:
+            return {
+                'latitude': self.current_latitude,
+                'longitude': self.current_longitude,
+                'updated_at': self.location_updated_at
+            }
+        return None
+        
+    @property
+    def active_orders_count(self):
+        """Return the count of active orders assigned to this rider."""
+        return self.orders.filter(
+            status__in=['confirmed', 'ready_for_pickup', 'picked_up', 'in_transit', 'near_delivery']
+        ).count()
+
+
+
 
 class VerificationCode(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

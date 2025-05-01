@@ -1,11 +1,22 @@
-"""
-ASGI config for findmytaste project.
+# # asgi.py
+# import os
+# from django.core.asgi import get_asgi_application
+# from channels.routing import ProtocolTypeRouter, URLRouter
+# from channels.auth import AuthMiddlewareStack
+# import your_app.routing  # replace with your actual app name
 
-It exposes the ASGI callable as a module-level variable named ``application``.
+# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'your_project.settings')
 
-For more information on this file, see
-https://docs.djangoproject.com/en/5.0/howto/deployment/asgi/
-"""
+# application = ProtocolTypeRouter({
+#     "http": get_asgi_application(),
+#     "websocket": AuthMiddlewareStack(
+#         URLRouter(
+#             your_app.routing.websocket_urlpatterns
+#         )
+#     ),
+# })
+
+
 
 import os
 
@@ -14,3 +25,6 @@ from django.core.asgi import get_asgi_application
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'findmytaste.settings')
 
 application = get_asgi_application()
+
+
+

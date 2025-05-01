@@ -1,13 +1,17 @@
 import uuid
 import string
 import random
+from django.utils import timezone
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from cloudinary.models import CloudinaryField
 
 
-User = get_user_model()  
+
+User = get_user_model()
+
+
 
 
 def generate_track_id(length=8):
@@ -118,8 +122,10 @@ class ProductImage(models.Model):
     is_active = models.BooleanField(default=True, help_text="Is this image active")
 
 
+
 class Order(models.Model):
-    PENDING = 'pending'
+    # Your existing fields...
+    PENDING = 'pending' 
     PAID = 'paid'
     FAILED = 'failed'
     PAYMENT_STATUS_CHOICES = [
@@ -128,12 +134,37 @@ class Order(models.Model):
         (FAILED, 'Failed'),
     ]
 
+    ORDER_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('confirmed', 'Confirmed'),
+        ('preparing', 'Preparing'),
+        ('ready_for_pickup', 'Ready for Pickup'),
+        ('picked_up', 'Picked Up'),
+        ('in_transit', 'In Transit'),
+        ('near_delivery', 'Near Delivery Location'),
+        ('delivered', 'Delivered'),
+        ('canceled', 'Canceled'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,blank=True, related_name='orders', help_text="The user who placed the order.")
-    vendor = models.ForeignKey('account.Vendor', on_delete=models.SET_NULL,null=True,blank=True, related_name='vendors', help_text="The vendor who owns the order.")
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders', help_text="The user who placed the order.")
+    vendor = models.ForeignKey('account.Vendor', on_delete=models.SET_NULL, null=True, blank=True, related_name='vendors', help_text="The vendor who owns the order.")
+    
+    # Add the rider relationship
+    rider = models.ForeignKey('account.Rider', on_delete=models.SET_NULL, null=True, blank=True, related_name='orders', help_text="The rider assigned to deliver this order.")
+    
+    country = models.CharField(max_length=64, null=True, blank=True)
+    state = models.CharField(max_length=64, null=True, blank=True)
+    city = models.CharField(max_length=64, null=True, blank=True)
+    address = models.CharField(max_length=256, null=True, blank=True)
+    location_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the order was created.")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the order was last updated.")
-    status = models.CharField(max_length=20, choices=[('pending', 'Pending'), ('shipped', 'Shipped'), ('canceled', 'Canceled'), ('delivered', 'Delivered')], default='pending', help_text="The current status of the order.")
+    
+    # Update status choices
+    status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default='pending', help_text="The current status of the order.")
+    
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The total amount of the order.")
     payment_status = models.CharField(
         max_length=20,
@@ -143,6 +174,14 @@ class Order(models.Model):
     )
 
     track_id = models.CharField(max_length=100, help_text="Unique tracking ID per user")
+    
+    # Add estimated delivery time fields
+    estimated_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Estimated time when the rider will pick up the order.")
+    estimated_delivery_time = models.DateTimeField(null=True, blank=True, help_text="Estimated time when the order will be delivered.")
+    
+    # Add actual delivery time fields for metrics
+    actual_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the rider picked up the order.")
+    actual_delivery_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the order was delivered.")
 
     def __str__(self):
         return f"Order #{self.id}"
@@ -152,7 +191,6 @@ class Order(models.Model):
         total = sum(item.total_price() for item in self.items.all())
         self.total_amount = total
         self.save()
-
 
     def save(self, *args, **kwargs):
         # Auto-generate track_id if it's not provided
@@ -164,6 +202,57 @@ class Order(models.Model):
                     break
 
         super().save(*args, **kwargs)
+    
+    def assign_rider(self, rider):
+        """Assign a rider to this order and update status."""
+        self.rider = rider
+        self.status = 'confirmed'
+        self.save()
+        # Create a delivery tracking entry when a rider is assigned
+        DeliveryTracking.objects.create(order=self)
+        
+    def get_delivery_status(self):
+        """Get detailed delivery status including rider location if available."""
+        try:
+            tracking = self.delivery_tracking.latest('updated_at')
+            return {
+                'status': self.status,
+                'rider_name': self.rider.user.get_full_name() if self.rider else None,
+                'rider_phone': self.rider.user.phone if self.rider and hasattr(self.rider.user, 'phone') else None,
+                'rider_location': {
+                    'latitude': tracking.rider_latitude,
+                    'longitude': tracking.rider_longitude
+                } if tracking and tracking.rider_latitude and tracking.rider_longitude else None,
+                'estimated_delivery': self.estimated_delivery_time,
+                'last_updated': tracking.updated_at if tracking else self.updated_at
+            }
+        except DeliveryTracking.DoesNotExist:
+            return {
+                'status': self.status,
+                'last_updated': self.updated_at
+            }
+            
+    def mark_as_picked_up(self):
+        """Mark the order as picked up by the rider."""
+        self.status = 'picked_up'
+        self.actual_pickup_time = timezone.now()
+        self.save()
+        
+    def mark_as_in_transit(self):
+        """Mark the order as in transit."""
+        self.status = 'in_transit'
+        self.save()
+        
+    def mark_as_near_delivery(self):
+        """Mark the order as near the delivery location."""
+        self.status = 'near_delivery'
+        self.save()
+        
+    def mark_as_delivered(self):
+        """Mark the order as delivered."""
+        self.status = 'delivered'
+        self.actual_delivery_time = timezone.now()
+        self.save()
 
 
 class OrderItem(models.Model):
@@ -223,3 +312,126 @@ class ProductView(models.Model):
 
     class Meta:
         unique_together = ('user', 'product')  # Ensure that each user can view the product only once
+
+
+
+class DeliveryTracking(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey('Order', on_delete=models.CASCADE, related_name='delivery_tracking')
+    
+    # Rider's current location during delivery
+    rider_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    rider_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    
+    # Timestamps for tracking events
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Distance and time estimates
+    distance_to_delivery = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, 
+                                               help_text="Estimated distance to delivery in meters")
+    estimated_time_remaining = models.IntegerField(null=True, blank=True, 
+                                                  help_text="Estimated time remaining in minutes")
+    
+    def __str__(self):
+        return f"Tracking for Order #{self.order.id}"
+    
+    def update_rider_location(self, latitude, longitude):
+        """Update the rider's location and recalculate estimates."""
+        self.rider_latitude = latitude
+        self.rider_longitude = longitude
+        
+        # Calculate distance to delivery location
+        if self.order.location_latitude and self.order.location_longitude:
+            self.distance_to_delivery = self.calculate_distance_to_delivery()
+            self.estimated_time_remaining = self.calculate_estimated_time()
+        
+        self.save()
+    
+    def calculate_distance_to_delivery(self):
+        """Calculate distance from rider to delivery location using Haversine formula."""
+        from math import radians, cos, sin, asin, sqrt
+        
+        # Get coordinates
+        rider_lat = float(self.rider_latitude)
+        rider_lng = float(self.rider_longitude)
+        dest_lat = float(self.order.location_latitude)
+        dest_lng = float(self.order.location_longitude)
+        
+        # Convert decimal degrees to radians
+        rider_lat, rider_lng, dest_lat, dest_lng = map(radians, [rider_lat, rider_lng, dest_lat, dest_lng])
+        
+        # Haversine formula
+        dlng = dest_lng - rider_lng
+        dlat = dest_lat - rider_lat
+        a = sin(dlat/2)**2 + cos(rider_lat) * cos(dest_lat) * sin(dlng/2)**2
+        c = 2 * asin(sqrt(a))
+        r = 6371000  # Radius of earth in meters
+        
+        return c * r
+    
+    def calculate_estimated_time(self):
+        """Estimate delivery time based on distance and rider's mode of transportation."""
+        if not self.distance_to_delivery:
+            return None
+            
+        # Get the rider's speed based on transportation mode
+        rider = self.order.rider
+        if not rider:
+            return None
+            
+        # Estimated speeds in meters per minute for different transportation modes
+        speeds = {
+            'bicycle': 200,  # ~12 km/h
+            'bike': 333,     # ~20 km/h
+            'car': 500,      # ~30 km/h
+            'van': 500,      # ~30 km/h
+            'truck': 417     # ~25 km/h
+        }
+        
+        speed = speeds.get(rider.mode_of_transport, 333)  # Default to bike speed
+        
+        # Calculate time in minutes
+        return round(self.distance_to_delivery / speed)
+    
+    def is_near_delivery_location(self, threshold_meters=200):
+        """Check if the rider is within threshold_meters of the delivery location."""
+        if not self.distance_to_delivery:
+            return False
+        
+        return self.distance_to_delivery <= threshold_meters
+    
+
+
+    def send_tracking_update(self):
+        """Send tracking update through WebSockets."""
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        room_group_name = f'order_tracking_{self.order.id}'
+        
+        # Send tracking data to the channel group
+        async_to_sync(channel_layer.group_send)(
+            room_group_name,
+            {
+                'type': 'tracking_update',
+                'tracking_data': self.order.get_delivery_status()
+            }
+        )
+
+    # Then call this method in update_rider_location:
+    def update_rider_location(self, latitude, longitude):
+        """Update the rider's location and recalculate estimates."""
+        self.rider_latitude = latitude
+        self.rider_longitude = longitude
+        
+        # Calculate distance to delivery location
+        if self.order.location_latitude and self.order.location_longitude:
+            self.distance_to_delivery = self.calculate_distance_to_delivery()
+            self.estimated_time_remaining = self.calculate_estimated_time()
+        
+        self.save()
+        
+        # Send real-time update
+        self.send_tracking_update()
