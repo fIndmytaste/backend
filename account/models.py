@@ -100,7 +100,7 @@ class Vendor(models.Model):
     name = models.CharField(max_length=64)
     email = models.EmailField()
     phone_number = models.CharField(max_length=20, null=True,blank=True)
-    country = models.CharField(max_length=64)
+    country = models.CharField(max_length=64,null=True,blank=True)
     state = models.CharField(max_length=64, null=True,blank=True)
     city = models.CharField(max_length=64, null=True,blank=True)
     address = models.CharField(max_length=256)
@@ -147,6 +147,7 @@ class Vendor(models.Model):
         ],
         default='Monday'
     )
+
 
 
 
