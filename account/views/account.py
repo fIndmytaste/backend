@@ -283,8 +283,8 @@ class VendorAddressUpdateView(generics.GenericAPIView):
             vendor = Vendor.objects.get(user=request.user)
         except Vendor.DoesNotExist:
             return bad_request_response(
-                message="Vendor not found.",
-                status_code=status.HTTP_404_NOT_FOUND
+                message="Vendor not found.", 
+                status_code=404
             )
         
         # Validate coordinates before passing to serializer
