@@ -196,3 +196,18 @@ class VendorRatingSerializer(serializers.ModelSerializer):
         if value < 1 or value > 5:
             raise serializers.ValidationError("Rating must be between 1 and 5.")
         return value
+
+
+
+class VendorAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Vendor
+        fields = [
+            'country', 
+            'state', 
+            'city', 
+            'address',
+            'location_latitude',
+            'location_longitude'
+        ]
+        

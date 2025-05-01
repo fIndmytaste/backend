@@ -2,7 +2,7 @@ from django.urls import path
 from account.views.account import (
     NotificationListView, PasswordChangeView, 
     UserAddressUpdateView, UserDetailView,
-    UpdateVenderBankAccount
+    UpdateVenderBankAccount, VendorAddressUpdateView
 )
 
 
@@ -13,4 +13,5 @@ urlpatterns = [
     path('password/change/', PasswordChangeView.as_view(), name='password-change'),
     path('notification', NotificationListView.as_view(), name='password-change'),
     path('bank-account', UpdateVenderBankAccount.as_view(), name='password-change'),
+    path('vendor/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
 ]

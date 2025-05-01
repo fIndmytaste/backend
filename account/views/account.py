@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
 from account.models import Address, Notification, User, Vendor
-from account.serializers import NotificationSerializer, PasswordChangeSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer
+from account.serializers import NotificationSerializer, PasswordChangeSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer
 from helpers.account_manager import AccountManager
 from helpers.flutterwave import FlutterwaveManager
 from helpers.response.response_format import bad_request_response, success_response
@@ -257,3 +257,72 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
 
         except Exception as e:
             return bad_request_response(message='An error occurred while updating the bank account details.')
+
+
+
+
+class VendorAddressUpdateView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorAddressSerializer
+
+    @swagger_auto_schema(
+        operation_description="Update the vendor's address.",
+        operation_summary="Update vendor address.",
+        request_body=VendorAddressSerializer,
+        responses={
+            200: openapi.Response(description="Vendor address successfully updated."),
+            400: openapi.Response(description="Bad request or invalid address details."),
+            401: openapi.Response(description="Authentication required."),
+        }
+    )
+    def put(self, request):
+        """
+        Update vendor address information.
+        """
+        try:
+            vendor = Vendor.objects.get(user=request.user)
+        except Vendor.DoesNotExist:
+            return bad_request_response(
+                message="Vendor not found.",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Validate coordinates before passing to serializer
+        data = request.data.copy()
+        
+        # Validate location_latitude
+        if 'location_latitude' in data and data['location_latitude'] is not None:
+            try:
+                lat = float(data['location_latitude'])
+                if lat < -90 or lat > 90:
+                    return bad_request_response(
+                        message="Latitude must be between -90 and 90."
+                    )
+            except (ValueError, TypeError):
+                return bad_request_response(
+                    message="Latitude must be a valid number."
+                )
+        
+        # Validate location_longitude
+        if 'location_longitude' in data and data['location_longitude'] is not None:
+            try:
+                lng = float(data['location_longitude'])
+                if lng < -180 or lng > 180:
+                    return bad_request_response(
+                        message="Longitude must be between -180 and 180."
+                    )
+            except (ValueError, TypeError):
+                return bad_request_response(
+                    message="Longitude must be a valid number."
+                )
+        
+        serializer = VendorAddressSerializer(vendor, data=data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return success_response(
+                message="Vendor address updated successfully",
+                data=serializer.data
+                )
+        
+        return bad_request_response(message=serializer.errors)
+
