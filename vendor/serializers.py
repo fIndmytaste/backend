@@ -69,6 +69,8 @@ class FavoriteSerializer(serializers.ModelSerializer):
 
 
 class VendorSerializer(serializers.ModelSerializer):
+    thumbnail = serializers.SerializerMethodField()
+    logo = serializers.SerializerMethodField()
     class Meta:
         model = Vendor
         fields = '__all__'
