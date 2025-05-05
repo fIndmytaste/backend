@@ -61,26 +61,26 @@ class VendorAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'is_featured', 'country', 'category')
     search_fields = ('name', 'email', 'user__email', 'city', 'state')
     readonly_fields = ('created_at', 'updated_at')
-    fieldsets = (
-        ('Vendor Info', {
-            'fields': ('user', 'name', 'email', 'phone_number', 'description', 'thumbnail', 'logo', 'category')
-        }),
-        ('Location', {
-            'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude')
-        }),
-        ('Bank Details', {
-            'fields': ('bank_account', 'bank_account_name', 'bank_name')
-        }),
-        ('Schedule', {
-            'fields': ('open_day', 'close_day', 'open_time', 'close_time')
-        }),
-        ('Status', {
-            'fields': ('is_active', 'is_featured', 'rating')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at')
-        }),
-    )
+    # fieldsets = (
+    #     ('Vendor Info', {
+    #         'fields': ('user', 'name', 'email', 'phone_number', 'description', 'thumbnail', 'logo', 'category')
+    #     }),
+    #     ('Location', {
+    #         'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude')
+    #     }),
+    #     ('Bank Details', {
+    #         'fields': ('bank_account', 'bank_account_name', 'bank_name')
+    #     }),
+    #     ('Schedule', {
+    #         'fields': ('open_day', 'close_day', 'open_time', 'close_time')
+    #     }),
+    #     ('Status', {
+    #         'fields': ('is_active', 'is_featured', 'rating')
+    #     }),
+    #     ('Timestamps', {
+    #         'fields': ('created_at', 'updated_at')
+    #     }),
+    # )
 
 @admin.register(VendorRating)
 class VendorRatingAdmin(admin.ModelAdmin):
