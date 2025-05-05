@@ -498,7 +498,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
 
 
 class AllVendorsView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
     serializer_class = VendorSerializer
     queryset = Vendor.objects.filter(is_featured=True)
     
