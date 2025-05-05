@@ -74,6 +74,16 @@ class VendorSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+    def get_thumbnail(self, obj):
+        request = self.context.get('request')
+        return obj.thumbnail.url if obj.thumbnail else None
+    
+
+    def get_logo(self, obj):
+        request = self.context.get('request')
+        return obj.logo.url if obj.logo else None
+
+
 
 
 
