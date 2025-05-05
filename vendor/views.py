@@ -493,3 +493,18 @@ class FeaturedVendorsView(generics.GenericAPIView):
         )
 
    
+
+
+
+
+class AllVendorsView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorSerializer
+    queryset = Vendor.objects.filter(is_featured=True)
+    
+    def get(self, request):
+        return success_response(
+            self.serializer_class(self.get_queryset(),many=True).data
+        )
+
+   

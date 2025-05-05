@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    AllVendorsView,
     BuyerVendorProductListView,
     FeaturedVendorsView,
     HotPickVendorsView,
@@ -12,6 +13,7 @@ from .views import (
 
 urlpatterns = [
     # Vendor Endpoints
+    path('', AllVendorsView.as_view(), name='vendor_register_business'),
     path('register-business/', VendorRegisterBusinessView.as_view(), name='vendor_register_business'),
     path('category/', VendorCategoryView.as_view(), name='add_vendor_category'),
     path('hot-picks/', HotPickVendorsView.as_view(), name='HotPickVendorsView'),
