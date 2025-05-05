@@ -373,6 +373,40 @@ class VendorOrderListView(generics.ListAPIView):
 
 
 
+class BuyerVendorProductListView(generics.ListAPIView):
+    serializer_class = ProductSerializer  # Assuming you have a ProductSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        vendor_id = self.kwargs.get('vendor_id')
+        return Product.objects.filter(vendor__id=vendor_id)
+    
+    @swagger_auto_schema(
+        operation_description="Get all products belonging to a specific vendor.",
+        operation_summary="Retrieve all products of a vendor.",
+        responses={
+            200: "List of vendor products",
+            404: "Vendor Not Found",
+            401: "Unauthorized",
+        }
+    )
+    def get(self, request, vendor_id):
+        try:
+            # Check if vendor exists
+            vendor = Vendor.objects.get(id=vendor_id)
+            
+            return paginate_success_response_with_serializer(
+                request,
+                self.serializer_class,
+                self.get_queryset(),
+                page_size=int(request.GET.get('page_size', 20))
+            )
+        except Vendor.DoesNotExist:
+            return bad_request_response(message= "Vendor not found")
+
+
+
+
 class HotPickVendorsView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = VendorSerializer

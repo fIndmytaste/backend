@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    BuyerVendorProductListView,
     FeaturedVendorsView,
     HotPickVendorsView,
     ProductGetUpdateDeleteView,
@@ -18,4 +19,6 @@ urlpatterns = [
     path('product/', ProductsListCreateView.as_view(), name='list_add_product'),
     path('product/<uuid:product_id>/', ProductGetUpdateDeleteView.as_view(), name='edit_delete_product'),
     path('orders', VendorOrderListView.as_view(), name='order_list'),
+
+    path('<vendor_id>/products', BuyerVendorProductListView.as_view(), name='order_list'),
 ]
