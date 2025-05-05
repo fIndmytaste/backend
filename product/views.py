@@ -14,7 +14,16 @@ from drf_yasg.utils import swagger_auto_schema
 
 # Vendor Views
 
-# Buyer Views
+class InternalProductListView(generics.GenericAPIView):
+    # permission_classes = [IsAuthenticated]
+    serializer_class = ProductSerializer
+    def get(self, request):
+        categories = Product.objects.all()
+        serializer = self.serializer_class(categories, many=True)
+        return success_response(serializer.data)
+
+
+
 
 class SystemCategoryListView(generics.GenericAPIView):
     # permission_classes = [IsAuthenticated]

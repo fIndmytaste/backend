@@ -4,6 +4,7 @@ from product.views import (
     AddToFavoritesView,
     AllProductsView,
     HotPickProductsView,
+    InternalProductListView,
     OrderDetailView,
     OrderListCreateView,
     ProductBySystemCategoryView, 
@@ -21,6 +22,7 @@ from product.views import (
 
 
 urlpatterns = [ 
+    path('', InternalProductListView.as_view(), name='InternalProductListView'),
     path('system-categories/', SystemCategoryListView.as_view(), name='system_categories'),
     path('system-categories/<uuid:system_category_id>', ProductBySystemCategoryView.as_view(), name='ProductBySystemCategoryView'),
     path('system-categories/<uuid:system_category_id>/vendors', VendorBySystemCategoryView.as_view(), name='VendorBySystemCategoryView-'),
