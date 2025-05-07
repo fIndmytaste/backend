@@ -375,7 +375,7 @@ class VendorOrderListView(generics.ListAPIView):
 
 class BuyerVendorProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer  # Assuming you have a ProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
     
     def get_queryset(self):
         vendor_id = self.kwargs.get('vendor_id')
@@ -394,11 +394,12 @@ class BuyerVendorProductListView(generics.ListAPIView):
         try:
             # Check if vendor exists
             vendor = Vendor.objects.get(id=vendor_id)
+
             
             return paginate_success_response_with_serializer(
                 request,
                 self.serializer_class,
-                self.get_queryset(),
+                Product.objects.filter(vendor=vendor),
                 page_size=int(request.GET.get('page_size', 20))
             )
         except Vendor.DoesNotExist:
