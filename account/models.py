@@ -90,7 +90,10 @@ class Address(models.Model):
     country = models.CharField(max_length=64)
     state = models.CharField(max_length=64, null=True,blank=True)
     city = models.CharField(max_length=64, null=True,blank=True)
+    
     address = models.TextField(null=True,blank=True)
+    location_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     is_primary = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

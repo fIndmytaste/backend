@@ -84,6 +84,23 @@ class UserAddressCreateSerializer(serializers.Serializer):
     state = serializers.CharField()
     city = serializers.CharField()
     address = serializers.CharField()
+    location_latitude = serializers.CharField()
+    location_longitude = serializers.CharField()
+
+
+class VendorAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Vendor
+        fields = [
+            'country', 
+            'state', 
+            'city', 
+            'address',
+            'location_latitude',
+            'location_longitude'
+        ]
+        
+
 
 
 

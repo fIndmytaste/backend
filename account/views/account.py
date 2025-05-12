@@ -109,33 +109,100 @@ class UserAddressUpdateView(generics.GenericAPIView):
         - 400: Bad request if the address already exists or input is invalid.
         """
         user = request.user
-        serializer = self.serializer_class(user)
-        serializer.is_valid(raise_exception=True)
 
-        country = serializer.validated_data['country']
-        state = serializer.validated_data['state']
-        city = serializer.validated_data['city']
-        address = serializer.validated_data['address']
+        # Validate coordinates before passing to serializer
+        data = request.data.copy()
+        
+        # Validate location_latitude
+        if 'location_latitude' in data and data['location_latitude'] is not None:
+            try:
+                lat = float(data['location_latitude'])
+                if lat < -90 or lat > 90:
+                    return bad_request_response(
+                        message="Latitude must be between -90 and 90."
+                    )
+            except (ValueError, TypeError):
+                return bad_request_response(
+                    message="Latitude must be a valid number."
+                )
+        
+        # Validate location_longitude
+        if 'location_longitude' in data and data['location_longitude'] is not None:
+            try:
+                lng = float(data['location_longitude'])
+                if lng < -180 or lng > 180:
+                    return bad_request_response(
+                        message="Longitude must be between -180 and 180."
+                    )
+            except (ValueError, TypeError):
+                return bad_request_response(
+                    message="Longitude must be a valid number."
+                )
 
-        already_exist = Address.objects.filter(
-            user=request.user,
-            country=country,
-            state=state,
-            city=city,
-            address=address,
-        ).first()
-        if already_exist:
-            return bad_request_response(message="Address already exist")
 
         address_object = Address.objects.create(
             user=request.user,
-            country=country,
-            state=state,
-            city=city,
+            country=data.get("country"),
+            state=data.get("state"),
+            city=data.get("city"),
+            location_latitude=data.get("location_latitude"),
+            location_longitude=data.get("location_longitude"),
             is_primary= not Address.objects.filter(user=request.user).exists(),
-            address=address,
+            address=data.get("address"),
         )
+        
         return success_response(UserAddressSerializer(address_object).data, status_code=201)
+
+
+
+    def put(self, request):
+
+        user = request.user
+
+        # Validate coordinates before passing to serializer
+        data = request.data.copy()
+        
+        # Validate location_latitude
+        if 'location_latitude' in data and data['location_latitude'] is not None:
+            try:
+                lat = float(data['location_latitude'])
+                if lat < -90 or lat > 90:
+                    return bad_request_response(
+                        message="Latitude must be between -90 and 90."
+                    )
+            except (ValueError, TypeError):
+                return bad_request_response(
+                    message="Latitude must be a valid number."
+                )
+        
+        # Validate location_longitude
+        if 'location_longitude' in data and data['location_longitude'] is not None:
+            try:
+                lng = float(data['location_longitude'])
+                if lng < -180 or lng > 180:
+                    return bad_request_response(
+                        message="Longitude must be between -180 and 180."
+                    )
+            except (ValueError, TypeError):
+                return bad_request_response(
+                    message="Longitude must be a valid number."
+                )
+
+
+        address_object = Address.objects.create(
+            user=request.user,
+            country=data.get("country"),
+            state=data.get("state"),
+            city=data.get("city"),
+            location_latitude=data.get("location_latitude"),
+            location_longitude=data.get("location_longitude"),
+            is_primary= not Address.objects.filter(user=request.user).exists(),
+            address=data.get("address"),
+        )
+        
+        return success_response(UserAddressSerializer(address_object).data, status_code=201)
+
+
 
 
 
