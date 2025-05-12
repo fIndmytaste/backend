@@ -2,8 +2,8 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
-from account.models import Address, Notification, User, Vendor
-from account.serializers import NotificationSerializer, PasswordChangeSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer
+from account.models import Address, Notification, Profile, User, Vendor
+from account.serializers import NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer
 from helpers.account_manager import AccountManager
 from helpers.flutterwave import FlutterwaveManager
 from helpers.response.response_format import bad_request_response, success_response
@@ -36,6 +36,25 @@ class UserDetailView(generics.GenericAPIView):
 
 
 
+class ProfileImageUploadView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ProfileImageUploadSerializer
+
+    def patch(self, request, *args, **kwargs):
+        """
+        This endpoint allows the authenticated user to upload or update their profile image.
+        """
+        user = request.user
+        serializer = self.serializer_class(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return success_response(
+            message="Profile image updated successfully",
+            data={
+                "profile_image": serializer.data["profile_image"]
+            }
+        )
+    
 class UserAddressUpdateView(generics.GenericAPIView):
     serializer_class = UserAddressCreateSerializer
     permission_classes = [IsAuthenticated]

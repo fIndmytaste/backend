@@ -211,3 +211,10 @@ class VendorAddressSerializer(serializers.ModelSerializer):
             'location_longitude'
         ]
         
+
+
+
+class ProfileImageUploadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['profile_image']
