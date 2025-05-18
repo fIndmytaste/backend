@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rider.views import OrderViewSet, RiderViewSet
+from rider.views import OrderViewSet, RiderViewSet, UploadRiderDocumentView
 
 
 
@@ -18,5 +18,6 @@ urlpatterns = [
     path('vendor/',include("vendor.urls")),
     path('vendors/',include("vendor.urls")),
     path('wallet/',include("wallet.urls")),
+    path('riders/<id>/upload_documents/',UploadRiderDocumentView.as_view()),
     path('', include(router.urls)),
 ]

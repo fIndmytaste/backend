@@ -1,5 +1,5 @@
 # views.py
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -132,15 +132,23 @@ class RiderViewSet(viewsets.ModelViewSet):
 
 
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
-    def upload_documents(self, request, pk=None):
+class UploadRiderDocumentView(generics.GenericAPIView):
+    serializer_class = RiderDocumentUploadSerializer
+    permission_classes = [IsAuthenticated]
+
+    # @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def patch(self, request, id):
         """
         Upload multiple rider documents in a single request
         """
 
         serializer = RiderDocumentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        rider = self.get_object()
+
+        try:
+            rider = Rider.objects.get(id=id)
+        except Rider.DoesNotExist:
+            return bad_request_response(message= 'Rider not found',status_code=404)
 
 
         
