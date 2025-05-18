@@ -80,9 +80,9 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class UserAddressCreateSerializer(serializers.Serializer):
-    country = serializers.CharField()
-    state = serializers.CharField()
-    city = serializers.CharField()
+    country = serializers.CharField(required=False)
+    state = serializers.CharField(required=False)
+    city = serializers.CharField(required=False)
     address = serializers.CharField()
     location_latitude = serializers.CharField()
     location_longitude = serializers.CharField()
