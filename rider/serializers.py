@@ -41,3 +41,13 @@ class RiderLocationUpdateSerializer(serializers.Serializer):
     latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
     longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
 
+
+class RiderDocumentUploadSerializer(serializers.Serializer):
+    """
+    Serializer for handling rider document uploads.
+    """
+    license_front = serializers.ImageField(required=False)
+    license_back = serializers.ImageField(required=False)
+    vehicle_registration = serializers.ImageField(required=False)
+    vehicle_insurance = serializers.ImageField(required=False)
+    profile_photo = serializers.ImageField(required=False)

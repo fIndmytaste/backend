@@ -6,9 +6,11 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
 from account.models import Rider
+from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response
 from product.models import Order
 from .serializers import (
-    OrderSerializer, 
+    OrderSerializer,
+    RiderDocumentUploadSerializer, 
     RiderSerializer, 
     DeliveryTrackingSerializer,
     RiderLocationUpdateSerializer
@@ -126,6 +128,106 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
         serializer = OrderSerializer(active_orders, many=True)
         return Response(serializer.data)
+
+
+
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def upload_documents(self, request, pk=None):
+        """
+        Upload multiple rider documents in a single request
+        """
+
+        serializer = RiderDocumentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rider = self.get_object()
+
+
+        
+        # Define field mappings
+        field_mapping = {
+            'license_front': 'drivers_license_front',
+            'license_back': 'drivers_license_back',
+            'vehicle_registration': 'vehicle_registration',
+            'vehicle_insurance': 'vehicle_insurance',
+            'profile_photo': 'profile_photo'
+        }
+        
+        # Track successfully uploaded documents
+        uploaded_documents = []
+        failed_documents = []
+        
+        # Check if any files were provided
+        if not request.FILES:
+            return bad_request_response(message='No files provided')
+        
+        # Process each file in the request
+        for doc_type, field_name in field_mapping.items():
+            if doc_type in request.FILES:
+                image_file = request.FILES[doc_type]
+                
+                # Handle file size validation
+                if image_file.size > 5 * 1024 * 1024:  # 5MB limit
+                    failed_documents.append({
+                        'document_type': doc_type,
+                        'reason': 'Image size exceeds 5MB limit'
+                    })
+                    continue
+                
+                # Validate file type
+                allowed_types = ['image/jpeg', 'image/png', 'image/jpg']
+                if image_file.content_type not in allowed_types:
+                    failed_documents.append({
+                        'document_type': doc_type,
+                        'reason': 'Only JPEG and PNG images are allowed'
+                    })
+                    continue
+                
+                # Check if field exists in model (for profile_photo)
+                if doc_type == 'profile_photo' and not hasattr(rider, 'profile_photo'):
+                    failed_documents.append({
+                        'document_type': doc_type,
+                        'reason': 'Profile photo upload is not supported'
+                    })
+                    continue
+                    
+                try:
+                    # Set the field with the uploaded file
+                    setattr(rider, field_name, image_file)
+                    uploaded_documents.append(doc_type)
+                except Exception as e:
+                    failed_documents.append({
+                        'document_type': doc_type,
+                        'reason': 'Error processing file'
+                    })
+        
+        # If we have any successful uploads, save the model
+        if uploaded_documents:
+            try:
+                # Save only the fields that were updated plus updated_at
+                update_fields = [field_mapping[doc] for doc in uploaded_documents]
+                update_fields.append('updated_at')
+                rider.save(update_fields=update_fields)
+                
+                # Check if all required documents are now uploaded
+                required_fields = ['drivers_license_front', 'drivers_license_back', 
+                                'vehicle_registration', 'vehicle_insurance']
+                
+                all_documents_uploaded = all(getattr(rider, field) for field in required_fields)
+                if all_documents_uploaded and rider.status == 'inactive':
+                    rider.status = 'pending_verification'
+                    rider.save(update_fields=['status', 'updated_at'])
+            except Exception as e:
+                return internal_server_error_response(message='Error saving documents')
+        
+        # Return response with status of all uploads
+        return Response({
+            'success': len(uploaded_documents) > 0,
+            'uploaded_documents': [doc.replace('_', ' ').title() for doc in uploaded_documents],
+            'failed_documents': failed_documents,
+            'verification_status': rider.status
+        }, status=status.HTTP_200_OK if uploaded_documents else status.HTTP_400_BAD_REQUEST)
+
 
 
 

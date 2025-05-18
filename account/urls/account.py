@@ -15,4 +15,5 @@ urlpatterns = [
     path('notification', NotificationListView.as_view(), name='password-change'),
     path('bank-account', UpdateVenderBankAccount.as_view(), name='password-change'),
     path('vendor/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
+    path('rider/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
 ]
