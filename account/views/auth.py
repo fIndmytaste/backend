@@ -76,6 +76,20 @@ class LoginAPIView(generics.GenericAPIView):
                 )
 
             else:
+                user = User.objects.filter(email=email).first()
+                if user and not user.is_verified:
+                    data = {
+                        "user":{
+                            "id":user.id,
+                            "email":user.email,
+                            "is_verified":user.is_verified,
+                        }
+                    }
+                    return bad_request_response(
+                        message='Your account is not verified.',
+                        data=data
+                    )
+                
                 return bad_request_response(message="Invalid credentials or user is not active.")
 
 

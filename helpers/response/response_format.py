@@ -25,8 +25,8 @@ class DataResponse:
 
 
 
-def error_response(message='An error occurred', group='BAD_REQUEST', status_code=400):
-    response_data = {'status': False, 'group': group, 'detail': message, 'message': message}
+def error_response(message='An error occurred', group='BAD_REQUEST', status_code=400, data=None):
+    response_data = {'status': False, 'group': group, 'detail': message, 'message': message, "data":data}
     return Response(response_data, status=status_code)
 
 
@@ -46,8 +46,8 @@ def verification_success_response(data=None, message='Success', response_code='0
     response_data = {'status': status_bool, 'message': message,'detail': message,"response_code":response_code, 'data': data}
     return Response(response_data, status=status_code)
 
-def bad_request_response(message='Bad Request', group='BAD_REQUEST', status_code=400):
-    return error_response(message, group , status_code)
+def bad_request_response(message='Bad Request', group='BAD_REQUEST', status_code=400, data=None):
+    return error_response(message, group , status_code, data)
 
 
 def internal_server_error_response(message='Internal Server Error', status_code=500):
