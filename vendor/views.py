@@ -36,6 +36,8 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
         phone_number = serializer.validated_data['phone_number']
         open_time = serializer.validated_data['open_time']
         close_time = serializer.validated_data['close_time']
+        open_day = serializer.validated_data['open_day']
+        close_day = serializer.validated_data['close_day']
 
         # validate the categoru
         try:
@@ -57,6 +59,8 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
             description=description,
             email=email,
             phone_number=phone_number,
+            open_day=open_day,
+            close_day=close_day,
             open_time=open_time,
             close_time=close_time
         )

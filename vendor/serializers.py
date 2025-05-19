@@ -95,5 +95,7 @@ class VendorRegisterBusinessSerializer(serializers.Serializer):
     description = serializers.CharField(required=True)
     phone_number = serializers.CharField(required=True)
     email = serializers.EmailField(required=True)
+    open_day = serializers.CharField(required=True)
+    close_day = serializers.CharField(required=True)
     open_time = serializers.TimeField(required=True)
     close_time = serializers.TimeField(required=True)
