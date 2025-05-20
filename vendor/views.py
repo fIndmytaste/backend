@@ -3,7 +3,7 @@ from django.db.models import Q, Avg
 from account.models import Vendor
 from helpers.permissions import IsVendor
 from rest_framework.permissions import IsAuthenticated
-from product.models import Order, Product, ProductImage, VendorCategory
+from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory
 from product.serializers import OrderSerializer
 from .serializers import VendorCategorySerializer, ProductSerializer,VendorRegisterBusinessSerializer, VendorSerializer
 from helpers.response.response_format import success_response, bad_request_response,paginate_success_response_with_serializer
@@ -41,8 +41,8 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
 
         # validate the categoru
         try:
-            category_obj = VendorCategory.objects.get(id=category)
-        except VendorCategory.DoesNotExist:
+            category_obj = SystemCategory.objects.get(id=category)
+        except SystemCategory.DoesNotExist:
             return bad_request_response(
                 message="Invalid category"
             )
