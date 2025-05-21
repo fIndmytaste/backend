@@ -49,24 +49,36 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
         
         user = request.user
         
-        vendor_exist = Vendor.objects.filter(email=email).first()
-        if vendor_exist:
-            return bad_request_response(
-                message="Vendor already exist"
-                )
+        vendor_exist, _ = Vendor.objects.get_or_create(user=user)
+        vendor_exist.name = name
+        vendor_exist.category=category_obj
+        vendor_exist.description=description
+        vendor_exist.email=email
+        vendor_exist.phone_number=phone_number
+        vendor_exist.open_day=open_day
+        vendor_exist.close_day=close_day
+        vendor_exist.open_time=open_time
+        vendor_exist.close_time=close_time
+        vendor_exist.save()
+
+        # vendor_exist = Vendor.objects.filter(email=email).first()
+        # if vendor_exist:
+        #     return bad_request_response(
+        #         message="Vendor already exist"
+        #         )
         
-        new_vendor = Vendor.objects.create(
-            name=name,
-            user=user,
-            category=category_obj,
-            description=description,
-            email=email,
-            phone_number=phone_number,
-            open_day=open_day,
-            close_day=close_day,
-            open_time=open_time,
-            close_time=close_time
-        )
+        # new_vendor = Vendor.objects.create(
+        #     name=name,
+        #     user=user,
+        #     category=category_obj,
+        #     description=description,
+        #     email=email,
+        #     phone_number=phone_number,
+        #     open_day=open_day,
+        #     close_day=close_day,
+        #     open_time=open_time,
+        #     close_time=close_time
+        # )
 
 
         return success_response(
