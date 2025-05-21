@@ -2,7 +2,7 @@ from django.urls import path
 from account.views.account import (
     NotificationListView, PasswordChangeView, ProfileImageUploadView, 
     UserAddressUpdateView, UserDetailView,
-    UpdateVenderBankAccount, VendorAddressUpdateView
+    UpdateVenderBankAccount, ValidateBankAccountNumber, VendorAddressUpdateView
 )
 
 

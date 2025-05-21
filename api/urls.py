@@ -1,5 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from api.views import GetAllBanksView, ValidateBankAccountNumber
 from rider.views import OrderViewSet, RiderViewSet, UploadRiderDocumentView
 
 
@@ -19,5 +20,7 @@ urlpatterns = [
     path('vendors/',include("vendor.urls")),
     path('wallet/',include("wallet.urls")),
     path('riders/<id>/upload_documents/',UploadRiderDocumentView.as_view()),
+    path('main/get-all-banks',GetAllBanksView.as_view()),
+    path('main/resolve-account-number',ValidateBankAccountNumber.as_view()),
     path('', include(router.urls)),
 ]

@@ -70,14 +70,16 @@ class FlutterwaveManager:
 
     def validate_bank(self,bank_code):
         response = requests.get('https://api.flutterwave.com/v3/banks/NG', headers=self.get_header())
+        print(response.text)
         if response.ok:
             banks = response.json()['data']
+            print(banks)
             exist = list(filter(lambda x: x.get('code') == bank_code, banks))
             if not exist:
                 return False , bad_request_response(message='Invalid bank provided')
 
             return True , exist[0]
-        return False , bad_request_response(message='Unable to verify bank',status_code=500)
+        return False , bad_request_response(message='Unable to verify bank',status_code=400)
 
     def verify_transaction(self,transaction_id):
         response = requests.get('https://api.flutterwave.com/v3/transactions/{}/verify'.format(transaction_id), headers=self.get_header())

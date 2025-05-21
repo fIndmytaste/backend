@@ -148,6 +148,9 @@ STATICFILES_DIRS = [
 ]
 
 
+FLUTTERWAVE_AUTH_TOKEN=os.getenv('FLUTTERWAVE_AUTH_TOKEN')
+PAYSTACK_SECRET_KEY=os.getenv('PAYSTACK_SECRET_KEY','sk_test_f2c4c12c87df60bc178d3be7a19ba4a975d17527')
+
 # MEDIA_URL = '/media/'
 # MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 

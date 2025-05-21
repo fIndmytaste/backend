@@ -3,9 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
 from account.models import Address, Notification, Profile, User, Vendor
-from account.serializers import NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer
+from account.serializers import BankAccountValidationSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer
 from helpers.account_manager import AccountManager
 from helpers.flutterwave import FlutterwaveManager
+from helpers.paystack import PaystackManager
 from helpers.response.response_format import bad_request_response, success_response
 
 
@@ -315,37 +316,59 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
         try:
             user = User.objects.get(id=request.user.id)
             vendor = Vendor.objects.get(user=user)
-            bank_account = serialiser.validated_data['bank_account']
+            account_number = serialiser.validated_data['account_number']
+            bank_code = serialiser.validated_data['bank_code']
             bank_name = serialiser.validated_data['bank_name']
-            bank_account_name = serialiser.validated_data['bank_account_name']
-            
+            # bank_account_name = serialiser.validated_data['bank_account_name']
+
+            klass = PaystackManager()
+
             # Validate bank details
-            success, bank_response = self.validate_bank(bank_name)
+            success, bank_response = klass.resolve_bank_account(
+                account_number,
+                bank_code,
+            )
+
             if not success:
-                return bank_response
-            
-            # Resolve bank account details
-            success, resolve_bank_account_response = self.resolve_bank_account(bank_account, bank_response['code'], bank_response['name'])
-            if not success:
-                return resolve_bank_account_response 
+                return bad_request_response(message=bank_response)
+
             
             # Add bank account to vendor
             success, response = self.add_bank_account(
                 vendor,
-                bank_response['code'],
-                resolve_bank_account_response['account_number'],
-                resolve_bank_account_response['account_name']
+                bank_name,
+                bank_response['account_number'],
+                bank_response['account_name']
             )
             if success:
                 return success_response(message=response)
             else:
                 return bad_request_response(message=response)
 
-        except Exception as e:
+        except Exception as e: 
+            print(e)
             return bad_request_response(message='An error occurred while updating the bank account details.')
 
 
 
+
+class ValidateBankAccountNumber(generics.GenericAPIView):
+    permission_classes = []
+    serializer_class = BankAccountValidationSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data) 
+        serializer.is_valid(raise_exception=True)
+
+        klass = PaystackManager()
+        
+        success, response = klass.resolve_bank_account(
+            request.data['account_number'],
+            request.data['bank_code'],
+        )
+        return success_response(data=response) if success else bad_request_response(message=response)
+        
+           
 
 class VendorAddressUpdateView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]

@@ -196,9 +196,9 @@ class NotificationSerializer(serializers.ModelSerializer):
 
 
 class UpdateBankAccountSerializer(serializers.Serializer):
-    bank_account = serializers.CharField(required=True )
+    account_number = serializers.CharField(required=True )
     bank_name = serializers.CharField(required=True )
-    bank_account_name = serializers.CharField(required=True )
+    bank_code = serializers.CharField(required=True )
 
 
 
@@ -235,3 +235,8 @@ class ProfileImageUploadSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['profile_image']
+
+
+class BankAccountValidationSerializer(serializers.Serializer):
+    bank_code = serializers.CharField(required=True)
+    account_number = serializers.CharField(required=True)

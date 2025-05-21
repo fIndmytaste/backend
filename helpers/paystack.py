@@ -1,0 +1,122 @@
+import requests
+from findmytaste import settings
+from account.models import Vendor
+from django.urls import reverse
+
+from helpers.response.response_format import bad_request_response, success_response
+
+
+
+
+class PaystackManager:
+
+
+    def __init__(self) -> None:
+        header = {
+            'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
+            'Content-Type': 'application/json',
+        }
+        self.header = header
+        self.base_url = "https://api.paystack.co"
+
+
+    def get_header(self):
+        header = {
+            'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
+            'Content-Type': 'application/json',
+        }
+        return header
+
+    
+    def make_withdrawal(self,request,vendor:Vendor,amount, transaction_obj):
+        account_bank = None
+        account_number = None
+        print(vendor.bank_name , vendor.bank_account_name)
+        if vendor.bank_name and vendor.bank_account_name:
+            account_bank = vendor.bank_name
+            account_number = vendor.bank_account_name
+        else:
+
+            if any([ request.data.get('bank_code') in [None,False] , request.data.get('account_number') in [None,False] ]):
+                return bad_request_response(message='You did not have an account attached to your profile, kindly add.')
+
+            account_bank = request.data['bank_code']
+            account_number = request.data['account_number']
+
+        data = {
+            "account_bank": account_bank,
+            "account_number":  account_number,
+            "amount": amount,
+            "narration": "Withdrawal from balance",
+            "currency": "NGN",
+            "reference": f"{transaction_obj.uuid}_PMCKDU_1", #!TODO make sure this is actual transaction ref from DB
+            # "callback_url": 'https://play.svix.com/in/e_6O0J7HodDYMurpXRzPcf7UBWxOO/'
+            "callback_url": request.build_absolute_uri(reverse("flutterwave-withdrawal-callback"))
+        }
+
+        response = requests.post('https://api.flutterwave.com/v3/transfers', headers=self.get_header(), json=data)
+        print(response)
+        print(response.text)
+        if response.ok:
+            initiate_result = response.json()
+            if initiate_result['status'] != 'success':
+                return bad_request_response(message='Withdrawal creation failed')
+            transaction_obj.response = initiate_result
+            transaction_obj.save()
+            return success_response(message='Withdrawal completed')
+        
+        else:
+            return bad_request_response(message='Withdrawal creation failed')
+    
+
+    def validate_bank(self,bank_code):
+        response = requests.get(f'{self.base_url}/banks', headers=self.get_header())
+        print(response.text)
+        if response.ok:
+            banks = response.json()['data']
+            print(banks)
+            exist = list(filter(lambda x: x.get('code') == bank_code, banks))
+            if not exist:
+                return False , 'Invalid bank provided'
+            return True , exist[0]
+        return False , 'Unable to verify bank'
+    
+
+    def verify_transaction(self,transaction_id):
+        response = requests.get('https://api.flutterwave.com/v3/transactions/{}/verify'.format(transaction_id), headers=self.get_header())
+        if response.status_code == 200:
+            return True , response.json()
+        return False , 'Payment is not successful'
+
+
+    def resolve_bank_account(self,account_number,bank_code):
+        url = f'{self.base_url}/bank/resolve?account_number={account_number}&bank_code={bank_code}'
+        print(self.get_header() )
+        response = requests.get(url, headers=self.get_header())
+        print(response.text)
+        if response.ok:
+            return True , response.json()['data']
+        return False , "Account could not be resolve"
+
+    
+
+    def banks(self):
+        url = f'{self.base_url}/bank'
+        print(self.get_header() )
+        response = requests.get(url, headers=self.get_header())
+        print(response.text)
+        if response.ok:
+            return True , response.json()['data']
+        return False , "Account could not be resolve"
+
+    
+
+
+    def handle_webhook(self,request):
+        payload = request.data
+        event_type = payload.get("event")
+
+        return success_response()
+
+
+
