@@ -2,12 +2,12 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
-from account.models import Address, Notification, Profile, User, Vendor
-from account.serializers import BankAccountValidationSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer
+from account.models import Address, Notification, Profile, User, Vendor, VirtualAccount
+from account.serializers import BankAccountValidationSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer, VirtualAccountSerializer
 from helpers.account_manager import AccountManager
 from helpers.flutterwave import FlutterwaveManager
 from helpers.paystack import PaystackManager
-from helpers.response.response_format import bad_request_response, success_response
+from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 
 
 class UserDetailView(generics.GenericAPIView):
@@ -349,6 +349,69 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
             print(e)
             return bad_request_response(message='An error occurred while updating the bank account details.')
 
+
+class MyVirtualAccountNumberView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = VirtualAccountSerializer
+
+
+    def get(self, request):
+        user:User =  request.user
+        try:
+            virtual_account = VirtualAccount.objects.get(user=user)
+            return success_response(
+                data= self.serializer_class(virtual_account).data
+            )
+        except:pass
+            
+
+        if not all([
+            user.first_name,
+            user.last_name,
+            user.email,
+            user.phone_number
+        ]):
+            return bad_request_response(
+                message="Make sure you set all your profile completely (first name, last name, email , phone number)"
+            )
+        
+
+        #  create a virtual customer for the user
+        klass = PaystackManager()
+
+        virtual_customer_success, virtual_customer_response = klass.create_virtual_customer(
+            user.first_name,user.last_name,user.email,user.phone_number
+        )
+     
+        if not virtual_customer_success:
+            return internal_server_error_response(message='Unable to retrieve account at the moment')
+        
+
+        customer_ref = virtual_customer_response['customer_code']
+
+        success, response_data = klass.create_virtual_account(customer_ref)
+
+        if not success:return bad_request_response(message=response_data)
+
+        # create the user record
+        virtual_account = VirtualAccount.objects.create(
+            user=request.user,
+            account_number=response_data['account_number'],
+            account_name=response_data['account_name'],
+            bank_name=response_data['bank']['name'],
+            provider_response=response_data,
+            customer_reference=customer_ref
+        )
+
+        return success_response(data=self.serializer_class(virtual_account).data)
+
+
+
+
+
+
+
+        return
 
 
 

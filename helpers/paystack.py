@@ -1,3 +1,4 @@
+import json
 import requests
 from findmytaste import settings
 from account.models import Vendor
@@ -87,6 +88,37 @@ class PaystackManager:
         if response.status_code == 200:
             return True , response.json()
         return False , 'Payment is not successful'
+
+
+    def create_virtual_customer(self,first_name, last_name, email, phone ):
+        url = f'{self.base_url}/customer'
+        payload = json.dumps({
+            'first_name':first_name,
+            'last_name':last_name,
+            'email':email,
+            'phone':phone
+        })
+        response = requests.post(url, headers=self.get_header(), data=payload)
+        
+        if response.ok:
+            return True , response.json()['data']
+        
+        print(response.text)
+        return False , "Account could not be resolve"
+    
+    def create_virtual_account(self,customer_ref):
+        url = f'{self.base_url}/dedicated_account'
+        payload = json.dumps({
+            'customer':customer_ref,
+            'preferred_bank':'test-bank',
+        })
+        response = requests.post(url, headers=self.get_header(), data=payload)
+        
+        if response.ok:
+            return True , response.json()['data']
+        print(response.text)
+        return False , "Account could not be resolve"
+    
 
 
     def resolve_bank_account(self,account_number,bank_code):

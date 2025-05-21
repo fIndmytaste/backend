@@ -1,7 +1,7 @@
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, Notification, Profile, Rider, User, Vendor, VendorRating
+from account.models import Address, Notification, Profile, Rider, User, Vendor, VendorRating, VirtualAccount
 from vendor.serializers import VendorSerializer
 
 class LoginSerializer(serializers.Serializer):
@@ -213,6 +213,15 @@ class VendorRatingSerializer(serializers.ModelSerializer):
         if value < 1 or value > 5:
             raise serializers.ValidationError("Rating must be between 1 and 5.")
         return value
+
+
+
+
+class VirtualAccountSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VirtualAccount
+        excludes = ['user','provider_response','customer_reference']
+
 
 
 

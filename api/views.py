@@ -35,6 +35,4 @@ class ValidateBankAccountNumber(generics.GenericAPIView):
             request.data['account_number'],
             request.data['bank_code'],
         )
-
-        success_ , bank_name = klass.validate_bank(request.data['bank_code'])
-        return success_response(message=bank_name,data=response) if success else bad_request_response(message=response)
+        return success_response(data=response) if success else bad_request_response(message=response)

@@ -334,3 +334,16 @@ class Notification(models.Model):
     read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+
+class VirtualAccount(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    account_number = models.CharField(max_length=20)
+    account_name = models.CharField(max_length=64, null=True,blank=True)
+    bank_name = models.CharField(max_length=64, null=True,blank=True)
+    provider_response = models.JSONField(default=dict)
+    customer_reference = models.CharField(max_length=64, null=True,blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
