@@ -220,7 +220,7 @@ class VendorRatingSerializer(serializers.ModelSerializer):
 class VirtualAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = VirtualAccount
-        excludes = ['user','provider_response','customer_reference']
+        exclude = ['user','provider_response','customer_reference']
 
 
 
