@@ -47,6 +47,8 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
                 message="Invalid category"
             )
         
+        user = request.user
+        
         vendor_exist = Vendor.objects.filter(email=email).first()
         if vendor_exist:
             return bad_request_response(
@@ -55,6 +57,7 @@ class VendorRegisterBusinessView(generics.GenericAPIView):
         
         new_vendor = Vendor.objects.create(
             name=name,
+            user=user,
             category=category_obj,
             description=description,
             email=email,
