@@ -6,9 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
 from account.models import Rider
-from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response
+from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import Order
 from .serializers import (
+    AcceptOrderSerializer,
     OrderSerializer,
     RiderDocumentUploadSerializer, 
     RiderSerializer, 
@@ -83,6 +84,15 @@ class RiderViewSet(viewsets.ModelViewSet):
     queryset = Rider.objects.all()
     serializer_class = RiderSerializer
     permission_classes = [IsAuthenticated]
+
+
+
+    def get_serializer_class(self):
+        if self.action == 'accep_order':
+            return AcceptOrderSerializer
+        return super().get_serializer_class()
+    
+
     
     def get_queryset(self):
         user = self.request.user
@@ -107,6 +117,44 @@ class RiderViewSet(viewsets.ModelViewSet):
             return Response({'status': 'Location updated successfully'})
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+
+
+    @action(detail=True, methods=['get'])
+    def available_order(self, request, pk=None):
+        rider = self.get_object()
+        querset = Order.objects.filter(rider=None, status='pending')
+        
+        return paginate_success_response_with_serializer(
+            self.request,
+            OrderSerializer,
+            querset,
+            page_size=10
+        )
+    
+
+
+    @action(detail=True, methods=['post'])
+    def accep_order(self, request, pk=None):
+        rider = self.get_object()
+
+        order_id = request.data.get('order_id')
+        try:
+            order = Order.objects.get(id=order_id)
+
+        except Order.DoesNotExist:
+            return bad_request_response(
+                message="Order not found",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        order.assign_rider(rider)
+        return success_response(
+            message='Order accepted successfully'
+        )
+       
+        
+
     
     @action(detail=True, methods=['post'])
     def toggle_online_status(self, request, pk=None):

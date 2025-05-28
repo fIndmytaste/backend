@@ -51,3 +51,7 @@ class RiderDocumentUploadSerializer(serializers.Serializer):
     vehicle_registration = serializers.ImageField(required=False)
     vehicle_insurance = serializers.ImageField(required=False)
     profile_photo = serializers.ImageField(required=False)
+
+
+class AcceptOrderSerializer(serializers.Serializer):
+    order_id = serializers.IntegerField()
