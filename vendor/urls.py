@@ -1,4 +1,6 @@
 from django.urls import path
+
+from product.views import VendorRatingListView
 from .views import (
     AllVendorsView,
     BuyerVendorProductListView,
@@ -7,8 +9,10 @@ from .views import (
     ProductGetUpdateDeleteView,
     ProductsListCreateView,
     VendorCategoryView,
-    VendorOrderListView, 
-    VendorRegisterBusinessView
+    VendorOrderListView,
+    VendorRatingCreateView, 
+    VendorRegisterBusinessView,
+    vendor_rating_stats
 )
 
 urlpatterns = [
@@ -23,4 +27,7 @@ urlpatterns = [
     path('orders', VendorOrderListView.as_view(), name='order_list'),
 
     path('<vendor_id>/products', BuyerVendorProductListView.as_view(), name='order_list'),
+    path('vendors/<uuid:vendor_id>/rate/', VendorRatingCreateView.as_view(), name='vendor-rate'),
+    path('vendors/<uuid:vendor_id>/ratings/', VendorRatingListView.as_view(), name='vendor-ratings'),
+    path('vendors/<uuid:vendor_id>/rating-stats/', vendor_rating_stats, name='vendor-rating-stats'),
 ]

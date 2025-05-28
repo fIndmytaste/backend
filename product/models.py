@@ -60,6 +60,12 @@ class Product(models.Model):
     is_featured = models.BooleanField(default=False, help_text="Indicates whether the product is marked for featured.")
     vendor = models.ForeignKey('account.Vendor', on_delete=models.CASCADE, help_text="The vendor selling this product.")
 
+    starting_delivery_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=500.00,
+        help_text="The starting delivery fee for this product.",
+    )
     apply_discount = models.BooleanField(default=False, help_text="Indicates whether a discount is applied to this product.")
     discount_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="The discount percentage on this product (e.g., 20 for 20%).")
     discount_start_date = models.DateTimeField(null=True, blank=True, help_text="The start date of the discount.")

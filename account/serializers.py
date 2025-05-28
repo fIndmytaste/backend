@@ -40,6 +40,7 @@ class  RiderSerializer(serializers.Serializer):
     class Meta:
         model = Rider
         fields = '__all__'
+        ref_name = 'AccountRiderSerializer'
 
 class UserSerializer(serializers.ModelSerializer):
     staff_profile = ProfileSerializer(read_only=True)  

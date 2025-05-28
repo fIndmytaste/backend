@@ -1,14 +1,16 @@
 from rest_framework import status, generics
 from django.db.models import Q, Avg
-from account.models import Vendor
+from account.models import Vendor, VendorRating
+from account.serializers import VendorRatingSerializer
 from helpers.permissions import IsVendor
 from rest_framework.permissions import IsAuthenticated
 from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory
 from product.serializers import OrderSerializer
-from .serializers import VendorCategorySerializer, ProductSerializer,VendorRegisterBusinessSerializer, VendorSerializer
+from .serializers import VendorCategorySerializer, ProductSerializer, VendorRatingCreateSerializer,VendorRegisterBusinessSerializer, VendorSerializer
 from helpers.response.response_format import success_response, bad_request_response,paginate_success_response_with_serializer
 from drf_yasg.utils import swagger_auto_schema
 
+from rest_framework.decorators import api_view
 # Vendor Views
 
 
@@ -521,6 +523,19 @@ class AllVendorsView(generics.GenericAPIView):
     permission_classes = []
     serializer_class = VendorSerializer
     queryset = Vendor.objects.filter(is_featured=True)
+
+
+    def get_queryset(self):
+        queryset = Vendor.objects.filter(is_featured=True)
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search)
+            )
+        return queryset
     
     def get(self, request):
         return success_response(
@@ -528,3 +543,53 @@ class AllVendorsView(generics.GenericAPIView):
         )
 
    
+
+
+class VendorRatingCreateView(generics.CreateAPIView):
+    """View for creating vendor ratings"""
+    serializer_class = VendorRatingCreateSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def perform_create(self, serializer):
+        serializer.save()
+
+
+class VendorRatingListView(generics.ListAPIView):
+    """View for listing all ratings for a specific vendor"""
+    serializer_class = VendorRatingSerializer
+    
+    def get_queryset(self):
+        vendor_id = self.kwargs['vendor_id']
+        return VendorRating.objects.filter(vendor_id=vendor_id).order_by('-created_at')
+
+
+@api_view(['GET'])
+def vendor_rating_stats(request, vendor_id):
+    """Get rating statistics for a vendor"""
+    try:
+        vendor = Vendor.objects.get(id=vendor_id)
+        ratings = vendor.ratings.all()
+        
+        # Rating distribution
+        rating_distribution = {}
+        for i in range(1, 6):
+            count = ratings.filter(rating__gte=i, rating__lt=i+1).count()
+            rating_distribution[f'{i}_star'] = count
+        
+        stats = {
+            'average_rating': ratings.aggregate(avg=Avg('rating'))['avg'] or 0,
+            'total_ratings': ratings.count(),
+            'rating_distribution': rating_distribution,
+            'recent_reviews': VendorRatingSerializer(
+                ratings.filter(comment__isnull=False).exclude(comment='').order_by('-created_at')[:10], 
+                many=True
+            ).data
+        }
+        
+        return success_response(data=stats)
+    except Vendor.DoesNotExist:
+        return bad_request_response(
+            message='Vendor not found',
+            status_code=404
+        )
+

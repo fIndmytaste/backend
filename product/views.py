@@ -1,7 +1,7 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg import openapi
-from django.db.models import F
+from django.db.models import F,Q
 
 from account.models import Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
@@ -93,34 +93,22 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
     """
     Endpoint to get vendors by system category.
     """
-    # permission_classes = [IsAuthenticated]
-    # serializer_class = ProductSerializer
-
-    # @swagger_auto_schema(
-    #     operation_description="Get a list of products belonging to a system category.",
-    #     operation_summary="Retrieve products by system category.",
-    #     responses={
-    #         200: ProductSerializer(many=True),
-    #         400: "Bad Request",
-    #         401: "Unauthorized",
-    #     },
-    #     parameters=[
-    #         {
-    #             'name': 'system_category_id',
-    #             'description': 'The ID of the system category to filter products by.',
-    #             'required': True,
-    #             'type': 'integer',
-    #         }
-    #     ]
-    # )
-    # def get(self, request, system_category_id):
-    #     products = Product.objects.filter(system_category_id=system_category_id)
-    #     serializer = self.serializer_class(products, many=True)
-    #     return success_response(serializer.data)
-
     serializer_class = VendorSerializer
     permission_classes = [IsAuthenticated]
     queryset = Vendor.objects.all()
+
+    def get_queryset(self):
+        queryset = Vendor.objects.all()
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search)
+            )
+        return queryset
+    
 
     @swagger_auto_schema(
         operation_description="Get vendors by system category",
@@ -131,7 +119,7 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
     )
     def get(self, request , system_category_id):
 
-        queryset = Vendor.objects.filter(category__id=system_category_id)
+        queryset = self.get_queryset().filter(category__id=system_category_id)
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,

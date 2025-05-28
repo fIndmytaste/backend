@@ -156,9 +156,6 @@ class Vendor(models.Model):
 
 
 
-
-
-
 class VendorRating(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     vendor = models.ForeignKey(Vendor, related_name='ratings', on_delete=models.CASCADE)
