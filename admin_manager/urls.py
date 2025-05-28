@@ -3,7 +3,8 @@ from django.urls import path
 from admin_manager.views import (
     products as admin_product_view,
     vendor as admin_vendor_view,
-    customer as admin_customer_view
+    customer as admin_customer_view,
+    riders as admin_riders_view,
 )
 
 
@@ -30,6 +31,23 @@ urlpatterns = [
     # orders
     path('orders', admin_product_view.AdminGetAllOrdersAPIView.as_view(), name='admin-orders-list'),
     path('orders/<uuid:id>/', admin_product_view.AdminOrderDetailAPIView.as_view(), name='admin-order-detail'),
+
+
+    # riders
+    path('riders', admin_riders_view.AdminRiderListView.as_view(), name='admin_riders-list'),
+    path('riders/performance-metrics/', 
+         admin_riders_view.AllRidersPerformanceMetricsView.as_view(), 
+         name='all-riders-performance-metrics'),
+    path('riders/<uuid:id>/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_riders-list'),
+    path('riders/<uuid:id>/suspend', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-suspend'),
+    path('riders/<uuid:id>/document', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-suspend'),
+    path('riders/<uuid:id>/orders', admin_riders_view.AdminRiderOrderListView.as_view(), name='admin_rider-orders-list'),
+    path('riders/<uuid:id>/performance-metrics/', 
+         admin_riders_view.RiderPerformanceMetricsView.as_view(), 
+         name='rider-performance-metrics'),
+    
+    
+         
 
     # Customer Management
     path('customers/', admin_customer_view.AdminCustomerListView.as_view(), name='admin-customer-list'),

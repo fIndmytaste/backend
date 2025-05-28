@@ -188,6 +188,7 @@ RIDER_STATUS = [
     ('active', 'Active'),
     ('inactive', 'Inactive'),
     ('suspended', 'Suspended'),
+    ('pending_verification', 'pending_verification'),
 ]
 
 
@@ -284,6 +285,21 @@ class Rider(models.Model):
             status__in=['confirmed', 'ready_for_pickup', 'picked_up', 'in_transit', 'near_delivery']
         ).count()
 
+
+
+class RiderRating(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    rider = models.ForeignKey(Rider, related_name='ratings', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    rating = models.DecimalField(max_digits=3, decimal_places=2)  # e.g., 4.5 out of 5
+    comment = models.TextField(null=True, blank=True)  
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('rider', 'user')  # Ensure each user can rate a vendor only once
+
+    def __str__(self):
+        return f"Rating for {self.rider.user.full_name} by {self.user.email}"
 
 
 

@@ -4,7 +4,8 @@ from django.db.models import Sum
 from django.utils import timezone
 from datetime import timedelta
 
-from account.models import User
+from account.models import Rider, User
+from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
 from product.models import Order, Product, Rating, SystemCategory
