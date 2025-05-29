@@ -200,7 +200,8 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         
         # Calculate vendor payouts
         # Assuming vendor gets 90% of order amount, adjust as needed
-        vendor_payouts = total_earnings * 0.9
+        print(total_earnings)
+        vendor_payouts = float(total_earnings) * 0.9
         
         # Get user metrics
         active_users = User.objects.filter(
