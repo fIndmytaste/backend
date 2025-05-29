@@ -5,13 +5,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
-from account.models import Rider
+from account.models import Rider , RiderRating
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
-from product.models import Order
+from product.models import Order 
 from .serializers import (
     AcceptOrderSerializer,
     OrderSerializer,
-    RiderDocumentUploadSerializer, 
+    RiderDocumentUploadSerializer,
+    RiderRatingCreateSerializer, 
     RiderSerializer, 
     DeliveryTrackingSerializer,
     RiderLocationUpdateSerializer
@@ -135,7 +136,7 @@ class RiderViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=True, methods=['post'])
-    def accep_order(self, request, pk=None):
+    def accept_order(self, request, pk=None):
         rider = self.get_object()
 
         order_id = request.data.get('order_id')
@@ -176,9 +177,53 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
         serializer = OrderSerializer(active_orders, many=True)
         return Response(serializer.data)
+    
+
+    @action(detail=True, methods=['get'])
+    def reviews(self, request, pk=None):
+        rider = self.get_object()
+        reviews = RiderRating.objects.filter(rider=rider).order_by('-created_at')
+        return paginate_success_response_with_serializer(
+            request,
+            RiderRatingCreateSerializer,
+            reviews,
+            page_size=10
+        )
+
+
+    @action(detail=True, methods=['get'])
+    def analytics(self, request, pk=None):
+        rider = self.get_object()
+        
+        orders = Order.objects.filter(rider=rider)
+        total_orders = orders.count()
+        total_earnings = 0
+        # total_earnings = orders.aggregate(Sum('total_cost'))['total_cost__sum']
+        total_pending_delivery = orders.filter(status__in=['picked_up','in_transit']).count()
+        total_completed_delivery = orders.filter(status__in=['delivered']).count()
+        total_rejected_delivery = 0
+        response = {
+            'total_orders': total_orders,
+            'total_earnings': total_earnings,
+            'total_pending_delivery': total_pending_delivery,
+            'total_completed_delivery': total_completed_delivery,
+            'total_rejected_delivery': total_rejected_delivery,
+
+        }
+
+        return success_response(
+            data=response
+        )
 
 
 
+class RiderRatingCreateView(generics.CreateAPIView):
+    """View for creating vendor ratings"""
+    serializer_class = RiderRatingCreateSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def perform_create(self, serializer):
+        serializer.save()
 
 class UploadRiderDocumentView(generics.GenericAPIView):
     serializer_class = RiderDocumentUploadSerializer

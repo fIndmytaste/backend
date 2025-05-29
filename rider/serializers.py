@@ -1,7 +1,7 @@
 # serializers.py
 from rest_framework import serializers
 
-from account.models import Rider
+from account.models import Rider, RiderRating
 from product.models import DeliveryTracking, Order
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -55,3 +55,45 @@ class RiderDocumentUploadSerializer(serializers.Serializer):
 
 class AcceptOrderSerializer(serializers.Serializer):
     order_id = serializers.IntegerField()
+
+
+
+class RiderRatingCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating/updating vendor ratings"""
+    
+    class Meta:
+        model = RiderRating
+        fields = ['rider', 'rating', 'comment']
+    
+    def validate_rating(self, value):
+        """Validate that rating is between 0 and 5"""
+        if value < 0 or value > 5:
+            raise serializers.ValidationError("Rating must be between 0 and 5")
+        return value
+    
+    def create(self, validated_data):
+        """Create or update rating for a vendor by a user"""
+        user = self.context['request'].user
+        rider = validated_data['rider']
+        
+        # Try to get existing rating, if exists update it, otherwise create new
+        rating, created = RiderRating.objects.update_or_create(
+            rider=rider,
+            user=user,
+            defaults={
+                'rating': validated_data['rating'],
+                'comment': validated_data.get('comment', '')
+            }
+        )
+        
+        # Update vendor's overall rating
+        self.update_vendor_rating(rider)
+        
+        return rating
+    
+    def update_vendor_rating(self, vendor):
+        """Update the vendor's overall rating based on all ratings"""
+        avg_rating = vendor.ratings.aggregate(avg_rating=Avg('rating'))['avg_rating']
+        if avg_rating:
+            vendor.rating = round(float(avg_rating), 2)
+            vendor.save(update_fields=['rating'])
