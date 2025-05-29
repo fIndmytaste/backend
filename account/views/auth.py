@@ -39,6 +39,7 @@ class LoginAPIView(generics.GenericAPIView):
 
             # Try to authenticate the user
             user = authenticate(request, email=email, password=password)
+            
             if user is not None and user.is_active:
                 # Create a verification code for the user
 
@@ -72,7 +73,7 @@ class LoginAPIView(generics.GenericAPIView):
 
                 
                 return success_response(
-                    message= f'Please verify your email with the OTP sent. :: {code_obj.code}'
+                    message= f'Please verify your login with the OTP sent. :: {code_obj.code}'
                 )
 
             else:

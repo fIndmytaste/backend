@@ -36,7 +36,7 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = ['id',  'created_at', 'updated_at']
 
 
-class  RiderSerializer(serializers.Serializer):
+class  RiderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Rider
         fields = '__all__'
@@ -57,6 +57,7 @@ class UserSerializer(serializers.ModelSerializer):
         if instance.role == 'rider':
             representation = super().to_representation(instance)
             rider_obj , created = Rider.objects.get_or_create(user=instance)
+            print(rider_obj, created) 
             representation['rider'] = RiderSerializer(rider_obj).data
             return representation
         

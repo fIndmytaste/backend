@@ -222,7 +222,7 @@ class Rider(models.Model):
     vehicle_registration = CloudinaryField('verification', blank=True, null=True, help_text="An image of the vehicle's registration certificate.")
 
     def __str__(self):
-        return f"Rider: {self.user.get_full_name() or self.user.username}"
+        return f"Rider: "
 
     def update_location(self, latitude, longitude):
         from product.models import  DeliveryTracking
