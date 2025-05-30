@@ -49,12 +49,12 @@ class  RiderSerializer(serializers.ModelSerializer):
         ref_name = 'AccountRiderSerializer'
 
 class UserSerializer(serializers.ModelSerializer):
-    staff_profile = ProfileSerializer(read_only=True)  
+    staff_profile = ProfileSerializer(read_only=True)   
     password = serializers.CharField(write_only=True)
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'is_active','role',"password","profile_image",
+        fields = ['id', 'email', 'full_name', 'is_active','role',"password","phone_number","profile_image",
                  'is_verified', 'created_at', 'updated_at', 'staff_profile']
         
 
