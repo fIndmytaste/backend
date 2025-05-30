@@ -29,7 +29,19 @@ class OrderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ['id', 'user', 'status', 'total_amount', 'payment_status', 'items', 'created_at', 'updated_at']
+        fields = [
+            'id', 
+            'user', 
+            'status', 
+            'total_amount', 
+            'payment_status', 
+            'items', 
+            "address",
+            "actual_delivery_time",
+            "track_id",
+            'created_at', 
+            'updated_at'
+        ]
 
     def create(self, validated_data):
         """Create the order and order items."""

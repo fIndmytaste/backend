@@ -175,8 +175,13 @@ class RiderViewSet(viewsets.ModelViewSet):
         active_orders = rider.orders.filter(
             status__in=['confirmed', 'ready_for_pickup', 'picked_up', 'in_transit', 'near_delivery']
         )
-        serializer = OrderSerializer(active_orders, many=True)
-        return Response(serializer.data)
+        return paginate_success_response_with_serializer(
+            request,
+            OrderSerializer,
+            active_orders,
+            page_size=int(request.GET.get('page', 10)),
+        )
+        # return Response(serializer.data)
     
 
     @action(detail=True, methods=['get'])
