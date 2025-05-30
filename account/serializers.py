@@ -36,7 +36,13 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = ['id',  'created_at', 'updated_at']
 
 
+class RiderInlineUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'first_name', 'last_name', 'is_active', "profile_image"]
+
 class  RiderSerializer(serializers.ModelSerializer):
+    user = RiderInlineUserSerializer()
     class Meta:
         model = Rider
         fields = '__all__'
