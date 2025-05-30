@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db.models import Q, Avg
-from account.models import Vendor, VendorRating
+from account.models import User, Vendor, VendorRating
 from product.models import Favorite, Product, ProductImage, Rating, SystemCategory, VendorCategory
 
 class SystemCategorySerializer(serializers.ModelSerializer):
@@ -205,6 +205,10 @@ class VendorRatingSerializer(serializers.ModelSerializer):
         fields = ['id', 'rating', 'comment', 'created_at', 'user_name', 'user_email']
         read_only_fields = ['id', 'created_at', 'user_name', 'user_email']
 
+class VendorInlineUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'first_name', 'last_name', 'is_active', "profile_image"]
 
 class VendorSerializer(serializers.ModelSerializer):
     thumbnail = serializers.SerializerMethodField()
@@ -213,6 +217,7 @@ class VendorSerializer(serializers.ModelSerializer):
     total_ratings = serializers.SerializerMethodField()
     recent_reviews = serializers.SerializerMethodField()
     user_rating = serializers.SerializerMethodField()
+    user = VendorInlineUserSerializer()
     
     class Meta:
         model = Vendor
