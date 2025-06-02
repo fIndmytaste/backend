@@ -14,6 +14,8 @@ from drf_yasg import openapi
 from datetime import timedelta, datetime
 from decimal import Decimal
 
+from rider.serializers import RiderRatingCreateSerializer
+
 
 
 
@@ -71,6 +73,9 @@ class AdminRiderRetrieveDestroyView(generics.RetrieveUpdateAPIView):
         )
     
 
+
+    
+
 class AdminRiderOrderListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = RiderSerializer
@@ -92,6 +97,35 @@ class AdminRiderOrderListView(generics.GenericAPIView):
             orders,
             page_size=int(request.GET.get('page_size',20))
         )
+
+
+
+
+class AdminRiderReviewListView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = RiderRatingCreateSerializer
+    queryset = Rider.objects.all()
+    lookup_field = 'id'
+
+    def get(self,request,id):
+        try:
+            rider = Rider.objects.get(id=id)
+        except:
+            return bad_request_response(
+                message="Rider not found",
+                status_code=404
+            )
+        
+        reviews = RiderRating.objects.filter(rider=rider).order_by('-created_at')
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            reviews,
+            page_size=10
+        )
+
+
+
 
 class RiderPerformanceMetricsView(generics.GenericAPIView):
     """
