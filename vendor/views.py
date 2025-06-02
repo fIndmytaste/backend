@@ -533,7 +533,8 @@ class AllVendorsView(generics.GenericAPIView):
                 Q(name__icontains=search) |
                 Q(email__icontains=search) |
                 Q(city__icontains=search) |
-                Q(state__icontains=search)
+                Q(state__icontains=search)|
+                Q(category__name__icontains=search)
             )
         return queryset
     
