@@ -39,7 +39,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 class RiderInlineUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'is_active', "profile_image"]
+        fields = ['id', 'email', 'first_name', 'last_name', 'is_active', "profile_image","phone_number"]
 
 class  RiderSerializer(serializers.ModelSerializer):
     user = RiderInlineUserSerializer()
