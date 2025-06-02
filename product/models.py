@@ -178,6 +178,12 @@ class Order(models.Model):
         default=PENDING,
         help_text="The payment status of the order."
     )
+    delivery_status = models.CharField(
+        max_length=20,
+        choices=ORDER_STATUS_CHOICES,
+        default='pending',
+        help_text="The delivery status of the order."
+    )
 
     track_id = models.CharField(max_length=100, help_text="Unique tracking ID per user")
     

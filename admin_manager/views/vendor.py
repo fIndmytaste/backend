@@ -2,8 +2,9 @@ from datetime import timedelta, timezone
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 
-from account.models import Vendor
+from account.models import Vendor, VendorRating
 from django.db.models import Sum
+from account.serializers import VendorRatingSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
@@ -314,3 +315,32 @@ class AdminVendorDeleteView(generics.DestroyAPIView):
             return bad_request_response(message="Vendor not found")
 
 
+class AdminVendorRatingListView(generics.ListAPIView):
+    serializer_class = VendorRatingSerializer
+    permission_classes = [IsAuthenticated]
+
+    
+    def get_queryset(self):
+        vendor_id = self.kwargs['vendor_id']
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+            return VendorRating.objects.filter(vendor=vendor)
+        except Vendor.DoesNotExist:
+            return VendorRating.objects.none()  
+
+    @swagger_auto_schema(
+        operation_description="Get all ratings for a specific vendor.",
+        operation_summary="Retrieve ratings for a vendor.",
+        responses={
+            200: VendorRatingSerializer(many=True),
+            404: "Vendor not found.",
+            401: "Authentication required."
+        }
+    )
+    def get(self,request,*args,**kwargs):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            page_size=int(request.GET.get('page_size',10)),
+        )
