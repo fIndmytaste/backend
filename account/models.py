@@ -75,6 +75,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.email
 
 
+    def get_profile_image(self):
+        if self.profile_image:
+            return self.profile_image.url
+        return None
+
+
 
 class Profile(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

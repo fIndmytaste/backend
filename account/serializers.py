@@ -56,23 +56,32 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'full_name', 'is_active','role',"password","phone_number","profile_image",
                  'is_verified', 'created_at', 'updated_at', 'staff_profile']
+
+
+    def get_profile_image(self, obj:User):
+        return obj.get_profile_image()
         
 
     
-    def to_representation(self, instance):
+    def to_representation(self, instance:User):
         if instance.role == 'rider':
             representation = super().to_representation(instance)
             rider_obj , created = Rider.objects.get_or_create(user=instance)
             print(rider_obj, created) 
             representation['rider'] = RiderSerializer(rider_obj).data
+            representation['profile_image'] = instance.get_profile_image()
             return representation
         
         elif instance.role == 'vendor':
             representation = super().to_representation(instance)
             rider_obj , created = Vendor.objects.get_or_create(user=instance)
             representation['vendor'] = VendorSerializer(rider_obj).data
+            representation['profile_image'] = instance.get_profile_image()
             return representation
-        return super().to_representation(instance)
+        
+        representation = super().to_representation(instance)
+        representation['profile_image'] = instance.get_profile_image()
+        return representation
 
 
     def create(self, validated_data):
