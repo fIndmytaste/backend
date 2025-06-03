@@ -10,7 +10,7 @@ from helpers.paystack import PaystackManager
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 
 
-class UserDetailView(generics.GenericAPIView):
+class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     queryset = User.objects.all()
     serializer_class = UserSerializer
