@@ -31,10 +31,15 @@ class AdminVendorListView(generics.ListAPIView):
         }
     )
     def get(self, request):
+        category = request.GET.get("category")
+        if category:
+            vendors = Vendor.objects.filter(category__name=category)
+        else:
+            vendors = Vendor.objects.all()
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset(),
+            vendors,
             page_size=int(request.GET.get('page_size',20))
         )
 

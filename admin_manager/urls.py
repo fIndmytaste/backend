@@ -29,25 +29,21 @@ urlpatterns = [
     path('vendor/<uuid:vendor_id>/delete', admin_vendor_view.AdminVendorDeleteView.as_view(), name='admin_product_view-vendor_delete'),
     path('vendor/<uuid:vendor_id>/ratings', admin_vendor_view.AdminVendorRatingListView.as_view(), name='admin_vendor-ratings-list'),
 
+
+
     # orders
     path('orders', admin_product_view.AdminGetAllOrdersAPIView.as_view(), name='admin-orders-list'),
     path('orders/<uuid:id>/', admin_product_view.AdminOrderDetailAPIView.as_view(), name='admin-order-detail'),
 
-
     # riders
     path('riders', admin_riders_view.AdminRiderListView.as_view(), name='admin_riders-list'),
-    path('riders/performance-metrics/', 
-         admin_riders_view.AllRidersPerformanceMetricsView.as_view(), 
-         name='all-riders-performance-metrics'),
+    path('riders/performance-metrics/', admin_riders_view.AllRidersPerformanceMetricsView.as_view(),name='all-riders-performance-metrics'),
     path('riders/<uuid:id>/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_riders-list'),
     path('riders/<uuid:id>/suspend', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-suspend'),
     path('riders/<uuid:id>/document', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-suspend'),
     path('riders/<uuid:id>/orders', admin_riders_view.AdminRiderOrderListView.as_view(), name='admin_rider-orders-list'),
     path('riders/<uuid:id>/ratings', admin_riders_view.AdminRiderReviewListView.as_view(), name='admin_rider-reviews-list'),
-    path('riders/<uuid:id>/performance-metrics/', 
-         admin_riders_view.RiderPerformanceMetricsView.as_view(), 
-         name='rider-performance-metrics'),
-    
+    path('riders/<uuid:id>/performance-metrics/',admin_riders_view.RiderPerformanceMetricsView.as_view(),name='rider-performance-metrics'),
     
          
 
