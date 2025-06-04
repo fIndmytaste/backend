@@ -401,3 +401,44 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
             return success_response(serializer.data)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found.")
+
+
+
+
+
+class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+    queryset = Order.objects.all()
+
+    def get(self, request, *args, **kwargs):
+        try:
+            order:Order = self.get_object()
+            response = {
+                'user': None,
+                'vendor': None,
+                'rider': None
+
+            }
+            if order.user:
+                response['user'] = dict(
+                    id=order.user.id,
+                    profile_image=order.user.get_profile_image(),
+                    phone_number=order.user.phone_number
+                )
+
+            if order.vendor:
+                response['vendor'] = dict(
+                    id=order.vendor.id,
+                    profile_image=order.vendor.user.get_profile_image(),
+                    phone_number=order.vendor.user.phone_number
+                )
+            if order.rider:
+                response['rider'] = dict(
+                    id=order.rider.id,
+                    profile_image=order.rider.user.get_profile_image(),
+                    phone_number=order.rider.user.phone_number
+                )
+            return success_response(response)
+        except Order.DoesNotExist:
+            return bad_request_response(message="Order not found.")
