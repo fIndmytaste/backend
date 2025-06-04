@@ -35,10 +35,11 @@ class OrderSerializer(serializers.ModelSerializer):
             'status', 
             'total_amount', 
             'payment_status', 
-            'items', 
+            'items',  
             "address",
             "actual_delivery_time",
             "track_id",
+            "delivery_status",
             'created_at', 
             'updated_at'
         ]
