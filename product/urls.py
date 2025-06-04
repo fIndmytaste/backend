@@ -3,6 +3,7 @@ from django.urls import path
 from product.views import ( 
     AddToFavoritesView,
     AllProductsView,
+    DeleteProductImageView,
     HotPickProductsView,
     InternalProductListView,
     OrderDetailView,
@@ -28,6 +29,7 @@ urlpatterns = [
     path('system-categories/<uuid:system_category_id>/vendors', VendorBySystemCategoryView.as_view(), name='VendorBySystemCategoryView-'),
     path('hot-picks/', HotPickProductsView.as_view(), name='hot-pick-products'),
     path('internal-all-products', AllProductsView.as_view(), name='hot-pick-products'),
+    path('product/delete-image', DeleteProductImageView.as_view(), name='DeleteProductImageView'),
     path('product/system-category/<uuid:system_category_id>/', ProductBySystemCategoryView.as_view(), name='products_by_system_category'),
     path('product/system-category/<uuid:system_category_id>/vendors', VendorBySystemCategoryView.as_view(), name='VendorBySystemCategoryView'),
     path('product/<uuid:product_id>/', ProductDetailView.as_view(), name='product_detail'),

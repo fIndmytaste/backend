@@ -7,7 +7,7 @@ from account.models import Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from product.serializers import FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
-from .models import Favorite, Order, Rating, SystemCategory, Product
+from .models import Favorite, Order, ProductImage, Rating, SystemCategory, Product
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
@@ -87,6 +87,21 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         products = Product.objects.filter(system_category_id=system_category_id)
         serializer = self.serializer_class(products, many=True)
         return success_response(serializer.data)
+
+class DeleteProductImageView(generics.GenericAPIView):
+
+    permission_classes = [IsAuthenticated]
+
+
+    def delete(self, request, iamge_id):
+        try:
+            product_image = ProductImage.objects.get(id=iamge_id)
+        except:
+            return bad_request_response(message="Product image not found")
+        
+        product_image.delete()
+        return success_response(message="Product image deleted successfully",status_code=204)
+
 
 
 class VendorBySystemCategoryView(generics.GenericAPIView):
