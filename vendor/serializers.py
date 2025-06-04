@@ -218,6 +218,7 @@ class VendorSerializer(serializers.ModelSerializer):
     recent_reviews = serializers.SerializerMethodField()
     user_rating = serializers.SerializerMethodField()
     user = VendorInlineUserSerializer()
+    category = SystemCategorySerializer()
     
     class Meta:
         model = Vendor
