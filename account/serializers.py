@@ -221,8 +221,9 @@ class UpdateBankAccountSerializer(serializers.Serializer):
 
 
 class VendorRatingSerializer(serializers.ModelSerializer):
+    user = UserSerializer()
     class Meta:
-        model = VendorRating
+        model = VendorRating 
         fields = ['id', 'vendor', 'user', 'rating', 'comment', 'created_at']
         read_only_fields = ['id', 'created_at', 'user']  # user is set automatically in the view
 
