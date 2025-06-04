@@ -134,6 +134,7 @@ class AdminVendorOverviewView(generics.GenericAPIView):
         }
     )
     def get(self, request, vendor_id):
+        from django.utils import timezone
         try:
             vendor = Vendor.objects.get(id=vendor_id)
             time_frame = request.GET.get('time_frame', 'weekly')

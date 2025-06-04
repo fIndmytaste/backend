@@ -1,18 +1,29 @@
 from rest_framework import serializers
-from .models import Favorite, Order, OrderItem, Product, Rating
+from .models import Favorite, Order, OrderItem, Product, Rating, ProductImage
 
 
 
+class ProductImageSerializerClass(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
+    class Meta:
+        model = ProductImage
+        fields = ['id', 'image','is_primary','is_active']
+
+    def get_image(self,obj:ProductImage):
+        return obj.get_image_url()
 class BuyerProductSerializer(serializers.ModelSerializer):
     discounted_price = serializers.SerializerMethodField()
-
+    images = serializers.SerializerMethodField()
     class Meta:
         model = Product
         fields = '__all__'
 
     def get_discounted_price(self, obj):
         return obj.get_discounted_price()
-
+    
+    def get_images(self,obj):
+        return ProductImageSerializerClass(obj.productimage_set.all(),many=True).data
+        
 
 class OrderItemSerializer(serializers.ModelSerializer):
     product = BuyerProductSerializer()

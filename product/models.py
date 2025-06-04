@@ -128,6 +128,10 @@ class ProductImage(models.Model):
     is_active = models.BooleanField(default=True, help_text="Is this image active")
 
 
+    def get_image_url(self):
+        if self.image:
+            return self.image.url
+        return None
 
 class Order(models.Model):
     # Your existing fields...
