@@ -297,3 +297,65 @@ class AdminCustomerOrdersView(generics.ListAPIView):
             
         except User.DoesNotExist:
             return Response({"detail": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+
+
+
+class AdminCustomerOrdersOverviewView(generics.ListAPIView):
+    serializer_class = OrderSerializer  # Assuming you have an OrderSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user_id = self.kwargs.get('user_id')
+        return Order.objects.filter(user_id=user_id).order_by('-created_at')
+    
+    @swagger_auto_schema(
+        operation_description="Get all orders made by a specific customer.",
+        operation_summary="List customer's orders",
+        responses={
+            200: "List of customer orders",
+            404: "Customer Not Found",
+            401: "Unauthorized",
+        }
+    )
+    def get(self, request, user_id):
+        from django.utils import timezone
+        try:
+            # Verify the user exists
+            user = User.objects.get(id=user_id, role='buyer')
+        except User.DoesNotExist:
+            return Response({"detail": "Customer not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        
+        try:
+            time_frame = request.GET.get('time_frame', 'weekly')
+            
+            end_date = timezone.now()
+  
+            # Get orders for this vendor
+            customer_orders = Order.objects.filter(user=user)
+            
+            # Calculate order statistics
+            total_orders = customer_orders.count()
+            active_orders = customer_orders.filter(status='pending').count()
+            completed_orders = customer_orders.filter(status='delivered').count()
+            canceled_orders = customer_orders.filter(status='canceled').count()
+            
+          
+            # Order overview
+            order_overview = {
+                "total_orders": total_orders,
+                "active_orders": active_orders,
+                "completed_orders": completed_orders,
+                "canceled_orders": canceled_orders,
+                "time_frame": time_frame
+            }
+            
+
+            
+            return success_response(data=order_overview)
+
+        except Exception as e:
+            print(e)
+            return internal_server_error_response()
+

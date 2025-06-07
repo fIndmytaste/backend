@@ -55,6 +55,7 @@ urlpatterns = [
     path('customer/<uuid:user_id>/delete/', admin_customer_view.AdminCustomerDeleteView.as_view(), name='admin-customer-delete'),
     path('customer/<uuid:user_id>/ban/', admin_customer_view.AdminCustomerBanView.as_view(), name='admin-customer-ban'),
     path('customer/<uuid:user_id>/orders/', admin_customer_view.AdminCustomerOrdersView.as_view(), name='admin-customer-orders'),
+    path('customer/<uuid:user_id>/orders/overview', admin_customer_view.AdminCustomerOrdersOverviewView.as_view(), name='admin-customer-orders-overview'),
 
 
 ]
