@@ -1,5 +1,5 @@
 from rest_framework import status, generics
-from django.db.models import Q, Avg
+from django.db.models import Q, Avg,Sum
 from account.models import Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.permissions import IsVendor
@@ -7,9 +7,10 @@ from rest_framework.permissions import IsAuthenticated
 from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory
 from product.serializers import OrderSerializer
 from .serializers import VendorCategorySerializer, ProductSerializer, VendorRatingCreateSerializer,VendorRegisterBusinessSerializer, VendorSerializer
-from helpers.response.response_format import success_response, bad_request_response,paginate_success_response_with_serializer
+from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer
 from drf_yasg.utils import swagger_auto_schema
-
+from drf_yasg import openapi 
+from datetime import timedelta
 from rest_framework.decorators import api_view
 # Vendor Views
 
@@ -544,6 +545,123 @@ class AllVendorsView(generics.GenericAPIView):
         )
 
    
+
+
+
+class VendorOverviewView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    
+    @swagger_auto_schema(
+        operation_description="Get vendor overview and performance metrics.",
+        operation_summary="Retrieve comprehensive vendor performance data.",
+        manual_parameters=[
+            openapi.Parameter(
+                'time_frame', 
+                openapi.IN_QUERY, 
+                description="Time period for data (daily, weekly, monthly, yearly)", 
+                type=openapi.TYPE_STRING,
+                default='weekly'
+            ),
+        ],
+        responses={
+            200: "Vendor overview and performance data",
+            404: "Vendor Not Found",
+            401: "Unauthorized",
+        }
+    )
+    def get(self, request):
+        from django.utils import timezone
+        user = request.user
+        try:
+            vendor = Vendor.objects.get(user=user)
+        except:
+            return bad_request_response(message="Vendor Not Found",status_code=404)
+        try:
+            time_frame = request.GET.get('time_frame', 'weekly')
+            
+            # Get date range based on time_frame
+            end_date = timezone.now()
+            if time_frame == 'daily':
+                start_date = end_date - timedelta(days=1)
+            elif time_frame == 'weekly':
+                start_date = end_date - timedelta(days=7)
+            elif time_frame == 'monthly':
+                start_date = end_date - timedelta(days=30)
+            elif time_frame == 'yearly':
+                start_date = end_date - timedelta(days=365)
+            else:
+                start_date = end_date - timedelta(days=7)  # Default to weekly
+            
+            # Get orders for this vendor
+            vendor_orders = Order.objects.filter(vendor=vendor)
+            
+            # Calculate order statistics
+            total_orders = vendor_orders.count()
+            active_orders = vendor_orders.filter(status='pending').count()
+            completed_orders = vendor_orders.filter(status='delivered').count()
+            canceled_orders = vendor_orders.filter(status='canceled').count()
+            
+            # Calculate financial metrics
+            total_earnings = vendor_orders.filter(payment_status='paid').aggregate(
+                total=Sum('total_amount')
+            )['total'] or 0
+            
+            # Calculate payouts (assuming you have a Payout model or similar)
+            # This is a placeholder; adjust according to your actual payment tracking system
+            total_payouts = total_earnings * 0.9  # Example: 90% of earnings go to vendor
+            pending_payouts = 0  # Placeholder - replace with actual calculation
+            
+            # Get recent reports or issues (placeholder)
+            reports_count = 0  # Replace with actual report count if you have such a feature
+            
+            # Business details
+            business_details = {
+                "name": vendor.name,
+                "type": vendor.category.name if vendor.category else "Not specified",
+                "status": "Active" if vendor.is_active else "Inactive",
+                "date_joined": vendor.created_at.strftime("%d/%m/%Y"),
+                "rating": float(vendor.rating),
+                "logo_url": request.build_absolute_uri(vendor.logo.url) if vendor.logo else None
+            }
+            
+            # Order overview
+            order_overview = {
+                "total_orders": total_orders,
+                "active_orders": active_orders,
+                "completed_orders": completed_orders,
+                "canceled_orders": canceled_orders,
+                "time_frame": time_frame
+            }
+            
+            # Sales performance
+            sales_performance = {
+                "total_earnings": float(total_earnings),
+                "total_payouts": float(total_payouts),
+                "pending_payouts": pending_payouts,
+                "time_frame": time_frame
+            }
+            
+            # Reports
+            reports = {
+                "count": reports_count,
+            }
+            
+            response_data = {
+                "business_details": business_details,
+                "order_overview": order_overview,
+                "sales_performance": sales_performance,
+                "reports": reports
+            }
+            
+            return success_response(data=response_data)
+            
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found")
+        except Exception as e:
+            print(e)
+            return internal_server_error_response()
+
+
 
 
 class VendorRatingCreateView(generics.CreateAPIView):
