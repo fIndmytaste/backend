@@ -18,7 +18,7 @@ class Wallet(models.Model):
 
 
     def __str__(self):
-        return f"Wallet for {self.user.username}"
+        return f"Wallet for {self.user.email}"
 
     def deposit(self, amount):
         """
@@ -70,4 +70,4 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.transaction_type} of {self.amount} for {self.wallet.user.username} - {self.status}"
+        return f"{self.transaction_type} of {self.amount} for {self.wallet.user.email} - {self.status}"
