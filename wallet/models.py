@@ -64,6 +64,7 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="transactions")
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     transaction_type = models.CharField(choices=TRANSACTION_TYPES, max_length=10)
+    description = models.TextField(null=True,blank=True)
     status = models.CharField(choices=TRANSACTION_STATUS, max_length=10, default='pending')  # New field
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
