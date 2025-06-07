@@ -34,6 +34,24 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         user = request.user
         serializer = UserSerializer(user)
         return success_response(serializer.data)
+    
+
+    def patch(self, request, *args, **kwargs):
+        """
+        This endpoint updates the authenticated user's details.
+        """
+        user = request.user
+        serializer = UserSerializer(user, data=request.data, partial=True)
+        if serializer.is_valid():
+            email = request.data.get('email')
+            if email:
+                if User.objects.filter(email=email).exclude(id=user.id).exists():
+                    return bad_request_response('Email already exists')
+                
+            serializer.save()
+            return success_response(serializer.data)
+        return bad_request_response(serializer.errors)
+        
 
 
 
@@ -365,11 +383,8 @@ class MyVirtualAccountNumberView(generics.GenericAPIView):
         except:pass
             
         
-        if not user.first_name or user.first_name == '':
-            return bad_request_response(message='Set your first name to proceed.')
-        
-        if not user.last_name or user.last_name == '':
-            return bad_request_response(message='Set your last name to proceed.')
+        if not user.full_name or user.full_name == '':
+            return bad_request_response(message='Set your full name to proceed.')
         
 
         if not user.phone_number or user.phone_number == '':
@@ -378,12 +393,20 @@ class MyVirtualAccountNumberView(generics.GenericAPIView):
         if not user.email or user.email == '':
             return bad_request_response(message='Set your email to proceed.')
 
+        full_name = user.full_name
+        full_name_split = full_name.split(' ')
+        if len(full_name_split) > 1:
+            first_name = full_name_split[0]
+            last_name = full_name_split[1]
+        else:
+            first_name = full_name
+            last_name = ''
 
         #  create a virtual customer for the user
         klass = PaystackManager()
 
         virtual_customer_success, virtual_customer_response = klass.create_virtual_customer(
-            user.first_name,user.last_name,user.email,user.phone_number
+            first_name,last_name,user.email,user.phone_number
         )
      
         if not virtual_customer_success:
