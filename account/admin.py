@@ -15,7 +15,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
-    User, Profile, Address, Vendor, VendorRating, Rider,
+    User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
     VerificationCode, Notification
 )
 
@@ -109,3 +109,6 @@ class NotificationAdmin(admin.ModelAdmin):
     list_filter = ('read',)
     search_fields = ('user__email', 'title')
     readonly_fields = ('created_at', 'updated_at')
+
+
+admin.site.register(RiderRating)
