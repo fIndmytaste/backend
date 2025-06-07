@@ -11,6 +11,7 @@ from wallet.serializers import WalletSerializer, WalletTransactionSerializer
 class WalletBalanceView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = WalletSerializer
+    queryset = Wallet.objects.all()
 
     @swagger_auto_schema(
         operation_description="Retrieve the user's wallet balance.",
@@ -34,6 +35,7 @@ class WalletBalanceView(generics.RetrieveAPIView):
 class WalletTransactionsView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = WalletTransactionSerializer
+    queryset = WalletTransaction.objects.all()
 
     @swagger_auto_schema(
         operation_description="Retrieve a list of transactions associated with the user's wallet.",
