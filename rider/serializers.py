@@ -66,7 +66,7 @@ class RiderRatingCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = RiderRating
-        fields = ['rider','user', 'rating', 'comment']
+        fields = ['rider','user', 'rating', 'comment','created_at']  
     
     def validate_rating(self, value):
         """Validate that rating is between 0 and 5"""
