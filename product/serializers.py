@@ -49,6 +49,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'items',  
             "address",
             "actual_delivery_time",
+            "actual_pickup_time",
             "track_id",
             "delivery_status",
             'created_at', 
