@@ -47,7 +47,7 @@ class Wallet(models.Model):
 
 
 
-class WalletTransaction(models.Model):
+class WalletTransaction(models.Model): # serving as the general transaction table
     TRANSACTION_TYPES = [
         ('deposit', 'Deposit'),
         ('withdrawal', 'Withdrawal'),

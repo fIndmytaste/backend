@@ -54,7 +54,13 @@ class WalletTransactionsView(generics.ListAPIView):
         - 200: Successfully retrieved wallet transactions.
         - 401: Unauthorized access.
         """
-        query_set = self.queryset()
+        transaction_type = request.GET.get('type')
+
+        query_set = self.get_queryset()
+
+        if transaction_type:
+            query_set = query_set.filter(transaction_type=transaction_type)
+
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
