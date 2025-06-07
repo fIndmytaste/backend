@@ -364,17 +364,20 @@ class MyVirtualAccountNumberView(generics.GenericAPIView):
             )
         except:pass
             
-
-        if not all([
-            user.first_name,
-            user.last_name,
-            user.email,
-            user.phone_number
-        ]):
-            return bad_request_response(
-                message="Make sure you set all your profile completely (first name, last name, email , phone number)"
-            )
         
+        if not user.first_name or user.first_name == '':
+            return bad_request_response(message='Set your first name to proceed.')
+        
+        if not user.last_name or user.last_name == '':
+            return bad_request_response(message='Set your last name to proceed.')
+        
+
+        if not user.phone_number or user.phone_number == '':
+            return bad_request_response(message='Set your phone number to proceed.')
+        
+        if not user.email or user.email == '':
+            return bad_request_response(message='Set your email to proceed.')
+
 
         #  create a virtual customer for the user
         klass = PaystackManager()
