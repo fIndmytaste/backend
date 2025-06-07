@@ -1,7 +1,7 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
-
+from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer
 from wallet.models import Wallet, WalletTransaction
 from wallet.serializers import WalletSerializer, WalletTransactionSerializer
 
@@ -26,7 +26,11 @@ class WalletBalanceView(generics.RetrieveAPIView):
         - 200: Successfully retrieved wallet balance.
         - 401: Unauthorized access.
         """
-        return super().get(request, *args, **kwargs)
+        query_set = self.get_queryset()
+
+        return success_response(
+            data=self.serializer_class(query_set.first()).data,
+        )
 
     def get_queryset(self):
         return Wallet.objects.filter(user=self.request.user)
@@ -50,7 +54,13 @@ class WalletTransactionsView(generics.ListAPIView):
         - 200: Successfully retrieved wallet transactions.
         - 401: Unauthorized access.
         """
-        return super().get(request, *args, **kwargs)
+        query_set = self.queryset()
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            query_set,
+            page_size=int(request.GET.get('page_size',10))
+        )
 
     def get_queryset(self):
         return WalletTransaction.objects.filter(user=self.request.user).order_by('-created_at')
