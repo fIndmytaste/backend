@@ -2,6 +2,7 @@
 from rest_framework import serializers
 
 from account.models import Rider, RiderRating
+from account.serializers import UserSerializer
 from product.models import DeliveryTracking, Order
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -60,10 +61,12 @@ class AcceptOrderSerializer(serializers.Serializer):
 
 class RiderRatingCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating vendor ratings"""
+
+    
     
     class Meta:
         model = RiderRating
-        fields = ['rider', 'rating', 'comment']
+        fields = ['rider','user', 'rating', 'comment']
     
     def validate_rating(self, value):
         """Validate that rating is between 0 and 5"""
@@ -97,3 +100,11 @@ class RiderRatingCreateSerializer(serializers.ModelSerializer):
         if avg_rating:
             vendor.rating = round(float(avg_rating), 2)
             vendor.save(update_fields=['rating'])
+
+
+    def to_representation(self, instance:RiderRating):
+        """Return a custom representation of the rating"""
+        response = super().to_representation(instance)
+        if instance.user:
+            response['user'] = UserSerializer(instance.user).data
+        return response

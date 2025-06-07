@@ -104,7 +104,7 @@ class AdminRiderOrderListView(generics.GenericAPIView):
 class AdminRiderReviewListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = RiderRatingCreateSerializer
-    queryset = Rider.objects.all()
+    queryset = Rider.objects.all() 
     lookup_field = 'id'
 
     def get(self,request,id):
