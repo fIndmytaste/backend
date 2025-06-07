@@ -28,7 +28,7 @@ class RiderSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'user', 'created_at', 'updated_at')
     
     def get_user_name(self, obj):
-        return obj.user.get_full_name() or obj.user.username
+        return obj.user.get_full_name() or obj.user.email
 
 
 class DeliveryTrackingSerializer(serializers.ModelSerializer):
