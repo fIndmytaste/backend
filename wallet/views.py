@@ -69,6 +69,6 @@ class WalletTransactionsView(generics.ListAPIView):
         )
 
     def get_queryset(self):
-        return WalletTransaction.objects.filter(user=self.request.user).order_by('-created_at')
+        return WalletTransaction.objects.filter(wallet__user=self.request.user).order_by('-created_at')
 
 
