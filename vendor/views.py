@@ -662,6 +662,41 @@ class VendorOverviewView(generics.GenericAPIView):
             return internal_server_error_response()
 
 
+class VendorOrderDetailAPIView(generics.RetrieveAPIView):
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+    queryset = Order.objects.all()
+
+    @swagger_auto_schema(
+        operation_description="Retrieve detailed information of a specific order by ID.",
+        operation_summary="Admin Order Detail",
+        responses={
+            200: OrderSerializer(),
+            401: "Unauthorized access.",
+            404: "Order not found."
+        },
+        manual_parameters=[
+            openapi.Parameter(
+                'id',
+                openapi.IN_PATH,
+                description="UUID of the order",
+                type=openapi.TYPE_STRING,
+                required=True
+            )
+        ]
+    )
+    def get(self, request, *args, **kwargs):
+        try:
+            order = self.get_object()
+            serializer = self.get_serializer(order)
+            return success_response(serializer.data)
+        except Order.DoesNotExist:
+            return bad_request_response(message="Order not found.")
+
+
+
+
 
 
 class VendorRatingCreateView(generics.CreateAPIView):
