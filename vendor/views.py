@@ -608,7 +608,7 @@ class VendorOverviewView(generics.GenericAPIView):
             
             # Calculate payouts (assuming you have a Payout model or similar)
             # This is a placeholder; adjust according to your actual payment tracking system
-            total_payouts = total_earnings * 0.9  # Example: 90% of earnings go to vendor
+            total_payouts = float(total_earnings) * 0.9  # Example: 90% of earnings go to vendor
             pending_payouts = 0  # Placeholder - replace with actual calculation
             
             # Get recent reports or issues (placeholder)
