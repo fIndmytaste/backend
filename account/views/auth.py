@@ -335,7 +335,7 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         # Send email with verification code
         try:
             emailService.send_verification_code(
-                email=valid_user.email,
+                user_email=valid_user.email,
                 user_name=valid_user.full_name,
                 verification_code=code_obj.code
             )
@@ -405,7 +405,7 @@ class RegisterRiderAPIView(generics.GenericAPIView):
         # Send email with verification code
         try:
             emailService.send_verification_code(
-                email=valid_user.email,
+                user_email=valid_user.email,
                 user_name=valid_user.full_name,
                 verification_code=code_obj.code
             )
