@@ -97,7 +97,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'system_category', 'category', 'stock', 'is_active',
             'is_delete', 'is_featured', 'views', 'discounted_price', 'images',
             'average_rating', 'total_ratings', 'rating_distribution', 
-            'recent_reviews', 'user_rating', 'has_purchased'
+            'recent_reviews', 'user_rating', 'has_purchased','variants'
         ]
 
     def to_representation(self, instance: Product):
