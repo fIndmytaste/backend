@@ -88,6 +88,7 @@ class ProductSerializer(serializers.ModelSerializer):
     recent_reviews = serializers.SerializerMethodField()
     user_rating = serializers.SerializerMethodField()
     has_purchased = serializers.SerializerMethodField()
+    variants = ProductVariantSerializer(many=True, required=False)
 
     class Meta:
         model = Product
