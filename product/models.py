@@ -84,6 +84,7 @@ class Product(models.Model):
         related_name='variants',
         help_text="If this product is a variant, this points to the main product."
     )
+    variant_category_name = models.CharField(max_length=100, null=True, blank=True)
 
     def __str__(self):
         return self.name
