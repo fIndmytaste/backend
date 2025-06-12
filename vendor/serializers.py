@@ -73,6 +73,12 @@ class RatingSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'user_name', 'user_email', 'user_username']
 
 
+class ProductVariantSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        exclude = ['parent', 'vendor', 'views', 'purchases', 'created_at', 'updated_at']
+
+
 class ProductSerializer(serializers.ModelSerializer):
     discounted_price = serializers.SerializerMethodField()
     images = ProductImageSerializer(many=True, read_only=True)
@@ -97,7 +103,13 @@ class ProductSerializer(serializers.ModelSerializer):
         images = ProductImage.objects.filter(product=instance)
         data = super().to_representation(instance)
         data['images'] = ProductImageSerializer(images, many=True, context=self.context).data
+
+        if instance.variants.exists():
+            data['variants'] = ProductVariantSerializer(instance.variants.all(), many=True).data
+        else:
+            data['variants'] = []
         return data
+    
 
     def get_discounted_price(self, obj):
         return obj.get_discounted_price()
@@ -146,11 +158,31 @@ class ProductSerializer(serializers.ModelSerializer):
             return False  # Placeholder - implement based on your order model
         return False
 
+    # def create(self, validated_data):
+    #     user = self.context['request'].user
+    #     vendor = Vendor.objects.get(user=user)
+    #     validated_data['vendor'] = vendor
+    #     return super().create(validated_data)
+
     def create(self, validated_data):
-        user = self.context['request'].user
-        vendor = Vendor.objects.get(user=user)
-        validated_data['vendor'] = vendor
-        return super().create(validated_data)
+        request = self.context['request']
+        vendor = Vendor.objects.get(user=request.user)
+
+        # Extract variants from validated_data if present
+        variants_data = validated_data.pop('variants', [])
+
+        # Create the main product
+        product = Product.objects.create(vendor=vendor, **validated_data)
+
+        # Create each variant linked to this product
+        for variant_data in variants_data:
+            Product.objects.create(
+                parent=product,
+                vendor=vendor,
+                **variant_data
+            )
+
+        return product
 
 
 

@@ -76,6 +76,15 @@ class Product(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the product was created.")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the product was last updated.")
 
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='variants',
+        help_text="If this product is a variant, this points to the main product."
+    )
+
     def __str__(self):
         return self.name
 

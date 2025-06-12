@@ -34,3 +34,17 @@ urlpatterns = [
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+
+# from django.core.mail import send_mail
+
+# res = send_mail(
+#     "Subject here",
+#     "Here is the message.",
+#     "from@example.com",
+#     ["programmerolakay@gmail.com"],
+#     fail_silently=False,
+# )
+
+# print(res)
