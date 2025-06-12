@@ -47,6 +47,37 @@ class AdminVendorListView(generics.ListAPIView):
 
 
 
+class AdminMarketPlaceVendorListView(generics.ListAPIView):
+    serializer_class = VendorSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Vendor.objects.all()
+
+    @swagger_auto_schema(
+        operation_description="Get the details of a vendor.",
+        operation_summary="Retrieve the details of a specific vendor.",
+        responses={
+            200: VendorSerializer,
+            404: "Vendor Not Found",
+            401: "Unauthorized",
+        }
+    )
+    def get(self, request):
+        category = request.GET.get("category")
+        if category:
+            vendors = Vendor.objects.filter(category__name__icontains='market')
+        else:
+            vendors = Vendor.objects.all()
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            vendors,
+            page_size=int(request.GET.get('page_size',20))
+        )
+
+
+
+
+
 
 # class AdminVendorDetailView(generics.GenericAPIView):
 #     serializer_class = VendorSerializer
