@@ -294,6 +294,86 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
 
 
 
+class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Order.objects.all().order_by('-created_at')
+
+
+    def get_queryset(self,vendor_id):
+        queryset = Order.objects.filter(vendor__id=vendor_id).order_by('-created_at')
+        track_id = self.request.GET.get('track_id')
+        status = self.request.GET.get('status')
+
+        
+
+        if track_id:
+            queryset = queryset.filter(track_id__icontains=track_id)
+
+        if status:
+            queryset = queryset.filter(status__iexact=status)
+
+        return queryset
+
+    @swagger_auto_schema(
+        operation_summary="List All Orders (Admin)",
+        operation_description="Retrieve a paginated list of all orders. Supports filtering by track ID and order status.",
+        manual_parameters=[
+            openapi.Parameter(
+                'track_id',
+                openapi.IN_QUERY,
+                description="Search orders by tracking ID (partial match allowed)",
+                type=openapi.TYPE_STRING,
+                required=False
+            ),
+            openapi.Parameter(
+                'status',
+                openapi.IN_QUERY,
+                description="Filter orders by status (e.g., pending, shipped, delivered, canceled)",
+                type=openapi.TYPE_STRING,
+                enum=['pending', 'shipped', 'delivered', 'canceled'],
+                required=False
+            ),
+            openapi.Parameter(
+                'page_size',
+                openapi.IN_QUERY,
+                description="Number of orders to return per page",
+                type=openapi.TYPE_INTEGER,
+                required=False
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                description="List of orders",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        "success": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                        "data": openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                description="Order object (serialized)",
+                            )
+                        )
+                    }
+                )
+            ),
+            401: "Unauthorized"
+        }
+    )
+    def get(self,request,vendor_id):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(vendor_id),
+            page_size=int(request.GET.get('page_size',20))
+        )
+
+
+
+
+
 class AdminGetAllOrdersAPIView(generics.GenericAPIView):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]

@@ -194,6 +194,7 @@ class RiderPerformanceMetricsView(generics.GenericAPIView):
         serializer = self.serializer_class(data=metrics)
         if serializer.is_valid():
             return success_response(
+                data=serializer.data,
                 message='Performance metrics retrieved successfully'
             )
         
