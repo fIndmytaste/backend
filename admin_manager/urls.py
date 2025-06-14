@@ -5,6 +5,7 @@ from admin_manager.views import (
     vendor as admin_vendor_view,
     customer as admin_customer_view,
     riders as admin_riders_view,
+    transactions as transactions_view,
 )
 
 
@@ -59,6 +60,10 @@ urlpatterns = [
     path('customer/<uuid:user_id>/ban/', admin_customer_view.AdminCustomerBanView.as_view(), name='admin-customer-ban'),
     path('customer/<uuid:user_id>/orders/', admin_customer_view.AdminCustomerOrdersView.as_view(), name='admin-customer-orders'),
     path('customer/<uuid:user_id>/orders/overview', admin_customer_view.AdminCustomerOrdersOverviewView.as_view(), name='admin-customer-orders-overview'),
+
+
+
+    path('transactions', transactions_view.AdminGetTransactionsListView.as_view(), name='transactions_list'),
 
 
 ]
