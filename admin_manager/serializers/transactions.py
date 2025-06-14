@@ -15,6 +15,7 @@ class AdminWalletTransactionSerializer(serializers.ModelSerializer):
             return {
                 'id':obj.wallet.user.id,
                 'full_name':obj.wallet.user.full_name,
+                "role":obj.wallet.user.role
             }
         else:
             return None
