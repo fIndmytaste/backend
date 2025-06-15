@@ -172,16 +172,28 @@ class ProductSerializer(serializers.ModelSerializer):
         # Extract variants from validated_data if present
         variants_data = validated_data.pop('variants', [])
 
+
         # Create the main product
         product = Product.objects.create(vendor=vendor, **validated_data)
 
+
+        
+
+
         # Create each variant linked to this product
         for variant_data in variants_data:
-            Product.objects.create(
-                parent=product,
-                vendor=vendor,
-                **variant_data
-            )
+            names = variant_data.get('name',[])
+            prices = variant_data.get('price',[])
+
+            if len(prices) == len(names):
+                for name, price in zip(names, prices):
+                    Product.objects.create(
+                        parent=product,
+                        vendor=vendor,
+                        name=name,
+                        price=price,
+                        variant_category_name=variant_data.get('variant_category_name','')
+                    )
 
         return product
 
