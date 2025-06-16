@@ -234,7 +234,7 @@ class HotPickProductsView(generics.GenericAPIView):
 
 class ProductDetailView(generics.GenericAPIView):
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get the details of a product.",
@@ -249,6 +249,19 @@ class ProductDetailView(generics.GenericAPIView):
         product = Product.objects.get(id=product_id)
         serializer = self.serializer_class(product)
         return success_response(serializer.data)
+
+
+
+class InternalProductDetailView(generics.GenericAPIView):
+    serializer_class = ProductSerializer
+    # permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ProductSerializer(data=request.data,context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return success_response(serializer.data)
+
 
 
 

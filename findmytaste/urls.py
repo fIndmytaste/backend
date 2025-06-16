@@ -42,9 +42,10 @@ if settings.DEBUG:
 # res = send_mail(
 #     "Subject here",
 #     "Here is the message.",
-#     "from@example.com",
-#     ["programmerolakay@gmail.com"],
+#     "admin@findmytaste.com.ng",
+#     ["programmerolakay@gmail.com","olakaycoder1@gmail.com","olanrewajutaiwo185@gmail.com"],
 #     fail_silently=False,
 # )
 
 # print(res)
+

@@ -5,6 +5,7 @@ from product.views import (
     AllProductsView,
     DeleteProductImageView,
     HotPickProductsView,
+    InternalProductDetailView,
     InternalProductListView,
     OrderDetailView,
     OrderListCreateView,
@@ -47,4 +48,11 @@ urlpatterns = [
 
     path('user/favorites/', UserFavoriteListView.as_view(), name='user_favorites_list'),
     path('user/favorites/<uuid:product_id>/', AddToFavoritesView.as_view(), name='add_to_favorites'),
+
+
+    path('<uuid:product_id>/', ProductDetailView.as_view(), name='add_to_favorites'),
+    path('internal-products', InternalProductDetailView.as_view(), name='add_to_favorites'),
+
+
+    
 ]

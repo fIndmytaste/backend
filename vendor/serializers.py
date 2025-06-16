@@ -105,10 +105,8 @@ class ProductSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         data['images'] = ProductImageSerializer(images, many=True, context=self.context).data
 
-        if instance.variants.exists():
-            data['variants'] = ProductVariantSerializer(instance.variants.all(), many=True).data
-        else:
-            data['variants'] = []
+        data['variants'] = ProductVariantSerializer(Product.objects.filter(parent=instance), many=True).data 
+    
         return data
     
 
@@ -167,33 +165,35 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context['request']
-        vendor = Vendor.objects.get(user=request.user)
+
+        # vendor = Vendor.objects.get(user=request.user)
+
+        vendor  = Vendor.objects.first()
 
         # Extract variants from validated_data if present
-        variants_data = validated_data.pop('variants', [])
-
+        variants_data = validated_data.pop('product_variants', [])
+        variants_data_request = request.data.get("product_variants",[])
 
         # Create the main product
         product = Product.objects.create(vendor=vendor, **validated_data)
 
 
-        
-
-
         # Create each variant linked to this product
-        for variant_data in variants_data:
+        for variant_data in variants_data_request:
             names = variant_data.get('name',[])
             prices = variant_data.get('price',[])
+       
 
             if len(prices) == len(names):
                 for name, price in zip(names, prices):
-                    Product.objects.create(
+                    p = Product.objects.create(
                         parent=product,
                         vendor=vendor,
                         name=name,
                         price=price,
                         variant_category_name=variant_data.get('variant_category_name','')
                     )
+                    print(p)
 
         return product
 

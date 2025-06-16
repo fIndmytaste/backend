@@ -64,6 +64,7 @@ urlpatterns = [
 
 
     path('transactions', transactions_view.AdminGetTransactionsListView.as_view(), name='transactions_list'),
+    path('transactions/<uuid:transaction_id>', transactions_view.AdminGetTransactionDetailView.as_view(), name='transactions_detail'),
 
 
 ]
