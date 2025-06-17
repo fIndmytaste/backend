@@ -254,7 +254,7 @@ class ProductDetailView(generics.GenericAPIView):
 
 class InternalProductDetailView(generics.GenericAPIView):
     serializer_class = ProductSerializer
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = ProductSerializer(data=request.data,context={'request': request})

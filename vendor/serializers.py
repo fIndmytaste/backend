@@ -166,9 +166,8 @@ class ProductSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context['request']
 
-        # vendor = Vendor.objects.get(user=request.user)
+        vendor = Vendor.objects.get(user=request.user)
 
-        vendor  = Vendor.objects.first()
 
         # Extract variants from validated_data if present
         variants_data = validated_data.pop('product_variants', [])
