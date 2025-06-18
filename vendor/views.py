@@ -158,7 +158,7 @@ class ProductsListCreateView(generics.GenericAPIView):
     - Vendors can retrieve a list of their products with filters.
     - Vendors can also create new products.
     """
-    permission_classes = [IsVendor]  
+    # permission_classes = [IsVendor]  
     serializer_class = ProductSerializer
 
     @swagger_auto_schema(
