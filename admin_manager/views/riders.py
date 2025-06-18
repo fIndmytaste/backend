@@ -4,7 +4,7 @@ from django.db.models import Sum
 from django.utils import timezone
 from django.db.models import Avg, Count, Q, DecimalField
 from account.models import Rider, RiderRating, User
-from account.serializers import RiderSerializer
+from account.serializers import RiderDocumentverificationSerializer, RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from admin_manager.serializers.riders import RiderPerformanceMetricsSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response,internal_server_error_response
@@ -53,12 +53,23 @@ class AdminRiderRetrieveDestroyView(generics.RetrieveUpdateDestroyAPIView):
         super().patch(request, *args, **kwargs)
         return success_response(
             message="Rider deleted successfully",
-            status_code=204
         )
     
     
 
+class AdminRiderDocumentverificationView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = RiderDocumentverificationSerializer
+    queryset = Rider.objects.all()
+    lookup_field = 'id'
 
+    
+    def patch(self, request, *args, **kwargs):
+        super().patch(request, *args, **kwargs)
+        return success_response(
+            message="Rider document status updated successfully",
+        )
+    
     
 
 class AdminRiderOrderListView(generics.GenericAPIView):

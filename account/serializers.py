@@ -48,6 +48,14 @@ class  RiderSerializer(serializers.ModelSerializer):
         fields = '__all__'
         ref_name = 'AccountRiderSerializer'
 
+
+class  RiderDocumentverificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Rider
+        fields = ['document_status']
+
+
+
 class UserSerializer(serializers.ModelSerializer):
     staff_profile = ProfileSerializer(read_only=True)   
     password = serializers.CharField(write_only=True)

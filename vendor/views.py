@@ -244,6 +244,10 @@ class ProductsListCreateView(generics.GenericAPIView):
         - The newly created product.
         """
         # Handle product data
+
+        print("********"*10)
+        print(request.data)
+        print("********"*10)
         serializer = self.serializer_class(data=request.data,context={'request': request})
         serializer.is_valid(raise_exception=True)
         product = serializer.save()

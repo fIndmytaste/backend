@@ -177,6 +177,9 @@ class ProductSerializer(serializers.ModelSerializer):
         product = Product.objects.create(vendor=vendor, **validated_data)
 
 
+        if variants_data_request and isinstance(variants_data_request, str):
+            variants_data_request = eval(variants_data_request)
+        
         # Create each variant linked to this product
         for variant_data in variants_data_request:
             variant_category_name = variant_data.get('variant_category_name')

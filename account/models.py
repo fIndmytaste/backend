@@ -192,6 +192,14 @@ RIDER_STATUS = [
     ('inactive', 'Inactive'),
     ('suspended', 'Suspended'),
     ('pending_verification', 'pending_verification'),
+    ('document_rejected', 'Document rejected'),
+]
+
+RIDER_DOCUMENT_STATUS = [
+    ('pending', 'apprpendingoved'),
+    ('approved', 'approved'),
+    ('submiited', 'submiited'),
+    ('rejected', 'rejected'),
 ]
 
 
@@ -206,6 +214,7 @@ class Rider(models.Model):
 
     status = models.CharField(max_length=50, choices=RIDER_STATUS, default='inactive')
     is_verified = models.BooleanField(default=False)
+    document_status = models.CharField(max_length=50, choices=RIDER_DOCUMENT_STATUS, default='pending')
     
     # Add current location fields
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
