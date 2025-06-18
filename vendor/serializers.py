@@ -185,9 +185,13 @@ class ProductSerializer(serializers.ModelSerializer):
         
         # Create each variant linked to this product
         for variant_data in variants_data_request:
+            print("========="*10)
+            print(variant_data)
+            print(type(variant_data))
+
             if isinstance(variant_data, str):
                 variant_data = eval(variant_data)
-                
+
             variant_category_name = variant_data.get('variant_category_name')
             variants_list = variant_data.get('variants',[])
             # prices = variant_data.get('price',[])
