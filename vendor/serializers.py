@@ -179,20 +179,18 @@ class ProductSerializer(serializers.ModelSerializer):
 
         # Create each variant linked to this product
         for variant_data in variants_data_request:
-            names = variant_data.get('name',[])
-            prices = variant_data.get('price',[])
-       
-
-            if len(prices) == len(names):
-                for name, price in zip(names, prices):
-                    p = Product.objects.create(
-                        parent=product,
-                        vendor=vendor,
-                        name=name,
-                        price=price,
-                        variant_category_name=variant_data.get('variant_category_name','')
-                    )
-                    print(p)
+            variant_category_name = variant_data.get('variant_category_name')
+            variants_list = variant_data.get('variants',[])
+            # prices = variant_data.get('price',[])
+            for prod in variants_list:
+                p = Product.objects.create(
+                    parent=product,
+                    vendor=vendor,
+                    name=prod['name'],
+                    price=prod['price'],
+                    variant_category_name=variant_category_name
+                )
+                print(p)
 
         return product
 
