@@ -35,27 +35,10 @@ class AdminRiderListView(generics.GenericAPIView):
     
 
 
-class AdminRiderRetrieveDestroyView(generics.RetrieveDestroyAPIView):
-    permission_classes = [IsAuthenticated]
-    serializer_class = RiderSerializer
-    queryset = Rider.objects.all()
-    lookup_field = 'id'
-
-    def get(self,request,*args,**kwargs):
-        return success_response(
-            self.serializer_class(self.get_object()).data
-        )
-    
-    def delete(self, request, *args, **kwargs):
-        self.destroy(request)
-        return success_response(
-            message="Rider deleted successfully",
-            status_code=204
-        )
     
 
 
-class AdminRiderRetrieveDestroyView(generics.RetrieveUpdateAPIView):
+class AdminRiderRetrieveDestroyView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = RiderSerializer
     queryset = Rider.objects.all()
@@ -67,11 +50,12 @@ class AdminRiderRetrieveDestroyView(generics.RetrieveUpdateAPIView):
         )
     
     def patch(self, request, *args, **kwargs):
-        self.destroy(request)
+        super().patch(request, *args, **kwargs)
         return success_response(
             message="Rider deleted successfully",
             status_code=204
         )
+    
     
 
 
