@@ -170,8 +170,8 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
         # Extract variants from validated_data if present
-        variants_data = validated_data.pop('product_variants', [])
-        variants_data_request = request.data.get("product_variants",[])
+        variants_data = validated_data.pop('product_variant', [])
+        variants_data_request = request.data.get("product_variant",[])
 
 
         print(variants_data_request)
