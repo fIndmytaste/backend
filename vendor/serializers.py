@@ -173,6 +173,9 @@ class ProductSerializer(serializers.ModelSerializer):
         variants_data = validated_data.pop('product_variants', [])
         variants_data_request = request.data.get("product_variants",[])
 
+
+        print(variants_data_request)
+        print(type(variants_data_request))
         # Create the main product
         product = Product.objects.create(vendor=vendor, **validated_data)
 
