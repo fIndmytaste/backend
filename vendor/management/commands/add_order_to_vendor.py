@@ -11,7 +11,7 @@ class Command(BaseCommand):
         admin_user = User.objects.filter(is_admin=True).first()
         vendor = Vendor.objects.get(id='02debcb2-00b1-48b6-baf1-2e017ae2fba1')
 
-        products = Product.objects.filter(vendor=vendor)
+        products = Product.objects.filter(parent=None,vendor=vendor)
 
         if not products.exists():
             self.stdout.write(self.style.ERROR('Vendor has no products. Cannot create orders.'))

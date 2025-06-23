@@ -181,7 +181,7 @@ class ProductsListCreateView(generics.GenericAPIView):
         Returns:
         - A list of products matching the provided filters.
         """
-        query_filter = Q()
+        query_filter = Q(parent=None)
 
         # Search functionality
         search_query = request.GET.get('search', None)
@@ -405,7 +405,7 @@ class BuyerVendorProductListView(generics.ListAPIView):
     
     def get_queryset(self):
         vendor_id = self.kwargs.get('vendor_id')
-        return Product.objects.filter(vendor__id=vendor_id)
+        return Product.objects.filter(parent=None,vendor__id=vendor_id)
     
     @swagger_auto_schema(
         operation_description="Get all products belonging to a specific vendor.",
@@ -425,7 +425,7 @@ class BuyerVendorProductListView(generics.ListAPIView):
             return paginate_success_response_with_serializer(
                 request,
                 self.serializer_class,
-                Product.objects.filter(vendor=vendor),
+                Product.objects.filter(parent=None,vendor=vendor),
                 page_size=int(request.GET.get('page_size', 20))
             )
         except Vendor.DoesNotExist:

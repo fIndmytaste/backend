@@ -84,7 +84,7 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, system_category_id):
-        products = Product.objects.filter(system_category_id=system_category_id)
+        products = Product.objects.filter(parent=None,system_category_id=system_category_id)
         serializer = self.serializer_class(products, many=True)
         return success_response(serializer.data)
 
@@ -184,7 +184,7 @@ class HotPickProductsView(generics.GenericAPIView):
         system_categories = self.get_system_categories_from_products(combined_products)
 
         # Filter products by system categories
-        filtered_products = self.get_products_by_system_categories(system_categories)
+        filtered_products = self.get_products_by_system_categories(system_categories).filter(parent=None)
 
         # Limit the results to 'limit' number of products
         serializer = self.serializer_class(filtered_products[:limit], many=True)
@@ -392,7 +392,7 @@ class ProductByVendorCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, vendor_category_id):
-        products = Product.objects.filter(category_id=vendor_category_id)
+        products = Product.objects.filter(parent=None,category_id=vendor_category_id)
         serializer = self.serializer_class(products, many=True)
         return success_response(serializer.data)
 

@@ -261,7 +261,7 @@ class AdminVendorProductListView(generics.ListAPIView):
     
     def get_queryset(self):
         vendor_id = self.kwargs.get('vendor_id')
-        return Product.objects.filter(vendor__id=vendor_id)
+        return Product.objects.filter(parent=None,vendor__id=vendor_id)
     
     @swagger_auto_schema(
         operation_description="Get all products belonging to a specific vendor.",
