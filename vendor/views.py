@@ -550,6 +550,36 @@ class AllVendorsView(generics.GenericAPIView):
 
    
 
+class AllVendorsNewView(generics.GenericAPIView):
+    permission_classes = []
+    serializer_class = VendorSerializer
+    queryset = Vendor.objects.filter(is_featured=True)
+
+
+    def get_queryset(self):
+        queryset = Vendor.objects.filter(is_featured=True)
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search)|
+                Q(category__name__icontains=search)
+            )
+        return queryset
+    
+    def get(self, request):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            10
+        )
+
+   
+
+
 
 
 class VendorOverviewView(generics.GenericAPIView):

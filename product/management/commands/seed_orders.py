@@ -13,6 +13,20 @@ class Command(BaseCommand):
     help = "Seed 20 orders for the first user"
 
     def handle(self, *args, **kwargs):
+
+        user = User.objects.get(email='st.jennyandy@gmail.com')
+
+        print(user)
+
+        orders = Order.objects.all()
+
+        for order in orders:
+            print(order.user.email)
+        
+
+
+
+        return
         user = User.objects.first()
         if not user:
             self.stdout.write(self.style.ERROR("❌ No user found in the database."))
