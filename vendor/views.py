@@ -557,7 +557,7 @@ class AllVendorsNewView(generics.GenericAPIView):
 
 
     def get_queryset(self):
-        queryset = Vendor.objects.filter(is_featured=True)
+        queryset = Vendor.objects.all().order_by('-created_at')
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
