@@ -58,8 +58,12 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """Create the order and order items."""
+        # get the user from frequest
+        request = self.context.get('request')
+        user = request.user if request else None
+
         items_data = validated_data.pop('items')
-        order = Order.objects.create(**validated_data)
+        order = Order.objects.create(user=user, **validated_data)
 
         # Create order items and calculate total amount
         for item_data in items_data:
