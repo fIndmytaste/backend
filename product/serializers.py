@@ -63,8 +63,12 @@ class OrderSerializer(serializers.ModelSerializer):
 
         # Create order items and calculate total amount
         for item_data in items_data:
-            product = item_data['product']
-            OrderItem.objects.create(order=order, product=product, **item_data)
+            try:
+                product = Product.objects.get(id=item_data['product'])
+            except:
+                raise serializers.ValidationError({'product': 'Product not found'})
+            
+            OrderItem.objects.create(order=order, product=product, quantity=item_data['quantity'], price=product.price)
 
         order.update_total_amount()
         return order
