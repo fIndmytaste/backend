@@ -293,6 +293,23 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
 
 
 
+class AdminGetMarketPlaceRiderListView(generics.GenericAPIView):
+    permission_classes = []
+    # permission_classes = [IsAuthenticated]
+    serializer_class = RiderSerializer
+    queryset = Rider.objects.all()
+
+
+    def get(self,request):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            page_size=int(request.GET.get('page_size',20)),
+            addition_serializer_data={"rider_type":'marketplace'}
+        )
+    
+
 
 class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
     serializer_class = OrderSerializer

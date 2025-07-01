@@ -25,6 +25,7 @@ urlpatterns = [
     path('marketplace-vendors', admin_vendor_view.AdminMarketPlaceVendorListView.as_view(), name='admin_product_view-AdminMarketPlaceVendorListView'),
     path('marketplace-vendors/<uuid:vendor_id>', admin_vendor_view.AdminVendorDetailView.as_view(), name='admin_product_view-AdminMarketPlaceVendorListView'),
     path('marketplace-vendors/<uuid:vendor_id>/orders', admin_product_view.AdminGetMarketPlaceVendorOrdersAPIView.as_view(), name='admin_product_view-AdminMarketPlaceVendorListView'),
+    path('marketplace-riders', admin_product_view.AdminGetMarketPlaceRiderListView.as_view(), name='admin_product_view-AdminGetMarketPlaceRiderListView'),
     path('vendors', admin_vendor_view.AdminVendorListView.as_view(), name='admin_product_view-vendor_list'),
     path('vendor/<uuid:vendor_id>/', admin_vendor_view.AdminVendorDetailView.as_view(), name='admin_product_view-vendor_detail'),
     path('vendor/<uuid:vendor_id>/products', admin_vendor_view.AdminVendorProductListView.as_view(), name='admin_product_view-vendor_products'),

@@ -62,7 +62,7 @@ def paginate_success_response(request, data=[],page_size=10):
 
 
 
-def paginate_success_response_with_serializer(request, serializer, data=[], page_size=10):
+def paginate_success_response_with_serializer(request, serializer, data=[], page_size=10, addition_serializer_data=None):
     from django.core.paginator import Paginator, EmptyPage
     # Step 1: Set up the paginator
     paginator = Paginator(data, page_size)
@@ -73,7 +73,7 @@ def paginate_success_response_with_serializer(request, serializer, data=[], page
         page = paginator.page(paginator.num_pages)  # Return the last page if the page number is out of range
     
     # Step 2: Serialize the paginated data
-    transactions_serializer = serializer(page.object_list, many=True, context={'request': request})
+    transactions_serializer = serializer(page.object_list, many=True, context={'request': request,'addition_serializer_data':addition_serializer_data})
 
     # Step 3: Build URLs for the next and previous pages
     base_url = request.build_absolute_uri(request.path)  # Get the base URL (the current request's URL)

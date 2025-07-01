@@ -1,7 +1,10 @@
 
+from decimal import Decimal
+from django.db.models import Avg
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, Notification, Profile, Rider, User, Vendor, VendorRating, VirtualAccount
+from account.models import Address, Notification, Profile, Rider, RiderRating, User, Vendor, VendorRating, VirtualAccount
+from product.models import Order
 from vendor.serializers import VendorSerializer
 
 class LoginSerializer(serializers.Serializer):
@@ -47,6 +50,40 @@ class  RiderSerializer(serializers.ModelSerializer):
         model = Rider
         fields = '__all__'
         ref_name = 'AccountRiderSerializer'
+
+
+    def to_representation(self, instance):
+        # Access the custom data
+        addition_serializer_data = self.context.get('addition_serializer_data')
+        
+        # Call super to get default representation
+        representation = super().to_representation(instance)
+        
+        # Modify or add data
+        if addition_serializer_data:
+            if isinstance(addition_serializer_data,dict):
+                rider_type = addition_serializer_data.get('rider_type')
+                if rider_type == 'marketplace':
+                    orders_queryset_count = Order.objects.filter(
+                        rider=instance,
+                        delivery_status='pending'
+                    ).count()
+                    representation['ongoing_orders_count'] = orders_queryset_count
+
+                    ratings = RiderRating.objects.filter(rider=instance)
+                    overall_rating = ratings.aggregate(avg_rating=Avg('rating'))['avg_rating']
+                    if overall_rating is None:
+                        overall_rating = Decimal('0.00')
+                    else:
+                        overall_rating = round(overall_rating, 2)
+
+                    
+                    representation['overall_rating'] = overall_rating
+
+
+
+        return representation
+    
 
 
 class  RiderDocumentverificationSerializer(serializers.ModelSerializer):
