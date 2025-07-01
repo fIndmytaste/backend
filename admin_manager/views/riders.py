@@ -73,7 +73,8 @@ class AdminRiderDocumentverificationView(generics.RetrieveUpdateDestroyAPIView):
     
 
 class AdminRiderOrderListView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ ]
+    # permission_classes = [IsAuthenticated]
     serializer_class = RiderSerializer
     queryset = Rider.objects.all()
     lookup_field = 'id'
@@ -121,7 +122,29 @@ class AdminRiderReviewListView(generics.GenericAPIView):
         )
 
 
+class RiderEarningMetricsView(generics.GenericAPIView):
 
+    permission_classes = [IsAuthenticated]
+    serializer_class = RiderPerformanceMetricsSerializer
+    lookup_field = 'id'
+
+    def get(self, request, id):
+        try:
+            rider = Rider.objects.get(id=id)
+        except Rider.DoesNotExist:
+            return bad_request_response(
+                message='Rider not found',
+                status_code=404
+            )
+        
+
+        #!! Update this to get actual data
+        response = {
+            'total_earnings':0,
+            'total_payout': 0,
+            'balance': 0,
+        }
+        return success_response(data=response)
 
 class RiderPerformanceMetricsView(generics.GenericAPIView):
     """

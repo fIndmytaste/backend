@@ -50,6 +50,7 @@ urlpatterns = [
     path('riders/<uuid:id>/orders', admin_riders_view.AdminRiderOrderListView.as_view(), name='admin_rider-orders-list'),
     path('riders/<uuid:id>/ratings', admin_riders_view.AdminRiderReviewListView.as_view(), name='admin_rider-reviews-list'),
     path('riders/<uuid:id>/performance-metrics/',admin_riders_view.RiderPerformanceMetricsView.as_view(),name='rider-performance-metrics'),
+    path('riders/<uuid:id>/earning-metrics/',admin_riders_view.RiderEarningMetricsView.as_view(),name='rider-earning-metrics'),
     
          
 
