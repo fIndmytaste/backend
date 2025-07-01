@@ -281,6 +281,12 @@ class Order(models.Model):
         self.save()
 
 
+    def get_total_price(self):
+        """Get the total price of the order."""
+        order_items = OrderItem.objects.filter(order=self)
+        return sum(item.total_price() for item in order_items)
+        
+        
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items', help_text="The order to which this item belongs.")

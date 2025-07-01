@@ -6,4 +6,5 @@ urlpatterns = [
 
     path('balance', WalletBalanceView.as_view(), name='balance'),
     path('transactions', WalletTransactionsView.as_view(), name='transactions-list'),
+    
 ]

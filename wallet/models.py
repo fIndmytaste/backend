@@ -60,6 +60,12 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
         ('failed', 'Failed')
     ]
 
+    TRANSACTION_PREFIXES = {
+        'deposit': 'DEP',
+        'withdrawal': 'WTD',
+        'purchase': 'PAY',
+    }
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="transactions")
     amount = models.DecimalField(max_digits=10, decimal_places=2)
@@ -68,6 +74,18 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
     status = models.CharField(choices=TRANSACTION_STATUS, max_length=10, default='pending')  # New field
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    reference_code = models.CharField(max_length=50, unique=True, editable=False, null=True, blank=True)
+
+    @staticmethod
+    def generate_reference_code(prefix):
+        random_part = uuid.uuid4().hex[:20].upper()
+        return f"{prefix}-{random_part}"
 
     def __str__(self):
         return f"{self.transaction_type} of {self.amount} for {self.wallet.user.email} - {self.status}"
+
+    def save(self, *args, **kwargs):
+        if not self.reference_code:
+            prefix = self.TRANSACTION_PREFIXES.get(self.transaction_type, 'TXN')
+            self.reference_code = WalletTransaction.generate_reference_code(prefix)
+        super().save(*args, **kwargs)

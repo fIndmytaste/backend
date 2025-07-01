@@ -5,9 +5,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
-from account.models import Rider , RiderRating
+from account.models import Rider , RiderRating, User
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
-from product.models import Order 
+from product.models import Order
+from wallet.models import Wallet, WalletTransaction 
 from .serializers import (
     AcceptOrderSerializer,
     OrderSerializer,
@@ -80,6 +81,52 @@ class OrderViewSet(viewsets.ModelViewSet):
         else:
             return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
 
+     
+
+class MakeOrderPayment(generics.GenericAPIView):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        try:
+            order = Order.objects.get(id=id)
+        except:
+            return bad_request_response(
+                message='Order not found',
+                status_code=404
+            )
+
+        user:User = request.user
+        wallet, _ = Wallet.objects.get_or_create(user=user)
+        
+
+        order_total_price = order.get_total_price()
+        if float(order_total_price) > float(wallet.balance):
+            return bad_request_response(
+                message='Insufficient balance. Please top up your wallet',
+            )
+        
+        # proceed the payment
+        wallet.balance -= order_total_price
+        wallet.save()
+        order.status = 'paid'
+        order.save()
+
+        WalletTransaction.objects.create(
+            wallet=wallet,
+            amount=order_total_price,
+            transaction_type='purchase',
+            description='Payment for order',
+            status='completed'
+        )
+
+        return success_response(
+            message='Payment successful'
+        )
+
+        
+   
 
 class RiderViewSet(viewsets.ModelViewSet):
     queryset = Rider.objects.all()
