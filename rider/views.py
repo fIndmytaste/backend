@@ -114,11 +114,12 @@ class MakeOrderPayment(generics.GenericAPIView):
         order.save()
 
         WalletTransaction.objects.create(
-            wallet=wallet,
+            wallet=wallet, 
             amount=order_total_price,
             transaction_type='purchase',
             description='Payment for order',
-            status='completed'
+            status='completed',
+            order=order
         )
 
         return success_response(

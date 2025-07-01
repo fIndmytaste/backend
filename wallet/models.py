@@ -2,6 +2,8 @@ import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
 
+from product.models import Order
+
 User = get_user_model()  
 # Create your models here.
 
@@ -75,6 +77,7 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     reference_code = models.CharField(max_length=50, unique=True, editable=False, null=True, blank=True)
+    order = models.ForeignKey(Order,on_delete=models.SET_NULL,null=True,blank=True)
 
     @staticmethod
     def generate_reference_code(prefix):

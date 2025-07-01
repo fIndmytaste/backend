@@ -209,6 +209,7 @@ class Order(models.Model):
     actual_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the rider picked up the order.")
     actual_delivery_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the order was delivered.")
 
+
     def __str__(self):
         return f"Order #{self.id}"
 
@@ -286,7 +287,7 @@ class Order(models.Model):
         order_items = OrderItem.objects.filter(order=self)
         return sum(item.total_price() for item in order_items)
         
-        
+
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items', help_text="The order to which this item belongs.")
