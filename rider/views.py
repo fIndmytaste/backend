@@ -20,7 +20,7 @@ from .serializers import (
     DeliveryTrackingSerializer,
     RiderLocationUpdateSerializer
 )
-
+from decimal import Decimal
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
@@ -155,7 +155,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         # Admin or vendor can see all riders
         return Rider.objects.all()
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def update_location(self, request, pk=None):
         rider = self.get_object()
         serializer = RiderLocationUpdateSerializer(data=request.data)
@@ -165,13 +165,62 @@ class RiderViewSet(viewsets.ModelViewSet):
             longitude = serializer.validated_data['longitude']
             
             rider.update_location(latitude, longitude)
-            return Response({'status': 'Location updated successfully'})
+            return success_response(
+                message='Location updated'
+            )
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 
 
-    @action(detail=True, methods=['get'])
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def request_withdrawal(self, request):
+
+        rider = self.get_object()
+        wallet, _ = Wallet.objects.get_or_create(user=rider.user)
+
+        amount = request.data.get('amount')
+        if amount is None:
+            return bad_request_response(
+                message='Amount is required'
+            )
+
+        try:
+            amount = Decimal(amount)
+        except:
+            return bad_request_response(
+                message='Invalid amount format.'
+            )
+
+        if amount <= 0:
+            return bad_request_response(
+                message='Withdrawal amount must be positive.'
+            )
+
+        if wallet.balance < amount:
+            return bad_request_response(
+                message='Insufficient balance.'
+            )
+
+        # Create a pending withdrawal transaction
+        transaction = WalletTransaction.objects.create(
+            wallet=wallet,
+            amount=amount,
+            transaction_type='withdrawal',
+            status='pending',
+            description='Rider withdrawal request',
+        )
+
+        # Optionally update wallet balance here if you deduct immediately, 
+        # or wait until withdrawal is approved/completed
+
+        return success_response(
+            message='Withdrawal request submitted.',
+            status_code=201
+        )
+
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def available_order(self, request, pk=None):
         rider = self.get_object()
         querset = Order.objects.filter(rider=None, status='pending')
@@ -185,7 +234,7 @@ class RiderViewSet(viewsets.ModelViewSet):
     
 
 
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def accept_order(self, request, pk=None):
         rider = self.get_object()
 
@@ -207,7 +256,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         
 
     
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def toggle_online_status(self, request, pk=None):
         rider = self.get_object()
         go_online = request.data.get('online', False)
@@ -225,7 +274,7 @@ class RiderViewSet(viewsets.ModelViewSet):
     
 
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def active_orders(self, request, pk=None):
         rider = self.get_object()
         active_orders = rider.orders.filter(
@@ -240,7 +289,7 @@ class RiderViewSet(viewsets.ModelViewSet):
     
 
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def delivered_orders(self, request, pk=None):
         rider = self.get_object()
         active_orders = rider.orders.filter(
@@ -254,7 +303,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
     
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def picked_up_orders(self, request, pk=None):
         rider = self.get_object()
         active_orders = rider.orders.filter(
@@ -269,7 +318,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         # return Response(serializer.data)
     
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def reviews(self, request, pk=None):
         rider = self.get_object()
         reviews = RiderRating.objects.filter(rider=rider).order_by('-created_at')
@@ -281,7 +330,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
 
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def analytics(self, request, pk=None):
         rider = self.get_object()
         
@@ -306,7 +355,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
 
 
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def send_delivery_otp(self, request, pk=None):
         rider = self.get_object()
         order_id = request.data.get('order_id')
@@ -339,7 +388,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         return success_response(message=f'OTP sent: {otp}')
 
 
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def confirm_delivery(self, request, pk=None):
         rider = self.get_object()
         order_id = request.data.get('order_id')
