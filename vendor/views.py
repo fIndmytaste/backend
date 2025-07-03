@@ -158,7 +158,7 @@ class ProductsListCreateView(generics.GenericAPIView):
     - Vendors can retrieve a list of their products with filters.
     - Vendors can also create new products.
     """
-    # permission_classes = [IsVendor]  
+    permission_classes = [IsVendor]  
     serializer_class = ProductSerializer
 
     @swagger_auto_schema(
@@ -245,6 +245,12 @@ class ProductsListCreateView(generics.GenericAPIView):
         """
         # Handle product data
 
+
+        user = request.user
+        if not user.is_verified:
+            return bad_request_response(
+                message="You must be verified to create a product."
+            )
         print("********"*10)
         print(request.data)
         print("********"*10)
