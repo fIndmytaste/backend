@@ -6,6 +6,7 @@ from .views import (
     AllVendorsView,
     BuyerVendorProductListView,
     FeaturedVendorsView,
+    GetVendorDetailView,
     HotPickVendorsView,
     ProductGetUpdateDeleteView,
     ProductsListCreateView,
@@ -32,6 +33,7 @@ urlpatterns = [
     path('orders/<uuid:id>/', VendorOrderDetailAPIView.as_view(), name='vendor-order-detail'),
     path('overview', VendorOverviewView.as_view(), name='VendorOverviewView'),
 
+    path('<vendor_id>', GetVendorDetailView.as_view(), name='GetVendorDetailView'),
     path('<vendor_id>/products', BuyerVendorProductListView.as_view(), name='order_list'),
     path('vendors/<uuid:vendor_id>/rate/', VendorRatingCreateView.as_view(), name='vendor-rate'),
     path('vendors/<uuid:vendor_id>/ratings/', VendorRatingListView.as_view(), name='vendor-ratings'),

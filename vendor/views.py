@@ -397,7 +397,27 @@ class VendorOrderListView(generics.ListAPIView):
 
 
 
+class GetVendorDetailView(generics.GenericAPIView):
+    serializer_class = VendorSerializer
+    permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_description="Get the details of a vendor.",
+        operation_summary="Retrieve the details of a specific vendor.",
+        responses={
+            200: VendorSerializer,
+            404: "Vendor Not Found",
+            401: "Unauthorized",
+        }
+    )
+    def get(self, request, vendor_id):
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+            serializer = self.serializer_class(vendor)
+            return success_response(serializer.data)
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found")
+        
 
 class BuyerVendorProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer  # Assuming you have a ProductSerializer
