@@ -217,11 +217,42 @@ class RiderViewSet(viewsets.ModelViewSet):
             rider.go_offline()
             return Response({'status': 'Rider is now offline'})
     
+
+
     @action(detail=True, methods=['get'])
     def active_orders(self, request, pk=None):
         rider = self.get_object()
         active_orders = rider.orders.filter(
             status__in=['confirmed', 'ready_for_pickup', 'picked_up', 'in_transit', 'near_delivery']
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            OrderSerializer,
+            active_orders,
+            page_size=int(request.GET.get('page', 10)),
+        )
+    
+
+
+    @action(detail=True, methods=['get'])
+    def delivered_orders(self, request, pk=None):
+        rider = self.get_object()
+        active_orders = rider.orders.filter(
+            status__in=['delivered']
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            OrderSerializer,
+            active_orders,
+            page_size=int(request.GET.get('page', 10)),
+        )
+    
+
+    @action(detail=True, methods=['get'])
+    def picked_up_orders(self, request, pk=None):
+        rider = self.get_object()
+        active_orders = rider.orders.filter(
+            status__in=['picked_up']
         )
         return paginate_success_response_with_serializer(
             request,
