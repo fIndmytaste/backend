@@ -405,7 +405,8 @@ class VendorOrderListView(generics.ListAPIView):
 
 class GetVendorDetailView(generics.GenericAPIView):
     serializer_class = VendorSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
+    # permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",
