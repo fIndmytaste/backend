@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from datetime import timedelta
 from account.models import Rider , RiderRating, User
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import Order
@@ -213,10 +214,14 @@ class RiderViewSet(viewsets.ModelViewSet):
         
         if go_online:
             rider.go_online()
-            return Response({'status': 'Rider is now online'})
+            return success_response(
+                message='Rider is now online'
+            )
         else:
             rider.go_offline()
-            return Response({'status': 'Rider is now offline'})
+            return success_response(
+                message='Rider is now offline'
+            )
     
 
 
