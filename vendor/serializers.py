@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.db.models import Q, Avg
 from account.models import User, Vendor, VendorRating
 from product.models import Favorite, Product, ProductImage, Rating, SystemCategory, VendorCategory
-
+from collections import defaultdict
 class SystemCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemCategory
@@ -101,12 +101,37 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
 
     def to_representation(self, instance: Product):
-        images = ProductImage.objects.filter(product=instance)
         data = super().to_representation(instance)
+
+        # Serialize images as before (optional if you want custom queryset)
+        images = ProductImage.objects.filter(product=instance)
         data['images'] = ProductImageSerializer(images, many=True, context=self.context).data
 
-        data['variants'] = ProductVariantSerializer(Product.objects.filter(parent=instance), many=True).data 
-    
+        # Get all variants (assuming variants are Products with parent=instance)
+        variants_qs = Product.objects.filter(parent=instance)
+
+        # Group variants by variant_category_name
+        grouped_variants = defaultdict(list)
+        for variant in variants_qs:
+            key = variant.variant_category_name.strip() if variant.variant_category_name else "Uncategorized"
+            grouped_variants[key].append({
+                "name": variant.name,
+                "price": variant.price,
+            })
+
+        # Format into the product_variant list
+        product_variant = [
+            {
+                "variant_category_name": category,
+                "variants": variants_list
+            }
+            for category, variants_list in grouped_variants.items()
+        ]
+
+        data['product_variant'] = product_variant
+
+        data.pop('variants', None)
+
         return data
     
 
