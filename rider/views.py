@@ -1,10 +1,11 @@
 # views.py
+import random
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-
+from django.utils import timezone
 from account.models import Rider , RiderRating, User
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import Order
@@ -298,6 +299,74 @@ class RiderViewSet(viewsets.ModelViewSet):
         return success_response(
             data=response
         )
+
+
+    @action(detail=True, methods=['post'])
+    def send_delivery_otp(self, request, pk=None):
+        rider = self.get_object()
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return bad_request_response(
+                message='Order id is required'
+            )
+        
+        #
+        # Fetch order assigned to this rider
+        order = Order.objects.filter(id=order_id, rider=rider).first()
+        if not order:
+            return bad_request_response(
+                message='Order not found or not assigned to you',
+                status_code=404
+            )
+        
+        # if order.status not in ['in_transit', 'near_delivery']:
+        #     return Response({'error': 'Order not in deliverable status'}, status=400)
+
+        # Generate OTP
+        otp = random.randint(10000, 99999)
+        order.delivery_otp = str(otp)
+        order.delivery_otp_expiry = timezone.now() + timedelta(minutes=10)
+        order.save()
+
+        # TODO: Send OTP to customer (SMS/Email)
+        # send_otp_to_customer(order.customer, otp)
+
+        return success_response(message=f'OTP sent: {otp}')
+
+
+    @action(detail=True, methods=['post'])
+    def confirm_delivery(self, request, pk=None):
+        rider = self.get_object()
+        order_id = request.data.get('order_id')
+        otp = request.data.get('otp')
+
+        order:Order = Order.objects.filter(id=order_id, rider=rider).first()
+        if not order:
+            return bad_request_response(
+                message='Order not found or not assigned to you',
+            )
+
+        if not order.delivery_otp or timezone.now() > order.delivery_otp_expiry:
+            return bad_request_response(
+                message='OTP expired or not found',
+
+            )
+
+        if otp != order.delivery_otp:
+            return bad_request_response(
+                message='Invalid OTP',
+            )
+
+        order.status = 'delivered'
+        order.delivery_otp = None
+        order.delivery_otp_expiry = None
+        order.delivered_at = timezone.now()
+        order.save()
+
+        return success_response(
+            message='Order delivered successfully',
+        )
+
 
 
 

@@ -198,6 +198,9 @@ class Order(models.Model):
         default='pending',
         help_text="The delivery status of the order."
     )
+    delivery_otp = models.CharField(max_length=6, null=True, blank=True)
+    delivery_otp_expiry = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
 
     track_id = models.CharField(max_length=100, help_text="Unique tracking ID per user")
     
