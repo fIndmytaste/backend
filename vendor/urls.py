@@ -8,6 +8,7 @@ from .views import (
     FeaturedVendorsView,
     GetVendorDetailView,
     HotPickVendorsView,
+    InternalAllVendorsNewView,
     ProductGetUpdateDeleteView,
     ProductsListCreateView,
     VendorCategoryView,
@@ -23,6 +24,7 @@ urlpatterns = [
     # Vendor Endpoints
     path('', AllVendorsView.as_view(), name='vendor_register_business'),
     path('all', AllVendorsNewView.as_view(), name='AllVendorsNewView'),
+    path('internal-all', InternalAllVendorsNewView.as_view(), name='InternalAllVendorsNewView'),
     path('register-business/', VendorRegisterBusinessView.as_view(), name='vendor_register_business'),
     path('category/', VendorCategoryView.as_view(), name='add_vendor_category'), 
     path('hot-picks/', HotPickVendorsView.as_view(), name='HotPickVendorsView'),
