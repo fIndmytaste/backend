@@ -531,7 +531,8 @@ class HotPickVendorsView(generics.GenericAPIView):
 
 
 class FeaturedVendorsView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
+    # permission_classes = [IsAuthenticated]
     serializer_class = VendorSerializer
     queryset = Vendor.objects.filter(is_featured=True)
     
