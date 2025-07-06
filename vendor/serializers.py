@@ -132,6 +132,15 @@ class ProductSerializer(serializers.ModelSerializer):
 
         data.pop('variants', None)
 
+        # add the vendor category to the object
+        try:
+            data['product_vendor_category'] = {
+                'id': instance.vendor_category.id,
+                'name': instance.vendor_category.name,
+            }
+        except:
+            data['product_vendor_category'] = None 
+
         return data
     
 

@@ -22,10 +22,12 @@ def generate_track_id(length=8):
 class SystemCategory(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100, help_text="The name of the system category.")
+    name_key = models.CharField(max_length=100, null=True,blank=True)
     logo = CloudinaryField('profile_images', null=True, blank=True)
     description = models.TextField(help_text="A detailed description of the system category.")
     created_at = models.DateTimeField(auto_now_add=True, help_text="Timestamp when the category was created.")
     updated_at = models.DateTimeField(auto_now=True, help_text="Timestamp when the category was last updated.")
+    is_stock = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
