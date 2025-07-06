@@ -288,9 +288,15 @@ class VendorRatingSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'user_name', 'user_email']
 
 class VendorInlineUserSerializer(serializers.ModelSerializer):
+    profile_image = serializers.SerializerMethodField() 
     class Meta:
         model = User
         fields = ['id', 'email', 'first_name', 'last_name', 'is_active', "profile_image"]
+
+
+
+    def get_profile_image(self, obj):
+        return obj.profile_image.url if obj.profile_image else None
 
 class VendorSerializer(serializers.ModelSerializer):
     thumbnail = serializers.SerializerMethodField()
