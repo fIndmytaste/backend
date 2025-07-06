@@ -111,6 +111,18 @@ class Product(models.Model):
         """
         return Favorite.objects.filter(user=self.user, product=self.product).exists()
 
+
+    def all_images(self):
+        """
+        Returns a list of all images for this product, including the main image and all variant images.
+        """
+        images = [dict(
+            id=image.id,
+            image=image.get_image_url(),
+        ) for image in ProductImage.objects.filter(product=self)]
+        return images
+        
+
  
 
     def increment_product_view(self, user):
@@ -214,6 +226,7 @@ class Order(models.Model):
     actual_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the rider picked up the order.")
     actual_delivery_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the order was delivered.")
 
+    note = models.TextField(null=True,blank=True)
 
     def __str__(self):
         return f"Order #{self.id}"

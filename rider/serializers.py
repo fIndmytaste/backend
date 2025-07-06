@@ -1,9 +1,9 @@
 # serializers.py
 from rest_framework import serializers
 
-from account.models import Rider, RiderRating
+from account.models import Rider, RiderRating, Vendor
 from account.serializers import UserSerializer
-from product.models import DeliveryTracking, Order
+from product.models import DeliveryTracking, Order, OrderItem
 
 class OrderSerializer(serializers.ModelSerializer):
     class Meta:
@@ -11,6 +11,37 @@ class OrderSerializer(serializers.ModelSerializer):
         ref_name = 'RiderOrder'
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'track_id')
+
+
+    def to_representation(self, instance:Order):
+        addition_serializer_data = self.context.get('addition_serializer_data')
+        
+        # Call super to get default representation
+        representation = super().to_representation(instance)
+
+        if addition_serializer_data:
+            if isinstance(addition_serializer_data,dict) and addition_serializer_data.get('rider_order_details'):
+                vendor:Vendor = instance.vendor
+                pick_up_details = {
+                    'address': vendor.address,
+                    'time':instance.actual_pickup_time
+                }
+                representation['pick_up_details'] = pick_up_details
+
+                items = [dict(
+                    id=item.id,
+                    product_name=item.product.name,
+                    product_images = item.product.all_images(),
+                    quantity=item.quantity,
+                    price=item.price,
+                    
+                ) for item in OrderItem.objects.filter(order=instance)]
+                representation['items'] = items
+
+                
+                
+
+        return representation
 
 
 class RiderSerializer(serializers.ModelSerializer):

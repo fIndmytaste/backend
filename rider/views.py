@@ -316,6 +316,21 @@ class RiderViewSet(viewsets.ModelViewSet):
             page_size=int(request.GET.get('page', 10)),
         )
         # return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def order_detail(self, request, pk=None):
+        rider = self.get_object()
+        order_id = request.query_params.get('order_id')
+
+        if not order_id:
+            return bad_request_response(message='Order ID is required.')
+
+        order = Order.objects.filter(id=order_id, rider=rider).first()
+        if not order:
+            return bad_request_response(message='Order not found or not assigned to you.', status_code=404)
+
+        serializer = OrderSerializer(order)
+        return success_response(data=serializer.data)
     
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
