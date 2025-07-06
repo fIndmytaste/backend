@@ -317,28 +317,28 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
         # return Response(serializer.data)
 
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
-    def order_detail(self, request, pk=None):
-        rider = self.get_object()
-        order_id = request.query_params.get('order_id')
+    # @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    # def order_detail(self, request, pk=None):
+    #     rider = self.get_object()
+    #     order_id = request.query_params.get('order_id')
 
-        if not order_id:
-            return bad_request_response(message='Order ID is required.')
+    #     if not order_id:
+    #         return bad_request_response(message='Order ID is required.')
 
-        try:order = Order.objects.get(id=order_id)
-        except:return bad_request_response(message='Invalid Order ID.')
+    #     try:order = Order.objects.get(id=order_id)
+    #     except:return bad_request_response(message='Invalid Order ID.')
         
 
-        serializer = OrderSerializer(
-            order,
-            context={
-                'request': request,
-                'addition_serializer_data':{
-                    'rider_order_details':True
-                }
-            }
-        )
-        return success_response(data=serializer.data)
+    #     serializer = OrderSerializer(
+    #         order,
+    #         context={
+    #             'request': request,
+    #             'addition_serializer_data':{
+    #                 'rider_order_details':True
+    #             }
+    #         }
+    #     )
+    #     return success_response(data=serializer.data)
     
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
@@ -445,6 +445,35 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
 
 
+
+
+
+class RiderOrderDetailView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_id):
+        user = request.user
+
+        if not hasattr(user, 'rider'):
+            return bad_request_response(message="You are not a rider.")
+
+        rider = user.rider
+
+        try:
+            order = Order.objects.get(id=order_id, rider=rider)
+        except Order.DoesNotExist:
+            return bad_request_response(message="Order not found or not assigned to you.", status_code=404)
+
+        serializer = OrderSerializer(
+            order,
+            context={
+                'request': request,
+                'addition_serializer_data': {
+                    'rider_order_details': True
+                }
+            }
+        )
+        return success_response(data=serializer.data)
 
 
 class RiderRatingCreateView(generics.CreateAPIView):
