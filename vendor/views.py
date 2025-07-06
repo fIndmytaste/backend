@@ -1,5 +1,5 @@
-from rest_framework import status, generics
-from django.db.models import Q, Avg,Sum
+from rest_framework import status, generics 
+from django.db.models import Q, Avg,Sum, Count
 from account.models import Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.permissions import IsVendor
@@ -534,7 +534,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
     permission_classes = []
     # permission_classes = [IsAuthenticated]
     serializer_class = VendorSerializer
-    queryset = Vendor.objects.filter(is_featured=True)
+    queryset = Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
     
     def get(self, request):
         return paginate_success_response_with_serializer(
@@ -550,30 +550,26 @@ class FeaturedVendorsView(generics.GenericAPIView):
    
 
 
-
-
 class AllVendorsView(generics.GenericAPIView):
     permission_classes = []
     serializer_class = VendorSerializer
-    queryset = Vendor.objects.filter(is_featured=True)
-
 
     def get_queryset(self):
-        queryset = Vendor.objects.filter(is_featured=True)
+        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(product_count__gt=0)
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) |
                 Q(email__icontains=search) |
                 Q(city__icontains=search) |
-                Q(state__icontains=search)|
+                Q(state__icontains=search) |
                 Q(category__name__icontains=search)
             )
         return queryset
-    
+
     def get(self, request):
         return success_response(
-            self.serializer_class(self.get_queryset(),many=True).data
+            self.serializer_class(self.get_queryset(), many=True).data
         )
 
    
