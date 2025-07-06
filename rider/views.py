@@ -317,7 +317,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         )
         # return Response(serializer.data)
 
-    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def order_detail(self, request, pk=None):
         rider = self.get_object()
         order_id = request.query_params.get('order_id')
@@ -325,9 +325,9 @@ class RiderViewSet(viewsets.ModelViewSet):
         if not order_id:
             return bad_request_response(message='Order ID is required.')
 
-        order = Order.objects.filter(id=order_id).first()
-        if not order:
-            return bad_request_response(message='Order not found or not assigned to you.', status_code=404)
+        try:order = Order.objects.get(id=order_id)
+        except:return bad_request_response(message='Invalid Order ID.')
+        
 
         serializer = OrderSerializer(
             order,
