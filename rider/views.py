@@ -325,11 +325,19 @@ class RiderViewSet(viewsets.ModelViewSet):
         if not order_id:
             return bad_request_response(message='Order ID is required.')
 
-        order = Order.objects.filter(id=order_id, rider=rider).first()
+        order = Order.objects.filter(id=order_id).first()
         if not order:
             return bad_request_response(message='Order not found or not assigned to you.', status_code=404)
 
-        serializer = OrderSerializer(order)
+        serializer = OrderSerializer(
+            order,
+            context={
+                'request': request,
+                'addition_serializer_data':{
+                    'rider_order_details':True
+                }
+            }
+        )
         return success_response(data=serializer.data)
     
 
