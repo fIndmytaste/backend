@@ -56,26 +56,42 @@ class OrderSerializer(serializers.ModelSerializer):
             'updated_at'
         ]
 
+    def validate(self, data):
+        """Ensure the order contains at least one item."""
+        items = data.get('items')
+        if not items or len(items) == 0:
+            raise serializers.ValidationError({"items": "Order must contain at least one item."})
+        return data
+
     def create(self, validated_data):
-        """Create the order and order items."""
-        # get the user from frequest
+        """Create the order and its items after validation."""
         request = self.context.get('request')
         user = request.user if request else None
 
         items_data = validated_data.pop('items')
+
+        # Extra safety check (optional; already handled by validate())
+        if not items_data:
+            raise serializers.ValidationError({"items": "Cannot create order without items."})
+
         order = Order.objects.create(user=user, **validated_data)
 
-        # Create order items and calculate total amount
         for item_data in items_data:
             try:
                 product = Product.objects.get(id=item_data['product'])
-            except:
-                raise serializers.ValidationError({'product': 'Product not found'})
-            
-            OrderItem.objects.create(order=order, product=product, quantity=item_data['quantity'], price=product.price)
+            except Product.DoesNotExist:
+                raise serializers.ValidationError({'product': f"Product with ID {item_data['product']} not found"})
+
+            OrderItem.objects.create(
+                order=order,
+                product=product,
+                quantity=item_data['quantity'],
+                price=product.price
+            )
 
         order.update_total_amount()
         return order
+
 
 
 
