@@ -16,7 +16,7 @@ class PaystackManager:
 
     def __init__(self) -> None:
         header = {
-            'Authorization': f'Bearer sk_live_9ed4dc5cefb81af819a77ddb567feae183546471',
+            'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
             'Content-Type': 'application/json',
         }
         self.header = header
@@ -25,7 +25,7 @@ class PaystackManager:
 
     def get_header(self):
         header = {
-            'Authorization': f'Bearer sk_live_9ed4dc5cefb81af819a77ddb567feae183546471',
+            'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
             'Content-Type': 'application/json',
         }
         return header
