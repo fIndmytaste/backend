@@ -14,7 +14,7 @@ class PaystackManager:
 
     def __init__(self) -> None:
         header = {
-            'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
+            'Authorization': f'Bearer sk_live_9ed4dc5cefb81af819a77ddb567feae183546471',
             'Content-Type': 'application/json',
         }
         self.header = header
@@ -23,7 +23,7 @@ class PaystackManager:
 
     def get_header(self):
         header = {
-            'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
+            'Authorization': f'Bearer sk_live_9ed4dc5cefb81af819a77ddb567feae183546471',
             'Content-Type': 'application/json',
         }
         return header
@@ -110,7 +110,7 @@ class PaystackManager:
         url = f'{self.base_url}/dedicated_account'
         payload = json.dumps({
             'customer':customer_ref,
-            'preferred_bank':'test-bank',
+            'preferred_bank':'wema-bank',
         })
         response = requests.post(url, headers=self.get_header(), data=payload)
         
