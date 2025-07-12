@@ -3,7 +3,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 
-from account.models import Vendor
+from account.models import Rider, Vendor
 from product.models import Order, Product
 
 User = get_user_model()
@@ -14,14 +14,27 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
 
-        user = User.objects.get(email='st.jennyandy@gmail.com')
+        user = User.objects.get(email='mozezcharles@gmail.com')
 
         print(user)
 
+        rider = Rider.objects.get(user=user)
+
         orders = Order.objects.all()
 
+
+        status = [
+            "picked_up",
+            "in_transit",
+            "delivered",
+        ]
+
         for order in orders:
-            print(order.user.email)
+            random_status = random.choice(status)
+            order.delivery_status = random_status
+            order.rider = rider
+            order.save()
+            print(order.delivery_status)
         
 
 
