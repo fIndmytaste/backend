@@ -76,6 +76,8 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
     status = models.CharField(choices=TRANSACTION_STATUS, max_length=10, default='pending')  # New field
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    external_reference = models.TextField(null=True,blank=True)
+    response_data = models.JSONField(null=True,blank=True)
     reference_code = models.CharField(max_length=50, unique=True, editable=False, null=True, blank=True)
     order = models.ForeignKey(Order,on_delete=models.SET_NULL,null=True,blank=True)
 

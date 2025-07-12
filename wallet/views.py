@@ -1,6 +1,7 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
+from helpers.paystack import PaystackManager
 from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer
 from wallet.models import Wallet, WalletTransaction
 from wallet.serializers import WalletSerializer, WalletTransactionSerializer
@@ -72,3 +73,8 @@ class WalletTransactionsView(generics.ListAPIView):
         return WalletTransaction.objects.filter(wallet__user=self.request.user).order_by('-created_at')
 
 
+
+class WalletTransactionsWebhookView(generics.GenericAPIView):
+    def post(self, request, *args, **kwargs):
+        klass = PaystackManager()
+        return klass.handle_webhook(request)
