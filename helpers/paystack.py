@@ -155,41 +155,42 @@ class PaystackManager:
                 data = payload.get('data')
                 status = data.get("status")
                 if status == "success":
-                # check if transaction has been proccessed
-                reference = data.get('reference')
-                trx_extist = WalletTransaction.objects.filter(external_reference=reference).first()
-                if trx_extist:
-                    return bad_request_response(
-                        message="Transaction already processed"
-                    )
+                    # check if transaction has been proccessed
+                    reference = data.get('reference')
+                    trx_extist = WalletTransaction.objects.filter(external_reference=reference).first()
+                    if trx_extist:
+                        return bad_request_response(
+                            message="Transaction already processed"
+                        )
                 
-                amount = data.get("amount")
-                process_amount = Decimal(amount / 100)
-                metadata = data.get('metadata',{})
-                if metadata:
-                    receiver_account_number = metadata.get('receiver_account_number')
-                    v_account = VirtualAccount.objects.filter(account_number=receiver_account_number).first()
-                    if v_account:
-                        wallet = Wallet.objects.get(user=v_account.user)
+                    amount = data.get("amount")
+                    process_amount = Decimal(amount / 100)
+                    metadata = data.get('metadata',{})
+                    if metadata:
+                        receiver_account_number = metadata.get('receiver_account_number')
+                        v_account = VirtualAccount.objects.filter(account_number=receiver_account_number).first()
+                        if v_account:
+                            wallet = Wallet.objects.get(user=v_account.user)
 
-                        WalletTransaction.objects.create(
-                            wallet=wallet,
-                            amount=Decimal(process_amount),
-                            transaction_type='deposit',
-                            external_reference=reference,
-                            status='completed',
-                            response_data=payload,
-                            description = "Deposit from bank"
-                        )
+                            WalletTransaction.objects.create(
+                                wallet=wallet,
+                                amount=Decimal(process_amount),
+                                transaction_type='deposit',
+                                external_reference=reference,
+                                status='completed',
+                                response_data=payload,
+                                description = "Deposit from bank"
+                            )
 
-                        # update the user wallet balance
-                        wallet.balance += process_amount
-                        wallet.save()
-                        return success_response(
-                            message="Transaction processed successfully"
-                        )
+                            # update the user wallet balance
+                            wallet.balance += process_amount
+                            wallet.save()
+                            return success_response(
+                                message="Transaction processed successfully"
+                            )
+                
             except:
-                return internal_server_error_response()  
+                return internal_server_error_response() 
         return success_response()
 
 
