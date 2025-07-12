@@ -162,7 +162,7 @@ class Vendor(models.Model):
 
 
     def __str__(self):
-        return f"Rating for {self.name} by {self.user.email}"
+        return f"{self.name} ({self.user.email})"
 
 class VendorRating(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
