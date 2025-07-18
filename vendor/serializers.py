@@ -135,10 +135,11 @@ class ProductSerializer(serializers.ModelSerializer):
         # add the vendor category to the object
         try:
             data['product_vendor_category'] = {
-                'id': instance.vendor_category.id,
-                'name': instance.vendor_category.name,
+                'id': instance.vendor.category.id,
+                'name': instance.vendor.category.name, 
             }
-        except:
+        except Exception as e:
+            print(e) 
             data['product_vendor_category'] = None 
 
         return data
