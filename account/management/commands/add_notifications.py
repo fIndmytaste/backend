@@ -19,3 +19,5 @@ class Command(BaseCommand):
             Notification.objects.bulk_create(notifications)
 
         self.stdout.write(self.style.SUCCESS('Successfully created 15 notifications for each user.'))
+
+
