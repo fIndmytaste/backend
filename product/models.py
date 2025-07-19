@@ -199,6 +199,7 @@ class Order(models.Model):
     # Update status choices
     status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default='pending', help_text="The current status of the order.")
     
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The discount amount of the order.")
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The total amount of the order.")
     payment_status = models.CharField(
         max_length=20,
