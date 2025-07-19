@@ -179,6 +179,10 @@ class Order(models.Model):
         ('delivered', 'Delivered'),
         ('canceled', 'Canceled'),
     ]
+    ORDER_PAYMENT_METHOD_CHOICES = [
+        ('wallet', 'Wallet'),
+        ('link', 'Link'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders', help_text="The user who placed the order.")
@@ -228,6 +232,8 @@ class Order(models.Model):
     # Add actual delivery time fields for metrics
     actual_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the rider picked up the order.")
     actual_delivery_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the order was delivered.")
+
+    payment_method = models.CharField(max_length=20, choices=ORDER_PAYMENT_METHOD_CHOICES, default='wallet', help_text="The payment method of the order.")
 
     note = models.TextField(null=True,blank=True)
 

@@ -2,9 +2,11 @@ from decimal import Decimal
 import json
 import requests
 from findmytaste import settings
-from account.models import Vendor, VirtualAccount
+from account.models import User, Vendor, VirtualAccount
 from django.urls import reverse
-
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes 
+from uuid import uuid4
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 from wallet.models import Wallet, WalletTransaction
 
@@ -194,4 +196,51 @@ class PaystackManager:
         return success_response()
 
 
+    
+    
+    def initiate_payment(self, request, amount,order):
+
+        try:
+            user : User
+            user_id = user.id
+            # uuidb64 = urlsafe_base64_encode(force_bytes(user_id))
+            # reference = f'ref_{uuidb64}_{uuid4().hex}' 
+            url = f"{self.base_url}/transaction/initialize"
+            transaction = WalletTransaction.objects.create(
+                user=user,
+                amount=amount,
+                order=order,
+                transaction_type='purchase'
+            )
+
+            metadata = {
+                "user_id": user_id,
+                "name": user.full_name,
+                "email": user.email,
+                "reference": transaction.id,
+                "payment_type": 'order-payment',
+            }
+
+            new_amount = amount * 100
+            payload = json.dumps({
+                "amount": new_amount,
+                "email": user.email,
+                "callback_url": request.data.get("callback_url"),
+                "cancel_url": request.data.get("callback_url"), 
+                "channels": ['card'],
+                "currency": "NGN",
+                "metadata": metadata
+            })
+            response = requests.request("POST", url, headers=self.get_header(), data=payload)
+            if response.ok:
+                resp = response.json().get("data")
+                transaction.external_reference = resp.get('reference')
+                transaction.save()
+                new_response = dict(url=resp.get("authorization_url"))
+                return success_response(data=new_response)
+            else:
+                return bad_request_response(message="Card tokenization can't be completed at the moment")
+
+        except Exception as e:
+            return internal_server_error_response()
 

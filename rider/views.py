@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
 from account.models import Rider , RiderRating, User
+from helpers.paystack import PaystackManager
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import Order
 from wallet.models import Wallet, WalletTransaction 
@@ -103,30 +104,34 @@ class MakeOrderPayment(generics.GenericAPIView):
         wallet, _ = Wallet.objects.get_or_create(user=user)
         
 
-        order_total_price = order.get_total_price()
+        order_total_price = order.get_total_price() + order.delivery_fee + order.service_fee
         if float(order_total_price) > float(wallet.balance):
             return bad_request_response(
                 message='Insufficient balance. Please top up your wallet',
             )
         
-        # proceed the payment
-        wallet.balance -= order_total_price
-        wallet.save()
-        order.status = 'paid'
-        order.save()
+        if order.payment_method == 'wallet':
+            # proceed the payment
+            wallet.balance -= order_total_price
+            wallet.save()
+            order.status = 'paid'
+            order.save()
 
-        WalletTransaction.objects.create(
-            wallet=wallet, 
-            amount=order_total_price,
-            transaction_type='purchase',
-            description='Payment for order',
-            status='completed',
-            order=order
-        )
+            WalletTransaction.objects.create(
+                wallet=wallet, 
+                amount=order_total_price,
+                transaction_type='purchase',
+                description='Payment for order',
+                status='completed',
+                order=order
+            )
 
-        return success_response(
-            message='Payment successful'
-        )
+            return success_response(
+                message='Payment successful'
+            )
+        else:
+            klass = PaystackManager()
+            return klass.initiate_payment(request, order_total_price, order)
 
         
    
