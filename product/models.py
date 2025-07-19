@@ -215,7 +215,9 @@ class Order(models.Model):
     delivery_otp = models.CharField(max_length=6, null=True, blank=True)
     delivery_otp_expiry = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The delivery fee of the order.")
 
+    service_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The service fee of the order.")
     track_id = models.CharField(max_length=100, help_text="Unique tracking ID per user")
     
     # Add estimated delivery time fields

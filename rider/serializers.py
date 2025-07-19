@@ -38,9 +38,6 @@ class OrderSerializer(serializers.ModelSerializer):
                 ) for item in OrderItem.objects.filter(order=instance)]
                 representation['items'] = items
 
-                
-                
-
         return representation
 
 

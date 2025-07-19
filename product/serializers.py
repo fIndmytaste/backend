@@ -51,6 +51,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "actual_delivery_time",
             "actual_pickup_time",
             "track_id",
+            "delivery_fee",
             "delivery_status",
             'created_at', 
             'updated_at'
@@ -91,6 +92,32 @@ class OrderSerializer(serializers.ModelSerializer):
 
         order.update_total_amount()
         return order
+
+
+    def to_representation(self, instance:Order):
+        rep = super().to_representation(instance)
+        
+        context = self.context
+
+        if context.get('include_delivery_info'):
+            if instance.rider:
+                rep['rider'] = dict(
+                    id=instance.rider.id,
+                    first_name=instance.rider.user.first_name,
+                    last_name=instance.rider.user.last_name,
+                    email=instance.rider.user.email,
+                )
+            else:
+                rep['rider'] = None
+        
+        return rep
+    
+class CreateOrderSerializer(serializers.Serializer):
+    items = OrderItemSerializer(many=True,required=True)
+    vendor_id = serializers.CharField(required=True)
+    note = serializers.CharField(required=False)
+
+
 
 
 

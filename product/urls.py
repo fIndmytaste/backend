@@ -3,6 +3,7 @@ from django.urls import path
 from product.views import ( 
     AddToFavoritesView,
     AllProductsView,
+    CustomerCreateOrderView,
     DeleteProductImageView,
     HotPickProductsView,
     InternalProductDetailView,
@@ -42,7 +43,8 @@ urlpatterns = [
     path('product/vendor-category/<uuid:vendor_category_id>/', ProductByVendorCategoryView.as_view(), name='products_by_vendor_category'),
 
     # Order Endpoints
-    path('order/', OrderListCreateView.as_view(), name='create_list_order'),
+    path('order/', OrderListCreateView.as_view(), name='list_order'),
+    path('order/create', CustomerCreateOrderView.as_view(), name='create__order'),
     path('order/<uuid:order_id>/', OrderDetailView.as_view(), name='get_update_delete_order'),
 
 

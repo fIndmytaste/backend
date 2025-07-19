@@ -2,12 +2,14 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg import openapi
 from django.db.models import F,Q
-
-from account.models import Vendor, VendorRating
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+from account.models import Address, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
-from product.serializers import FavoriteSerializer, OrderSerializer, RatingSerializer
+from helpers.order_utils import calculate_delivery_fee, get_distance_between_two_location
+from product.serializers import CreateOrderSerializer, FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
-from .models import Favorite, Order, ProductImage, Rating, SystemCategory, Product
+from .models import Favorite, Order, OrderItem, ProductImage, Rating, SystemCategory, Product
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
@@ -423,7 +425,7 @@ class VendorRatingListView(generics.ListAPIView):
         return success_response(
             data=self.serializer_class(self.get_queryset()).data
         )
-class OrderListCreateView(generics.ListCreateAPIView):
+class OrderListCreateView(generics.ListAPIView):
     """
     View to list and create orders.
     - Allows users to create new orders with multiple products.
@@ -454,6 +456,91 @@ class OrderListCreateView(generics.ListCreateAPIView):
         serializer.save(user=self.request.user)
 
 
+class CustomerCreateOrderView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CreateOrderSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        items_data = serializer.validated_data['items']
+        vendor_id = serializer.validated_data['vendor_id']
+
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found")
+
+        user = request.user
+
+        user_address = Address.objects.filter(user=user).first()
+        if not user_address:
+            return bad_request_response(
+                message="Please set your delivery address in settings before placing an order."
+            )
+
+        # Calculate distance between user and vendor
+        distance_in_kilometers = get_distance_between_two_location(
+            lat1=user_address.location_latitude,
+            lon1=user_address.location_longitude,
+            lat2=vendor.location_latitude,
+            lon2=vendor.location_longitude,
+        )
+
+        
+
+        if not distance_in_kilometers or distance_in_kilometers > 10:
+            return bad_request_response(
+                message="This vendor cannot deliver to your location (distance too far)."
+            )
+        
+        item_count = sum([item['quantity'] for item in items_data])
+        delivery_fee = calculate_delivery_fee(distance_in_kilometers, item_count)
+
+        try:
+            with transaction.atomic():
+                order = Order.objects.create(user=user, vendor=vendor)
+
+                for item_data in items_data:
+                    try:
+                        product = Product.objects.get(id=item_data['product'])
+                    except Product.DoesNotExist:
+                        raise ValidationError(
+                            f"Product with ID {item_data['product']} not found."
+                        )
+
+                    # Ensure product belongs to vendor
+                    if product.vendor.id != vendor.id:
+                        raise ValidationError(
+                            f"Product '{product.name}' does not belong to the selected vendor."
+                        )
+
+                    OrderItem.objects.create(
+                        order=order,
+                        product=product,
+                        quantity=item_data['quantity'],
+                        price=product.price
+                    )
+
+                order.update_total_amount()
+                order.address = user_address.address
+                order.location_latitude = user_address.location_latitude
+                order.location_longitude = user_address.location_longitude
+                order.delivery_fee = delivery_fee
+                order.save()
+
+                # Optionally serialize and return the created order
+                return success_response(
+                    message="Order created successfully",
+                    data=OrderSerializer(order).data
+                )
+
+        except ValidationError as ve:
+            return bad_request_response(message=str(ve))
+        except Exception as e:
+            return bad_request_response(message="An error occurred while creating your order.")
+
+
 class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     View to retrieve, update, or delete an order.
@@ -473,6 +560,12 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['include_delivery_info'] = True
+        context['requested_by'] = self.request.user.username
+        return context
     
     def get_queryset(self):
         """Only return orders belonging to the authenticated user."""
