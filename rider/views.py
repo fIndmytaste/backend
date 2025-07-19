@@ -134,6 +134,38 @@ class MakeOrderPayment(generics.GenericAPIView):
             return klass.initiate_payment(request, order_total_price, order)
 
         
+
+
+class OrderPaymentWebhookView(generics.GenericAPIView):
+    permission_classes = []
+
+    def post(self, request, id):
+        data = request.data
+        try:
+            reference = data.get('reference')
+            trx_extist = WalletTransaction.objects.filter(external_reference=reference).first()
+            if not trx_extist:
+                return bad_request_response(
+                    message="Transaction not doest exist"
+                )
+            metadata = data.get('metadata',{})
+            if metadata:
+                order = trx_extist.order
+                order.payment_status = Order.PAID
+                order.save()
+                trx_extist.status = "completed"
+                trx_extist.response_data=data
+                trx_extist.description = 'Order Payment'
+                trx_extist.save()
+                return success_response(
+                    message="Transaction processed successfully"
+                )
+        except:
+            return bad_request_response(
+                message='Transaction not doest exist',
+                status_code=404
+            )
+   
    
 
 class RiderViewSet(viewsets.ModelViewSet):

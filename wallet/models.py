@@ -69,7 +69,8 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
     }
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    wallet = models.ForeignKey(Wallet, on_delete=models.CASCADE, related_name="transactions")
+    wallet = models.ForeignKey(Wallet, on_delete=models.SET_NULL, null=True,blank=True, related_name="transactions")
+    user = models.ForeignKey(User,  on_delete=models.SET_NULL, null=True,blank=True,)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     transaction_type = models.CharField(choices=TRANSACTION_TYPES, max_length=10)
     description = models.TextField(null=True,blank=True)
