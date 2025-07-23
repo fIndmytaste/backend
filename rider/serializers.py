@@ -27,6 +27,8 @@ class OrderSerializer(serializers.ModelSerializer):
                     'time':instance.actual_pickup_time
                 }
                 representation['pick_up_details'] = pick_up_details
+                representation['distance'] = 10.05
+                representation['earning'] = 4000
 
                 items = [dict(
                     id=item.id,
