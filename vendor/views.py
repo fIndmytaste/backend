@@ -1,10 +1,10 @@
 from rest_framework import status, generics 
 from django.db.models import Q, Avg,Sum, Count
-from account.models import Vendor, VendorRating
+from account.models import Address, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.order_utils import get_distance_between_two_location
 from helpers.permissions import IsVendor
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory
 from product.serializers import OrderSerializer
 from .serializers import VendorCategorySerializer, ProductSerializer, VendorRatingCreateSerializer,VendorRegisterBusinessSerializer, VendorSerializer
@@ -533,20 +533,81 @@ class HotPickVendorsView(generics.GenericAPIView):
 
 
 class FeaturedVendorsView(generics.GenericAPIView):
-    permission_classes = []
+    permission_classes = [AllowAny]
+
     # permission_classes = [IsAuthenticated]
     serializer_class = VendorSerializer
     queryset = Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
     
+    def get_queryset(self):
+        user:User = self.request.user
+        if not user:
+            return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
+        
+        user_address, _ = Address.objects.get_or_create(user=user)
+        user_lat = user_address.location_latitude
+        user_lon = user_address.location_longitude
+        if user_lat is None or user_lon is None:
+            return Vendor.objects.none() 
+
+        try:
+            user_lat = float(user_lat)
+            user_lon = float(user_lon)
+        except ValueError:
+            return Vendor.objects.none()
+
+        # Approximate latitude/longitude delta for 10 km radius
+        # 1 degree latitude ~= 111 km
+        lat_delta = 10 / 111  # ~0.09 degrees
+        # 1 degree longitude varies, use cos(lat) for approximation
+        lon_delta = 10 / (111 * cos(radians(user_lat)))
+
+        # Filter vendors roughly in bounding box first
+        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
+            product_count__gt=0,
+            location_latitude__isnull=False,
+            location_longitude__isnull=False,
+            location_latitude__gte=user_lat - lat_delta,
+            location_latitude__lte=user_lat + lat_delta,
+            location_longitude__gte=user_lon - lon_delta,
+            location_longitude__lte=user_lon + lon_delta,
+        )
+
+        # Filter by search param
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search) |
+                Q(category__name__icontains=search)
+            )
+
+        # Now filter queryset in Python using exact haversine distance
+        vendors_within_10km = []
+        for vendor in queryset:
+            try:
+                v_lat = float(vendor.location_latitude)
+                v_lon = float(vendor.location_longitude)
+            except (TypeError, ValueError):
+                continue
+
+        dist = get_distance_between_two_location(
+            lat1=user_lat, lon1=user_lon,
+            lat2=v_lat, lon2=v_lon
+        )
+        if dist is not None and dist <= 10:
+            vendors_within_10km.append(vendor)
+
+        return vendors_within_10km
+
     def get(self, request):
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             self.get_queryset(),
             page_size=20
-        )
-        return success_response(
-            self.serializer_class(self.get_queryset(),many=True).data
         )
 
    
@@ -581,8 +642,14 @@ class AllVendorsView(generics.GenericAPIView):
     serializer_class = VendorSerializer
 
     def get_queryset(self):
-        user_lat = self.request.query_params.get('lat')
-        user_lon = self.request.query_params.get('lon')
+        user:User = self.request.user
+        if not user:
+            return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
+        
+        user_address, _ = Address.objects.get_or_create(user=user)
+        user_lat = user_address.location_latitude
+        user_lon = user_address.location_longitude
+        
         if user_lat is None or user_lon is None:
             return Vendor.objects.none()  # or return all vendors if you prefer
 
