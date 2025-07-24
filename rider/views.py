@@ -490,18 +490,19 @@ class RiderViewSet(viewsets.ModelViewSet):
 
 
 class RiderOrderDetailView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
+    permission_classes = []
 
     def get(self, request, order_id):
-        user = request.user
+        # user = request.user
 
-        if not hasattr(user, 'rider'):
-            return bad_request_response(message="You are not a rider.")
+        # if not hasattr(user, 'rider'):
+        #     return bad_request_response(message="You are not a rider.")
 
-        rider = user.rider
+        # rider = user.rider
 
         try:
-            order = Order.objects.get(id=order_id, rider=rider)
+            order = Order.objects.get(id=order_id)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found or not assigned to you.", status_code=404)
 

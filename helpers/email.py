@@ -162,7 +162,7 @@ class EmailService:
         """Send a welcome email to a new user"""
         return self.send_email_with_template(
             email=user_email,
-            template_name="emails/welcome.html",
+            template_name="emails/account_login.html",
             template_data={"user_name": user_name},
             subject="Welcome to Our Platform",
         )
@@ -223,6 +223,10 @@ class EmailService:
 
 
 emailService = EmailService()
+emailService.send_welcome_email(
+    user_email="olakaycoder1@gmail.com",
+    user_name="John Doe",
+)
 
 
 

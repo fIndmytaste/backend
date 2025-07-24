@@ -649,7 +649,7 @@ class AllVendorsView(generics.GenericAPIView):
         user_address, _ = Address.objects.get_or_create(user=user)
         user_lat = user_address.location_latitude
         user_lon = user_address.location_longitude
-        
+
         if user_lat is None or user_lon is None:
             return Vendor.objects.none()  # or return all vendors if you prefer
 
