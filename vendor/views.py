@@ -541,7 +541,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
     
     def get_queryset(self):
         user:User = self.request.user
-        if not user:
+        if not user or not isinstance(user, User):
             return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
         
         user_address, _ = Address.objects.get_or_create(user=user)
@@ -643,7 +643,10 @@ class AllVendorsView(generics.GenericAPIView):
 
     def get_queryset(self):
         user:User = self.request.user
-        if not user:
+        print("+++++"*20)
+        print(user)
+        print(type(user))
+        if not user or not isinstance(user, User):
             return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
         
         user_address, _ = Address.objects.get_or_create(user=user)

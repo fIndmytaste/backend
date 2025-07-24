@@ -118,6 +118,7 @@ class EmailService:
         Returns:
             bool: True if the email was sent (or scheduled to be sent) successfully
         """
+        from_email = 'support@findmytaste.com.ng'
         # Render HTML template
         html_content = render_to_string(template_name, template_data)
         
@@ -223,10 +224,10 @@ class EmailService:
 
 
 emailService = EmailService()
-emailService.send_welcome_email(
-    user_email="olakaycoder1@gmail.com",
-    user_name="John Doe",
-)
+# emailService.send_welcome_email(
+#     user_email="olakaycoder1@gmail.com",
+#     user_name="John Doe",
+# )
 
 
 
