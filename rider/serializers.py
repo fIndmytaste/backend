@@ -23,7 +23,7 @@ class OrderSerializer(serializers.ModelSerializer):
             if isinstance(addition_serializer_data,dict) and addition_serializer_data.get('rider_order_details'):
                 vendor:Vendor = instance.vendor
                 pick_up_details = {
-                    'address': vendor.address,
+                    'address': vendor.address if vendor else '',
                     'time':instance.actual_pickup_time
                 }
                 representation['pick_up_details'] = pick_up_details
