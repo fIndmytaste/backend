@@ -95,3 +95,6 @@ class WalletTransaction(models.Model): # serving as the general transaction tabl
             prefix = self.TRANSACTION_PREFIXES.get(self.transaction_type, 'TXN')
             self.reference_code = WalletTransaction.generate_reference_code(prefix)
         super().save(*args, **kwargs)
+
+
+        

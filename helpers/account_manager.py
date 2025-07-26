@@ -15,6 +15,11 @@ class AccountManager:
             vendor.bank_name = bank_name
             vendor.bank_account_name = account_name
             vendor.save()
+            user = vendor.user
+            user.bank_account = account_number
+            user.bank_name = bank_name
+            user.bank_account_name = account_name
+            user.save()
             return True , 'Bank account detail successfully updated'
         except Exception as e:
             logging.error(e)

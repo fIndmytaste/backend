@@ -60,6 +60,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_verified = models.BooleanField(default=False, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    bank_account = models.CharField(max_length=20,null=True,blank=True)
+    bank_name = models.CharField(max_length=64,null=True,blank=True)
+    bank_account_name = models.CharField(max_length=64,null=True,blank=True)
 
     role = models.CharField(max_length=10, choices=(
         ('admin', 'Admin'),

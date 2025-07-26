@@ -33,46 +33,67 @@ class PaystackManager:
         return header
 
     
-    def make_withdrawal(self,request,vendor:Vendor,amount, transaction_obj):
+    def make_withdrawal(self, request, vendor: Vendor, amount, transaction_obj):
         account_bank = None
         account_number = None
-        print(vendor.bank_name , vendor.bank_account_name)
-        if vendor.bank_name and vendor.bank_account_name:
+        if vendor and vendor.bank_name and vendor.bank_account_name:
             account_bank = vendor.bank_name
             account_number = vendor.bank_account_name
         else:
-
-            if any([ request.data.get('bank_code') in [None,False] , request.data.get('account_number') in [None,False] ]):
+            if not (request.data.get('bank_code') and request.data.get('account_number')):
                 return bad_request_response(message='You did not have an account attached to your profile, kindly add.')
-
             account_bank = request.data['bank_code']
             account_number = request.data['account_number']
 
-        data = {
-            "account_bank": account_bank,
-            "account_number":  account_number,
-            "amount": amount,
-            "narration": "Withdrawal from balance",
-            "currency": "NGN",
-            "reference": f"{transaction_obj.uuid}_PMCKDU_1", #!TODO make sure this is actual transaction ref from DB
-            # "callback_url": 'https://play.svix.com/in/e_6O0J7HodDYMurpXRzPcf7UBWxOO/'
-            "callback_url": request.build_absolute_uri(reverse("flutterwave-withdrawal-callback"))
-        }
+        # Resolve bank account to get recipient code
+        is_valid, resolve_result = self.resolve_bank_account(account_number, account_bank)
+        if not is_valid:
+            return bad_request_response(message=resolve_result)
 
-        response = requests.post('https://api.flutterwave.com/v3/transfers', headers=self.get_header(), json=data)
-        print(response)
-        print(response.text)
+        # Create transfer recipient
+        recipient_data = {
+            "type": "nuban",
+            "name": vendor.bank_account_name if vendor else "Withdrawal Recipient",
+            "account_number": account_number,
+            "bank_code": account_bank,
+            "currency": "NGN"
+        }
+        recipient_response = requests.post(
+            f'{self.base_url}/transferrecipient',
+            headers=self.get_header(),
+            json=recipient_data
+        )
+        if not recipient_response.ok:
+            return bad_request_response(message='Failed to create transfer recipient')
+
+        recipient_code = recipient_response.json()['data']['recipient_code']
+
+        # Initiate transfer
+        data = {
+            "source": "balance",
+            "amount": int(amount * 100),  # Convert to kobo
+            "recipient": recipient_code,
+            "reason": "Withdrawal from balance",
+            "reference": str(transaction_obj.id)
+        }
+        response = requests.post(
+            f'{self.base_url}/transfer',
+            headers=self.get_header(),
+            json=data
+        )
+
         if response.ok:
             initiate_result = response.json()
-            if initiate_result['status'] != 'success':
+            if initiate_result['status'] == 'success':
+                transaction_obj.response_data = initiate_result
+                transaction_obj.status = 'pending'  # Paystack transfers may need webhook confirmation
+                transaction_obj.save()
+                return success_response(message='Withdrawal initiated successfully')
+            else:
                 return bad_request_response(message='Withdrawal creation failed')
-            transaction_obj.response = initiate_result
-            transaction_obj.save()
-            return success_response(message='Withdrawal completed')
-        
         else:
             return bad_request_response(message='Withdrawal creation failed')
-    
+
 
     def validate_bank(self,bank_code):
         response = requests.get(f'{self.base_url}/banks', headers=self.get_header())
@@ -193,6 +214,40 @@ class PaystackManager:
                 
             except:
                 return internal_server_error_response() 
+        
+        
+        
+        elif event_type == "transfer.success":
+            try:
+                data = payload.get('data')
+                reference = data.get('reference')
+                transaction = WalletTransaction.objects.filter(id=reference, transaction_type='withdrawal').first()
+                if transaction and transaction.status != 'completed':
+                    transaction.status = 'completed'
+                    transaction.response_data = payload
+                    transaction.save()
+                    return success_response(message="Withdrawal confirmed successfully")
+                return bad_request_response(message="Transaction already processed or not found")
+            except Exception:
+                return internal_server_error_response()
+
+        elif event_type == "transfer.failed":
+            try:
+                data = payload.get('data')
+                reference = data.get('reference')
+                transaction = WalletTransaction.objects.filter(id=reference, transaction_type='withdrawal').first()
+                if transaction:
+                    transaction.status = 'failed'
+                    transaction.response_data = payload
+                    transaction.save()
+                    # Optionally refund the wallet
+                    wallet = transaction.wallet
+                    wallet.deposit(transaction.amount)
+                    return bad_request_response(message="Withdrawal failed and amount refunded")
+                return bad_request_response(message="Transaction not found")
+            except Exception:
+                return internal_server_error_response()
+        
         return success_response()
 
 

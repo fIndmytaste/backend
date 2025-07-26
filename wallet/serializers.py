@@ -1,7 +1,8 @@
 import uuid
+from account.models import Vendor
 from rest_framework import serializers
 from .models import Wallet, WalletTransaction
-
+from decimal import Decimal
 class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wallet
@@ -30,3 +31,10 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             obj.save(update_fields=['reference_code'])
 
         return ref_code
+    
+
+
+
+
+class WithdrawalSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))

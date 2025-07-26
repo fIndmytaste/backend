@@ -312,3 +312,7 @@ class ProfileImageUploadSerializer(serializers.ModelSerializer):
 class BankAccountValidationSerializer(serializers.Serializer):
     bank_code = serializers.CharField(required=True)
     account_number = serializers.CharField(required=True)
+
+
+class InitiateWithdrawalSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=True)

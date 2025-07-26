@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
 from account.models import Address, Notification, Profile, User, Vendor, VirtualAccount
-from account.serializers import BankAccountValidationSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer, VirtualAccountSerializer
+from account.serializers import BankAccountValidationSerializer, InitiateWithdrawalSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer, VirtualAccountSerializer
 from helpers.account_manager import AccountManager
 from helpers.flutterwave import FlutterwaveManager
 from helpers.paystack import PaystackManager
@@ -220,9 +220,6 @@ class UserAddressUpdateView(generics.GenericAPIView):
         )
         
         return success_response(UserAddressSerializer(address_object).data, status_code=201)
-
-
-
 
 
 class PasswordChangeView(generics.GenericAPIView):
@@ -524,3 +521,19 @@ class VendorAddressUpdateView(generics.GenericAPIView):
         
         return bad_request_response(message=serializer.errors)
 
+
+
+class AccountWithdrawalInitiate(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class  = InitiateWithdrawalSerializer
+    def post(self,request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        
+        klass = PaystackManager()
+        return klass.make_withdrawal(
+            request,
+            serializer.validated_data['amount'],
+
+        )

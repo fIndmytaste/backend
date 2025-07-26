@@ -17,4 +17,5 @@ urlpatterns = [
     path('virtual-account', MyVirtualAccountNumberView.as_view(), name='virtual-account'),
     path('vendor/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
     path('rider/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
+    path('initiate-withdrawal', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
 ]
