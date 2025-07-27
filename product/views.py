@@ -481,7 +481,6 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 message="Please set your delivery address in settings before placing an order."
             )
 
-        # Calculate delivery distance
         distance_in_km = get_distance_between_two_location(
             lat1=float(user_address.location_latitude),
             lon1=float(user_address.location_longitude),
@@ -494,7 +493,6 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 message="This vendor cannot deliver to your location (distance too far)."
             )
 
-        # Pre-fetch all products and variants
         product_ids = {item['product'] for item in items_data}
         variant_ids = {
             variant['product']
@@ -509,7 +507,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
 
         try:
             with transaction.atomic():
-                # Create order
+                
                 order = Order.objects.create(user=user, vendor=vendor)
 
                 # Process each item
