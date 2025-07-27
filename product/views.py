@@ -463,64 +463,94 @@ class CustomerCreateOrderView(generics.GenericAPIView):
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        user = request.user
         items_data = serializer.validated_data['items']
         vendor_id = serializer.validated_data['vendor_id']
 
+        # Get vendor
         try:
             vendor = Vendor.objects.get(id=vendor_id)
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
 
-        user = request.user
-
+        # Get user address
         user_address = Address.objects.filter(user=user).first()
         if not user_address:
             return bad_request_response(
                 message="Please set your delivery address in settings before placing an order."
             )
 
-        # Calculate distance between user and vendor
-        distance_in_kilometers = get_distance_between_two_location(
+        # Calculate delivery distance
+        distance_in_km = get_distance_between_two_location(
             lat1=float(user_address.location_latitude),
             lon1=float(user_address.location_longitude),
             lat2=float(vendor.location_latitude),
             lon2=float(vendor.location_longitude),
         )
 
-
-        if distance_in_kilometers == None or distance_in_kilometers > 10:
+        if distance_in_km is None or distance_in_km > 10:
             return bad_request_response(
                 message="This vendor cannot deliver to your location (distance too far)."
             )
-        
-        item_count = sum([item['quantity'] for item in items_data])
-        delivery_fee = calculate_delivery_fee(distance_in_kilometers, item_count)
+
+        # Pre-fetch all products and variants
+        product_ids = {item['product'] for item in items_data}
+        variant_ids = {
+            variant['product']
+            for item in items_data if item.get('variants')
+            for variant in item['variants']
+        }
+        all_ids = list(product_ids.union(variant_ids))
+        products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent')
+        product_map = {product.id: product for product in products}
+
+        item_count = 0
 
         try:
             with transaction.atomic():
+                # Create order
                 order = Order.objects.create(user=user, vendor=vendor)
 
-                for item_data in items_data:
-                    try:
-                        product = Product.objects.get(id=item_data['product'])
-                    except Product.DoesNotExist:
-                        raise ValidationError(
-                            f"Product with ID {item_data['product']} not found."
+                # Process each item
+                for item in items_data:
+                    main_product = product_map.get(item['product'])
+                    if not main_product:
+                        raise ValidationError(f"Product with ID {item['product']} not found.")
+
+                    if main_product.vendor.id != vendor.id:
+                        raise ValidationError(f"Product '{main_product.name}' does not belong to the selected vendor.")
+
+                    if item.get('variants'):
+                        for variant in item['variants']:
+                            variant_product = product_map.get(variant['product'])
+                            if not variant_product:
+                                raise ValidationError(f"Variant with ID {variant['product']} not found.")
+
+                            if not variant_product.parent or variant_product.parent.id != main_product.id:
+                                raise ValidationError(f"Variant {variant['product']} is not linked to product {main_product.id}.")
+
+                            if variant_product.vendor.id != vendor.id:
+                                raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
+
+                            OrderItem.objects.create(
+                                order=order,
+                                product=variant_product,
+                                quantity=variant['quantity'],
+                                price=variant_product.price
+                            )
+                            item_count += variant['quantity']
+                    else:
+                        OrderItem.objects.create(
+                            order=order,
+                            product=main_product,
+                            quantity=item['quantity'],
+                            price=main_product.price
                         )
+                        item_count += item['quantity']
 
-                    # Ensure product belongs to vendor
-                    if product.vendor.id != vendor.id:
-                        raise ValidationError(
-                            f"Product '{product.name}' does not belong to the selected vendor."
-                        )
-
-                    OrderItem.objects.create(
-                        order=order,
-                        product=product,
-                        quantity=item_data['quantity'],
-                        price=product.price
-                    )
-
+                # Calculate delivery and finalize order
+                delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
                 order.update_total_amount()
                 order.address = user_address.address
                 order.location_latitude = user_address.location_latitude
@@ -528,7 +558,6 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.save()
 
-                # Optionally serialize and return the created order
                 return success_response(
                     message="Order created successfully",
                     data=OrderSerializer(order).data
@@ -536,11 +565,11 @@ class CustomerCreateOrderView(generics.GenericAPIView):
 
         except ValidationError as ve:
             return bad_request_response(message=str(ve))
+
         except Exception as e:
-            traceback_str = traceback.format_exc() 
+            traceback_str = traceback.format_exc()
             print(traceback_str)
             return internal_server_error_response(message="An error occurred while creating your order.")
-
 
 class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
