@@ -153,8 +153,13 @@ class ProductImage(models.Model):
 
 
     def get_image_url(self):
-        if self.image:
-            return self.image.url
+        try:
+            if self.image:
+                return self.image.url
+        except Exception as e:
+            print(e)
+            pass
+            
         return None
 
 class Order(models.Model):

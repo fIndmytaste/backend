@@ -11,6 +11,7 @@ class ProductImageSerializerClass(serializers.ModelSerializer):
 
     def get_image(self,obj:ProductImage):
         return obj.get_image_url()
+    
 class BuyerProductSerializer(serializers.ModelSerializer):
     discounted_price = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
@@ -32,6 +33,10 @@ class OrderItemSerializer(serializers.ModelSerializer):
         model = OrderItem
         fields = ['product', 'quantity', 'price', 'total_price']
 
+
+class OrderItemSerializerIn(serializers.Serializer):
+    product = serializers.CharField()
+    quantity = serializers.IntegerField()
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True)
@@ -112,8 +117,8 @@ class OrderSerializer(serializers.ModelSerializer):
         
         return rep
     
-class CreateOrderSerializer(serializers.Serializer):
-    items = OrderItemSerializer(many=True,required=True)
+class CreateOrderSerializer(serializers.Serializer): 
+    items = OrderItemSerializerIn(many=True,required=True)
     vendor_id = serializers.CharField(required=True)
     note = serializers.CharField(required=False)
 

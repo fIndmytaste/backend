@@ -1,3 +1,4 @@
+import traceback
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg import openapi
@@ -10,11 +11,10 @@ from helpers.order_utils import calculate_delivery_fee, get_distance_between_two
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
 from .models import Favorite, Order, OrderItem, ProductImage, Rating, SystemCategory, Product
-from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response
+from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
 
-# Vendor Views
 
 class InternalProductListView(generics.GenericAPIView):
     # permission_classes = [IsAuthenticated]
@@ -537,7 +537,9 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         except ValidationError as ve:
             return bad_request_response(message=str(ve))
         except Exception as e:
-            return bad_request_response(message="An error occurred while creating your order.")
+            traceback_str = traceback.format_exc() 
+            print(traceback_str)
+            return internal_server_error_response(message="An error occurred while creating your order.")
 
 
 class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
