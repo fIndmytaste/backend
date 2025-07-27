@@ -481,15 +481,14 @@ class CustomerCreateOrderView(generics.GenericAPIView):
 
         # Calculate distance between user and vendor
         distance_in_kilometers = get_distance_between_two_location(
-            lat1=user_address.location_latitude,
-            lon1=user_address.location_longitude,
-            lat2=vendor.location_latitude,
-            lon2=vendor.location_longitude,
+            lat1=float(user_address.location_latitude),
+            lon1=float(user_address.location_longitude),
+            lat2=float(vendor.location_latitude),
+            lon2=float(vendor.location_longitude),
         )
 
-        
 
-        if not distance_in_kilometers or distance_in_kilometers > 10:
+        if distance_in_kilometers == None or distance_in_kilometers > 10:
             return bad_request_response(
                 message="This vendor cannot deliver to your location (distance too far)."
             )

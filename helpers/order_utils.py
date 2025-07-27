@@ -1,9 +1,13 @@
 from math import radians, sin, cos, sqrt, atan2
 
 def get_distance_between_two_location(lat1, lon1, lat2, lon2):
+    print(lat1,lon1,lat2,lon2)
     try:
         # Validate input types
         for value in [lat1, lon1, lat2, lon2]:
+            print(lat1)
+            print(type(lat1))
+            print(isinstance(value, (int, float)))
             if not isinstance(value, (int, float)):
                 raise TypeError("Latitude and longitude must be numeric values.")
 
