@@ -115,6 +115,7 @@ class ProductSerializer(serializers.ModelSerializer):
         for variant in variants_qs:
             key = variant.variant_category_name.strip() if variant.variant_category_name else "Uncategorized"
             grouped_variants[key].append({
+                "id": variant.id,
                 "name": variant.name,
                 "price": variant.price,
             })
