@@ -30,12 +30,15 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
 
+    
     # external apps
     'corsheaders',
     'rest_framework',
     'drf_yasg',
     'cloudinary',
     'cloudinary_storage',
+    'channels',
+    'channels_redis',
 
     # local apps
     'account',
@@ -217,23 +220,12 @@ EMAIL_USE_TLS = True
 
 
 
-"""
-INSTALLED_APPS = [
-    # ... other apps
-    'channels',
-]
-
-ASGI_APPLICATION = 'your_project.asgi.application'
-
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        # For production, use Redis:
-        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        # 'CONFIG': {
-        #     "hosts": [('127.0.0.1', 6379)],
-        # },
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
     },
 }
-"""
 

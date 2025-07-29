@@ -1,4 +1,5 @@
 import traceback
+from helpers.paystack import PaystackManager
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg import openapi
@@ -10,10 +11,12 @@ from account.serializers import VendorRatingSerializer
 from helpers.order_utils import calculate_delivery_fee, get_distance_between_two_location
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
+from wallet.models import WalletTransaction
 from .models import Favorite, Order, OrderItem, ProductImage, Rating, SystemCategory, Product
 from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
+from wallet.models import Wallet
 
 
 class InternalProductListView(generics.GenericAPIView):
@@ -568,6 +571,156 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             traceback_str = traceback.format_exc()
             print(traceback_str)
             return internal_server_error_response(message="An error occurred while creating your order.")
+
+
+
+class CustomerCreateOrderMobileView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CreateOrderSerializer
+
+    def post(self, request):
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        items_data = serializer.validated_data['items']
+        vendor_id = serializer.validated_data['vendor_id']
+
+        # Get vendor
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found")
+
+        # Get user address
+        user_address = Address.objects.filter(user=user).first()
+        if not user_address:
+            return bad_request_response(
+                message="Please set your delivery address in settings before placing an order."
+            )
+
+        distance_in_km = get_distance_between_two_location(
+            lat1=float(user_address.location_latitude),
+            lon1=float(user_address.location_longitude),
+            lat2=float(vendor.location_latitude),
+            lon2=float(vendor.location_longitude),
+        )
+
+        if distance_in_km is None or distance_in_km > 10:
+            return bad_request_response(
+                message="This vendor cannot deliver to your location (distance too far)."
+            )
+
+        product_ids = {item['product'] for item in items_data}
+        variant_ids = {
+            variant['product']
+            for item in items_data if item.get('variants')
+            for variant in item['variants']
+        }
+        all_ids = list(product_ids.union(variant_ids))
+        products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent')
+        product_map = {product.id: product for product in products}
+
+        item_count = 0
+
+        try:
+            with transaction.atomic():
+                
+                order = Order.objects.create(user=user, vendor=vendor)
+
+                # Process each item
+                for item in items_data:
+                    main_product = product_map.get(item['product'])
+                    if not main_product:
+                        raise ValidationError(f"Product with ID {item['product']} not found.")
+
+                    if main_product.vendor.id != vendor.id:
+                        raise ValidationError(f"Product '{main_product.name}' does not belong to the selected vendor.")
+
+                    if item.get('variants'):
+                        for variant in item['variants']:
+                            variant_product = product_map.get(variant['product'])
+                            if not variant_product:
+                                raise ValidationError(f"Variant with ID {variant['product']} not found.")
+
+                            if not variant_product.parent or variant_product.parent.id != main_product.id:
+                                raise ValidationError(f"Variant {variant['product']} is not linked to product {main_product.id}.")
+
+                            if variant_product.vendor.id != vendor.id:
+                                raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
+
+                            OrderItem.objects.create(
+                                order=order,
+                                product=variant_product,
+                                quantity=variant['quantity'],
+                                price=variant_product.price
+                            )
+                            item_count += variant['quantity']
+                    else:
+                        OrderItem.objects.create(
+                            order=order,
+                            product=main_product,
+                            quantity=item['quantity'],
+                            price=main_product.price
+                        )
+                        item_count += item['quantity']
+
+                # Calculate delivery and finalize order
+                delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
+                order.update_total_amount()
+                order.address = user_address.address
+                order.location_latitude = user_address.location_latitude
+                order.location_longitude = user_address.location_longitude
+                order.delivery_fee = delivery_fee
+                order.save()
+
+
+
+                if order.payment_method == 'wallet':
+                    wallet, _ = Wallet.objects.get_or_create(user=user)
+                    order_total_price = order.get_total_price() + order.delivery_fee + order.service_fee
+                    if float(order_total_price) > float(wallet.balance):
+                        raise ValueError('Insufficient balance. Please top up your wallet')
+                    
+                    # proceed the payment
+                    wallet.balance -= order_total_price
+                    wallet.save()
+                    order.status = 'paid'
+                    order.save()
+
+                    WalletTransaction.objects.create(
+                        wallet=wallet, 
+                        amount=order_total_price,
+                        transaction_type='purchase',
+                        description='Payment for order',
+                        status='completed',
+                        order=order
+                    )
+
+                    return success_response(
+                        message='Payment successful'
+                    )
+                else:
+                    if not request.data.get('callback_url'):
+                        return bad_request_response(
+                            message="callback url (callback_url) is required for other payment method"
+                        )
+                klass = PaystackManager()
+                return klass.initiate_payment(request, order_total_price, order)
+
+                return success_response(
+                    message="Order created successfully",
+                    data=OrderSerializer(order).data
+                )
+
+        except ValidationError as ve:
+            return bad_request_response(message=str(ve))
+
+        except Exception as e:
+            traceback_str = traceback.format_exc()
+            print(traceback_str)
+            return internal_server_error_response(message="An error occurred while creating your order.")
+
 
 class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     """

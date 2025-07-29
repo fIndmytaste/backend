@@ -3,6 +3,7 @@ from django.urls import path
 from product.views import ( 
     AddToFavoritesView,
     AllProductsView,
+    CustomerCreateOrderMobileView,
     CustomerCreateOrderView,
     DeleteProductImageView,
     HotPickProductsView,
@@ -45,6 +46,7 @@ urlpatterns = [
     # Order Endpoints
     path('order/', OrderListCreateView.as_view(), name='list_order'),
     path('order/create', CustomerCreateOrderView.as_view(), name='create__order'),
+    path('order/create-mobile', CustomerCreateOrderMobileView.as_view(), name='create__order_mobile'),
     path('order/<uuid:order_id>/', OrderDetailView.as_view(), name='get_update_delete_order'),
 
 

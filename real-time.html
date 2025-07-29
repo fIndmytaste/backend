@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chowdeck-style Delivery Tracking</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            text-transform: capitalize;
+        }
+
+        .status-confirmed { background: #fef3c7; color: #92400e; }
+        .status-ready_for_pickup { background: #dbeafe; color: #1d4ed8; }
+        .status-picked_up { background: #e0e7ff; color: #5b21b6; }
+        .status-in_transit { background: #fef3c7; color: #b45309; }
+        .status-near_delivery { background: #dcfce7; color: #166534; }
+        .status-delivered { background: #dcfce7; color: #059669; }
+
+        .container {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            height: calc(100vh - 80px);
+        }
+
+        .sidebar {
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            overflow-y: auto;
+            box-shadow: 4px 0 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .map-container {
+            position: relative;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        .tracking-info {
+            padding: 1.5rem;
+        }
+
+        .order-header {
+            margin-bottom: 1.5rem;
+        }
+
+        .order-id {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-section {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: #f8fafc;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-section h3 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .info-item i {
+            width: 20px;
+            margin-right: 0.75rem;
+            color: #667eea;
+        }
+
+        .eta-display {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .eta-display .time {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .eta-display .label {
+            font-size: 0.75rem;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .progress-timeline {
+            margin: 1.5rem 0;
+        }
+
+        .timeline-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+            position: relative;
+        }
+
+        .timeline-item:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            left: 12px;
+            top: 30px;
+            width: 2px;
+            height: 25px;
+            background: #e2e8f0;
+        }
+
+        .timeline-item.active::after {
+            background: #667eea;
+        }
+
+        .timeline-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 1rem;
+            font-size: 0.75rem;
+            z-index: 1;
+            background: white;
+            border: 2px solid #e2e8f0;
+        }
+
+        .timeline-item.active .timeline-icon {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .timeline-item.completed .timeline-icon {
+            background: #10b981;
+            color: white;
+            border-color: #10b981;
+        }
+
+        .connection-status {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            background: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .connection-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+        }
+
+        .connection-indicator.connected {
+            background: #10b981;
+        }
+
+        .demo-controls {
+            position: absolute;
+            bottom: 1rem;
+            left: 1rem;
+            z-index: 1000;
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .demo-controls h4 {
+            margin-bottom: 0.75rem;
+            font-size: 0.875rem;
+            color: #64748b;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            background: #667eea;
+            color: white;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #5a67d8;
+            transform: translateY(-1px);
+        }
+
+        .btn-small {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+                grid-template-rows: 300px 1fr;
+            }
+            
+            .sidebar {
+                border-right: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><i class="fas fa-motorcycle"></i> Delivery Tracking</h1>
+        <div class="status-badge" id="orderStatus">Loading...</div>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <div class="tracking-info">
+                <div class="order-header">
+                    <div class="order-id" id="orderId">Order #12345</div>
+                </div>
+
+                <div class="eta-display" id="etaDisplay">
+                    <div class="time" id="etaTime">--</div>
+                    <div class="label">Estimated Delivery</div>
+                </div>
+
+                <div class="progress-timeline">
+                    <div class="timeline-item completed" data-status="confirmed">
+                        <div class="timeline-icon"><i class="fas fa-check"></i></div>
+                        <div>Order Confirmed</div>
+                    </div>
+                    <div class="timeline-item active" data-status="ready_for_pickup">
+                        <div class="timeline-icon"><i class="fas fa-clock"></i></div>
+                        <div>Ready for Pickup</div>
+                    </div>
+                    <div class="timeline-item" data-status="picked_up">
+                        <div class="timeline-icon"><i class="fas fa-box"></i></div>
+                        <div>Order Picked Up</div>
+                    </div>
+                    <div class="timeline-item" data-status="in_transit">
+                        <div class="timeline-icon"><i class="fas fa-truck"></i></div>
+                        <div>On The Way</div>
+                    </div>
+                    <div class="timeline-item" data-status="near_delivery">
+                        <div class="timeline-icon"><i class="fas fa-map-marker-alt"></i></div>
+                        <div>Near You</div>
+                    </div>
+                    <div class="timeline-item" data-status="delivered">
+                        <div class="timeline-icon"><i class="fas fa-flag-checkered"></i></div>
+                        <div>Delivered</div>
+                    </div>
+                </div>
+
+                <div class="info-section">
+                    <h3>Delivery Details</h3>
+                    <div class="info-item" id="customerInfo">
+                        <i class="fas fa-user"></i>
+                        <span>Loading customer info...</span>
+                    </div>
+                    <div class="info-item" id="addressInfo">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span>Loading address...</span>
+                    </div>
+                    <div class="info-item" id="phoneInfo">
+                        <i class="fas fa-phone"></i>
+                        <span>Loading phone...</span>
+                    </div>
+                </div>
+
+                <div class="info-section">
+                    <h3>Rider Information</h3>
+                    <div class="info-item" id="riderName">
+                        <i class="fas fa-motorcycle"></i>
+                        <span>Waiting for rider assignment...</span>
+                    </div>
+                    <div class="info-item" id="riderPhone">
+                        <i class="fas fa-phone"></i>
+                        <span>--</span>
+                    </div>
+                    <div class="info-item" id="lastUpdate">
+                        <i class="fas fa-clock"></i>
+                        <span>Last updated: --</span>
+                    </div>
+                </div>
+
+                <div class="info-section">
+                    <h3>Restaurant</h3>
+                    <div class="info-item" id="vendorName">
+                        <i class="fas fa-store"></i>
+                        <span>Loading restaurant...</span>
+                    </div>
+                    <div class="info-item" id="vendorAddress">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span>Loading address...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="map-container">
+            <div class="connection-status" id="connectionStatus">
+                <div class="connection-indicator" id="connectionIndicator"></div>
+                <span id="connectionText">Connecting...</span>
+            </div>
+
+            <div id="map"></div>
+
+            <div class="demo-controls">
+                <h4>Demo Controls</h4>
+                <div class="control-group">
+                    <button class="btn btn-small" onclick="simulateRiderMovement()">
+                        <i class="fas fa-play"></i> Start Simulation
+                    </button>
+                    <button class="btn btn-small" onclick="stopSimulation()">
+                        <i class="fas fa-stop"></i> Stop
+                    </button>
+                </div>
+                <div class="control-group">
+                    <button class="btn btn-small" onclick="changeStatus('picked_up')">Picked Up</button>
+                    <button class="btn btn-small" onclick="changeStatus('in_transit')">In Transit</button>
+                    <button class="btn btn-small" onclick="changeStatus('near_delivery')">Near You</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        class DeliveryTracker {
+            constructor(orderId, apiBaseUrl = 'http://localhost:8000/api') {
+                this.orderId = orderId;
+                this.apiBaseUrl = apiBaseUrl;
+                this.websocket = null;
+                this.map = null;
+                this.markers = {};
+                this.routePolyline = null;
+                this.simulationInterval = null;
+                this.currentRiderPosition = null;
+                
+                this.init();
+            }
+
+            async init() {
+                this.initMap();
+                this.connectWebSocket();
+                await this.loadInitialData();
+                this.setupEventListeners();
+            }
+
+            initMap() {
+                // Initialize map centered on Lagos, Nigeria (you can change this)
+                this.map = L.map('map').setView([6.5244, 3.3792], 12);
+                
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors'
+                }).addTo(this.map);
+
+                // Custom icons
+                this.icons = {
+                    restaurant: L.divIcon({
+                        html: '<i class="fas fa-store" style="color: #ef4444; font-size: 20px;"></i>',
+                        iconSize: [30, 30],
+                        className: 'custom-div-icon'
+                    }),
+                    customer: L.divIcon({
+                        html: '<i class="fas fa-home" style="color: #10b981; font-size: 20px;"></i>',
+                        iconSize: [30, 30],
+                        className: 'custom-div-icon'
+                    }),
+                    rider: L.divIcon({
+                        html: '<i class="fas fa-motorcycle" style="color: #667eea; font-size: 20px;"></i>',
+                        iconSize: [30, 30],
+                        className: 'custom-div-icon'
+                    })
+                };
+            }
+
+            connectWebSocket() {
+                const wsUrl = `ws://localhost:8000/ws/delivery/${this.orderId}/`;
+                
+                try {
+                    this.websocket = new WebSocket(wsUrl);
+                    
+                    this.websocket.onopen = () => {
+                        console.log('WebSocket connected');
+                        this.updateConnectionStatus(true);
+                    };
+                    
+                    this.websocket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleWebSocketMessage(data);
+                    };
+                    
+                    this.websocket.onclose = () => {
+                        console.log('WebSocket disconnected');
+                        this.updateConnectionStatus(false);
+                        // Reconnect after 3 seconds
+                        setTimeout(() => this.connectWebSocket(), 3000);
+                    };
+                    
+                    this.websocket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateConnectionStatus(false);
+                    };
+                } catch (error) {
+                    console.error('Failed to connect WebSocket:', error);
+                    this.updateConnectionStatus(false);
+                    // For demo purposes, simulate with mock data
+                    this.useMockData();
+                }
+            }
+
+            handleWebSocketMessage(data) {
+                console.log('Received:', data);
+                
+                switch (data.type) {
+                    case 'order_update':
+                        this.updateOrderInfo(data.data);
+                        break;
+                    case 'rider_location':
+                        this.updateRiderLocation(data.data);
+                        break;
+                    case 'status_update':
+                        this.updateOrderStatus(data.data);
+                        break;
+                }
+            }
+
+            async loadInitialData() {
+                try {
+                    // For demo purposes, we're using mock data
+                    // In real implementation, this would call your API
+                    const mockData = this.getMockOrderData();
+                    this.updateOrderInfo(mockData);
+                } catch (error) {
+                    console.error('Failed to load initial data:', error);
+                    this.useMockData();
+                }
+            }
+
+            getMockOrderData() {
+                return {
+                    order_id: this.orderId,
+                    status: 'ready_for_pickup',
+                    customer: {
+                        name: 'John Doe',
+                        phone: '+234 801 234 5678',
+                        location: {
+                            latitude: 6.5355,
+                            longitude: 3.3087,
+                            address: '15 Admiralty Way, Lekki Phase 1, Lagos'
+                        }
+                    },
+                    vendor: {
+                        name: 'Tasty Bites Restaurant',
+                        location: {
+                            latitude: 6.4281,
+                            longitude: 3.4219,
+                            address: '45 Allen Avenue, Ikeja, Lagos'
+                        }
+                    },
+                    rider: {
+                        name: 'Ahmed Hassan',
+                        phone: '+234 807 123 4567',
+                        current_location: {
+                            latitude: 6.4290,
+                            longitude: 3.4200,
+                            updated_at: new Date().toISOString()
+                        }
+                    }
+                };
+            }
+
+            useMockData() {
+                console.log('Using mock data for demo');
+                const mockData = this.getMockOrderData();
+                this.updateOrderInfo(mockData);
+                
+                // Simulate real-time updates
+                setTimeout(() => {
+                    this.simulateStatusUpdate('picked_up');
+                }, 3000);
+            }
+
+            updateOrderInfo(orderData) {
+                // Update order ID and status
+                document.getElementById('orderId').textContent = `Order #${orderData.order_id.slice(-8)}`;
+                this.updateOrderStatus({ new_status: orderData.status });
+                
+                // Update customer info
+                if (orderData.customer) {
+                    document.getElementById('customerInfo').innerHTML = 
+                        `<i class="fas fa-user"></i><span>${orderData.customer.name || 'Customer'}</span>`;
+                    document.getElementById('addressInfo').innerHTML = 
+                        `<i class="fas fa-map-marker-alt"></i><span>${orderData.customer.location?.address || 'Address not provided'}</span>`;
+                    document.getElementById('phoneInfo').innerHTML = 
+                        `<i class="fas fa-phone"></i><span>${orderData.customer.phone || 'Phone not provided'}</span>`;
+                }
+                
+                // Update vendor info
+                if (orderData.vendor) {
+                    document.getElementById('vendorName').innerHTML = 
+                        `<i class="fas fa-store"></i><span>${orderData.vendor.name || 'Restaurant'}</span>`;
+                    document.getElementById('vendorAddress').innerHTML = 
+                        `<i class="fas fa-map-marker-alt"></i><span>${orderData.vendor.location?.address || 'Address not provided'}</span>`;
+                }
+                
+                // Update rider info
+                if (orderData.rider) {
+                    document.getElementById('riderName').innerHTML = 
+                        `<i class="fas fa-motorcycle"></i><span>${orderData.rider.name || 'Rider'}</span>`;
+                    document.getElementById('riderPhone').innerHTML = 
+                        `<i class="fas fa-phone"></i><span>${orderData.rider.phone || 'Phone not provided'}</span>`;
+                    
+                    if (orderData.rider.current_location?.updated_at) {
+                        const updateTime = new Date(orderData.rider.current_location.updated_at);
+                        document.getElementById('lastUpdate').innerHTML = 
+                            `<i class="fas fa-clock"></i><span>Last updated: ${updateTime.toLocaleTimeString()}</span>`;
+                    }
+                }
+                
+                // Add markers to map
+                this.addMapMarkers(orderData);
+                
+                // Store current positions
+                this.currentRiderPosition = orderData.rider?.current_location;
+            }
+
+            addMapMarkers(orderData) {
+                // Clear existing markers
+                Object.values(this.markers).forEach(marker => {
+                    this.map.removeLayer(marker);
+                });
+                this.markers = {};
+
+                const bounds = [];
+
+                // Add restaurant marker
+                if (orderData.vendor?.location?.latitude && orderData.vendor?.location?.longitude) {
+                    const vendorLatLng = [orderData.vendor.location.latitude, orderData.vendor.location.longitude];
+                    this.markers.vendor = L.marker(vendorLatLng, { icon: this.icons.restaurant })
+                        .addTo(this.map)
+                        .bindPopup(`<strong>${orderData.vendor.name}</strong><br>${orderData.vendor.location.address}`);
+                    bounds.push(vendorLatLng);
+                }
+
+                // Add customer marker
+                if (orderData.customer?.location?.latitude && orderData.customer?.location?.longitude) {
+                    const customerLatLng = [orderData.customer.location.latitude, orderData.customer.location.longitude];
+                    this.markers.customer = L.marker(customerLatLng, { icon: this.icons.customer })
+                        .addTo(this.map)
+                        .bindPopup(`<strong>Delivery Address</strong><br>${orderData.customer.location.address}`);
+                    bounds.push(customerLatLng);
+                }
+
+                // Add rider marker
+                if (orderData.rider?.current_location?.latitude && orderData.rider?.current_location?.longitude) {
+                    const riderLatLng = [orderData.rider.current_location.latitude, orderData.rider.current_location.longitude];
+                    this.markers.rider = L.marker(riderLatLng, { icon: this.icons.rider })
+                        .addTo(this.map)
+                        .bindPopup(`<strong>${orderData.rider.name}</strong><br>Rider Location`);
+                    bounds.push(riderLatLng);
+                }
+
+                // Fit map to show all markers
+                if (bounds.length > 0) {
+                    this.map.fitBounds(bounds, { padding: [20, 20] });
+                }
+            }
+
+            updateRiderLocation(data) {
+                if (data.rider_location && this.markers.rider) {
+                    const newLatLng = [data.rider_location.latitude, data.rider_location.longitude];
+                    
+                    // Animate marker movement
+                    this.animateMarker(this.markers.rider, newLatLng);
+                    
+                    // Update popup
+                    this.markers.rider.setPopupContent(`<strong>Rider Location</strong><br>Updated: ${new Date().toLocaleTimeString()}`);
+                    
+                    // Update last update time
+                    document.getElementById('lastUpdate').innerHTML = 
+                        `<i class="fas fa-clock"></i><span>Last updated: ${new Date().toLocaleTimeString()}</span>`;
+                    
+                    // Update ETA if provided
+                    if (data.estimated_arrival) {
+                        document.getElementById('etaTime').textContent = `${data.estimated_arrival} min`;
+                    }
+                    
+                    // Store current position
+                    this.currentRiderPosition = data.rider_location;
+                }
+            }
+
+            animateMarker(marker, newLatLng) {
+                const currentLatLng = marker.getLatLng();
+                const steps = 20;
+                const latStep = (newLatLng[0] - currentLatLng.lat) / steps;
+                const lngStep = (newLatLng[1] - currentLatLng.lng) / steps;
+                
+                let step = 0;
+                const animate = () => {
+                    if (step < steps) {
+                        const lat = currentLatLng.lat + (latStep * step);
+                        const lng = currentLatLng.lng + (lngStep * step);
+                        marker.setLatLng([lat, lng]);
+                        step++;
+                        setTimeout(animate, 50);
+                    } else {
+                        marker.setLatLng(newLatLng);
+                    }
+                };
+                animate();
+            }
+
+            updateOrderStatus(data) {
+                const status = data.new_status || data.status;
+                
+                // Update status badge
+                const statusBadge = document.getElementById('orderStatus');
+                statusBadge.textContent = status.replace('_', ' ').toUpperCase();
+                statusBadge.className = `status-badge status-${status}`;
+                
+                // Update timeline
+                this.updateTimeline(status);
+                
+                // Update ETA based on status
+                this.updateETA(status);
+            }
+
+            updateTimeline(currentStatus) {
+                const statuses = ['confirmed', 'ready_for_pickup', 'picked_up', 'in_transit', 'near_delivery', 'delivered'];
+                const currentIndex = statuses.indexOf(currentStatus);
+                
+                document.querySelectorAll('.timeline-item').forEach((item, index) => {
+                    item.classList.remove('active', 'completed');
+                    
+                    if (index < currentIndex) {
+                        item.classList.add('completed');
+                    } else if (index === currentIndex) {
+                        item.classList.add('active');
+                    }
+                });
+            }
+
+            updateETA(status) {
+                const etas = {
+                    'confirmed': '45-60 min',
+                    'ready_for_pickup': '35-45 min',
+                    'picked_up': '25-35 min',
+                    'in_transit': '10-20 min',
+                    'near_delivery': '5-10 min',
+                    'delivered': 'Delivered!'
+                };
+                
+                document.getElementById('etaTime').textContent = etas[status] || 'Calculating...';
+            }
+
+            updateConnectionStatus(connected) {
+                const indicator = document.getElementById('connectionIndicator');
+                const text = document.getElementById('connectionText');
+                
+                if (connected) {
+                    indicator.classList.add('connected');
+                    text.textContent = 'Live Tracking';
+                } else {
+                    indicator.classList.remove('connected');
+                    text.textContent = 'Reconnecting...';
+                }
+            }
+
+            setupEventListeners() {
+                // Any additional event listeners can be added here
+            }
+
+            // Demo simulation methods
+            simulateRiderMovement() {
+                if (this.simulationInterval) {
+                    clearInterval(this.simulationInterval);
+                }
+                
+                if (!this.currentRiderPosition) return;
+                
+                let lat = parseFloat(this.currentRiderPosition.latitude);
+                let lng = parseFloat(this.currentRiderPosition.longitude);
+                
+                this.simulationInterval = setInterval(() => {
+                    // Simulate random movement
+                    lat += (Math.random() - 0.5) * 0.001;
+                    lng += (Math.random() - 0.5) * 0.001;
+                    
+                    this.updateRiderLocation({
+                        rider_location: {
+                            latitude: lat,
+                            longitude: lng,
+                            updated_at: new Date().toISOString()
+                        },
+                        estimated_arrival: Math.floor(Math.random() * 20) + 5
+                    });
+                }, 2000);
+            }
+
+            stopSimulation() {
+                if (this.simulationInterval) {
+                    clearInterval(this.simulationInterval);
+                    this.simulationInterval = null;
+                }
+            }
+
+            simulateStatusUpdate(status) {
+                this.updateOrderStatus({ new_status: status });
+            }
+        }
+
+        // Global functions for demo controls
+        let tracker;
+
+        function changeStatus(status) {
+            if (tracker) {
+                tracker.simulateStatusUpdate(status);
+            }
+        }
+
+        function simulateRiderMovement() {
+            if (tracker) {
+                tracker.simulateRiderMovement();
+            }
+        }
+
+        function stopSimulation() {
+            if (tracker) {
+                tracker.stopSimulation();
+            }
+        }
+
+        // Initialize the tracker when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            // Use a sample order ID for demo
+            const orderId = 'demo-order-123';
+            tracker = new DeliveryTracker(orderId);
+        });
+    </script>
+</body>
+</html>

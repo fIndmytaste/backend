@@ -138,3 +138,14 @@ class RiderRatingCreateSerializer(serializers.ModelSerializer):
         if instance.user:
             response['user'] = UserSerializer(instance.user).data
         return response
+    
+
+class RiderLocationUpdateSerializer(serializers.Serializer):
+    latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+
+
+class DeliveryTrackingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryTracking
+        fields = '__all__'
