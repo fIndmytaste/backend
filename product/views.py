@@ -671,6 +671,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 order.address = user_address.address
                 order.location_latitude = user_address.location_latitude
                 order.location_longitude = user_address.location_longitude
+                order.payment_method = request.data.get('payment_method','wallet')
                 order.delivery_fee = delivery_fee
                 order.save()
 
