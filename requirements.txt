@@ -1,5 +1,9 @@
-asgiref==3.8.1
+asgiref==3.9.1
+async-timeout==5.0.1
+brevo-python==1.1.2
 certifi==2025.1.31
+channels==4.2.2
+channels_redis==4.3.0
 charset-normalizer==3.4.1
 cloudinary==1.44.0
 dj-database-url==2.3.0
@@ -14,6 +18,7 @@ Faker==35.2.0
 gunicorn==23.0.0
 idna==3.10
 inflection==0.5.1
+msgpack==1.1.1
 openpyxl==3.1.5
 packaging==24.2
 pillow==11.1.0
@@ -22,6 +27,7 @@ PyJWT==2.10.1
 python-dateutil==2.9.0.post0
 pytz==2025.1
 PyYAML==6.0.2
+redis==6.2.0
 requests==2.32.3
 six==1.17.0
 sqlparse==0.5.3
