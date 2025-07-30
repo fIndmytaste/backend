@@ -1,30 +1,21 @@
-# # asgi.py
-# import os
-# from django.core.asgi import get_asgi_application
-# from channels.routing import ProtocolTypeRouter, URLRouter
-# from channels.auth import AuthMiddlewareStack
-# import your_app.routing  # replace with your actual app name
-
-# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'your_project.settings')
-
-# application = ProtocolTypeRouter({
-#     "http": get_asgi_application(),
-#     "websocket": AuthMiddlewareStack(
-#         URLRouter(
-#             your_app.routing.websocket_urlpatterns
-#         )
-#     ),
-# })
-
-
-
 import os
 
-from django.core.asgi import get_asgi_application
-
+# Set DJANGO_SETTINGS_MODULE *before* anything else
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'findmytaste.settings')
 
-application = get_asgi_application()
+import django
+django.setup()
 
+from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+import findmytaste.routing  # now safe to import
 
-
+application = ProtocolTypeRouter({
+    "http": get_asgi_application(),
+    "websocket": AuthMiddlewareStack(
+        URLRouter(
+            findmytaste.routing.websocket_urlpatterns
+        )
+    ),
+})

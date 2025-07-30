@@ -6,7 +6,48 @@ from channels.db import database_sync_to_async
 from product.models import Order
 
 
+
 class OrderTrackingConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.order_id = self.scope['url_route']['kwargs']['order_id']
+        self.room_group_name = f'order_tracking_{self.order_id}'
+        
+        # Accept connection without checking permissions
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+        
+        await self.accept()
+        
+        # Send initial tracking data (if order exists)
+        tracking_data = await self.get_tracking_data()
+        if tracking_data:
+            await self.send(text_data=json.dumps(tracking_data))
+    
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(
+            self.room_group_name,
+            self.channel_name
+        )
+    
+    async def receive(self, text_data):
+        pass  # Not used here
+    
+    async def tracking_update(self, event):
+        tracking_data = event['tracking_data']
+        await self.send(text_data=json.dumps(tracking_data))
+    
+    @database_sync_to_async
+    def get_tracking_data(self):
+        try:
+            order = Order.objects.get(id=self.order_id)
+            return order.get_delivery_status()
+        except Order.DoesNotExist:
+            return None
+
+
+class OrderTrackingConsumerOld(AsyncWebsocketConsumer):
     async def connect(self):
         self.order_id = self.scope['url_route']['kwargs']['order_id']
         self.room_group_name = f'order_tracking_{self.order_id}'

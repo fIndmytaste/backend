@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 import cloudinary
-import dj_database_url
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -85,7 +85,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'findmytaste.wsgi.application'
 
-
+ASGI_APPLICATION = "findmytaste.asgi.application"
 
 AUTH_USER_MODEL = 'account.User'
 
@@ -155,7 +155,6 @@ STATICFILES_DIRS = [
 
 FLUTTERWAVE_AUTH_TOKEN=os.getenv('FLUTTERWAVE_AUTH_TOKEN')
 PAYSTACK_SECRET_KEY=os.getenv('PAYSTACK_SECRET_KEY','sk_test_f2c4c12c87df60bc178d3be7a19ba4a975d17527')
-# PAYSTACK_SECRET_KEY=os.getenv('PAYSTACK_SECRET_KEY','sk_test_f2c4c12c87df60bc178d3be7a19ba4a975d17527')
 
 # MEDIA_URL = '/media/'
 # MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -174,7 +173,6 @@ cloudinary.config(
   api_secret = os.getenv('CLOUDINARY_STORAGE_API_SECRET')
 )
 
-# print(CLOUDINARY_STORAGE)
 
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
