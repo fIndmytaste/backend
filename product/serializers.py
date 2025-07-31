@@ -36,7 +36,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderItemSerializerIn(serializers.Serializer):
     product = serializers.CharField()
-    quantity = serializers.IntegerField()
+    quantity = serializers.IntegerField(required=False)
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True)
