@@ -36,7 +36,7 @@ def get_distance_between_two_location(lat1, lon1, lat2, lon2):
 
 
 
-def calculate_delivery_fee(distance_km, item_count):
+def calculate_delivery_fee(distance_km, item_count = 1):
     base_rate = 2.0
     per_km_rate = 0.5  
     per_item_rate = 0.2 

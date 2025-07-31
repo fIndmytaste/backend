@@ -14,13 +14,19 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
 
+        id = '984de313-80ec-43c1-bf31-280d304a9bab'
 
-        products = Product.objects.exclude(parent=None)
+        vendor_id = '0ef634c1-ce5a-4819-8f8b-c443403ffe27'
+        products = Product.objects.filter(vendor__id=vendor_id)
         
-        
+        # print(product.vendor.id)
         for product in products:
-            print(product.parent)
-            print(product.parent.id)
+            if not product.parent:
+                print(product.id)
+            else:
+                print("===========")
+                print(product.parent, product.parent.id , product.id)
+            # print(product.parent.id)
 
         
 

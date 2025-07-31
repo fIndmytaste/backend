@@ -459,6 +459,38 @@ class OrderListCreateView(generics.ListAPIView):
         serializer.save(user=self.request.user)
 
 
+class GetDeliveryFeeView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    def get(self,request,vendor_id):
+        user = request.user
+        # Get vendor
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found")
+
+        # Get user address
+        user_address = Address.objects.filter(user=user).first()
+        if not user_address:
+            return bad_request_response(
+                message="Please set your delivery address in settings before placing an order."
+            )
+        distance_in_km = get_distance_between_two_location(
+            lat1=float(user_address.location_latitude),
+            lon1=float(user_address.location_longitude),
+            lat2=float(vendor.location_latitude),
+            lon2=float(vendor.location_longitude),
+        )
+
+        if distance_in_km is None or distance_in_km > 10:
+            return bad_request_response(
+                message="This vendor cannot deliver to your location (distance too far)."
+            )
+        
+        delivery_fee = calculate_delivery_fee(distance_in_km)
+        return success_response(
+            data={"delivery_fee": delivery_fee},
+        )
 class CustomerCreateOrderView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CreateOrderSerializer
@@ -551,7 +583,8 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                         item_count += item['quantity']
 
                 # Calculate delivery and finalize order
-                delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
+                delivery_fee = calculate_delivery_fee(distance_in_km)
+                # delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
                 order.update_total_amount()
                 order.address = user_address.address
                 order.location_latitude = user_address.location_latitude

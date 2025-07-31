@@ -6,6 +6,7 @@ from product.views import (
     CustomerCreateOrderMobileView,
     CustomerCreateOrderView,
     DeleteProductImageView,
+    GetDeliveryFeeView,
     HotPickProductsView,
     InternalProductDetailView,
     InternalProductListView,
@@ -41,6 +42,7 @@ urlpatterns = [
     path('vendor/<uuid:vendor_id>/', VendorDetailView.as_view(), name='vendor_detail'),
     path('vendor/<uuid:vendor_id>/ratings/', VendorRatingListView.as_view(), name='vendor-rating-list'),
     path('vendor/<uuid:vendor_id>/rating/', VendorRatingCreateView.as_view(), name='vendor-rating-create'),
+    path('vendor/<uuid:vendor_id>/delivery-fee/', GetDeliveryFeeView.as_view(), name='vendor-delivery-fee'),
     path('product/vendor-category/<uuid:vendor_category_id>/', ProductByVendorCategoryView.as_view(), name='products_by_vendor_category'),
 
     # Order Endpoints
