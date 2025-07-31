@@ -464,6 +464,11 @@ class GetDeliveryFeeView(generics.GenericAPIView):
     def get(self,request,vendor_id):
         user = request.user
         # Get vendor
+
+        query_location_latitude = request.GET.get('latitude')
+        query_location_longitude = request.GET.get('latitude')
+        query_address = request.GET.get('address')
+
         try:
             vendor = Vendor.objects.get(id=vendor_id)
         except Vendor.DoesNotExist:
@@ -475,12 +480,35 @@ class GetDeliveryFeeView(generics.GenericAPIView):
             return bad_request_response(
                 message="Please set your delivery address in settings before placing an order."
             )
-        distance_in_km = get_distance_between_two_location(
-            lat1=float(user_address.location_latitude),
-            lon1=float(user_address.location_longitude),
-            lat2=float(vendor.location_latitude),
-            lon2=float(vendor.location_longitude),
-        )
+
+        location_latitude = None
+        location_longitude = None
+
+        
+        if any[not query_location_latitude, not query_location_longitude]:
+            if any[not user_address.location_latitude, not user_address.location_longitude,]:
+                return bad_request_response(
+                    message="Please set your delivery address in settings."
+                )
+            
+            location_latitude = user_address.location_latitude
+            location_longitude = user_address.location_longitude
+        else:
+            location_latitude = query_location_latitude
+            location_longitude = query_location_longitude
+        
+        try:
+            distance_in_km = get_distance_between_two_location(
+                lat1=float(location_latitude),
+                lon1=float(location_longitude),
+                lat2=float(vendor.location_latitude),
+                lon2=float(vendor.location_longitude),
+            )
+        except Exception as e:
+            print(e)
+            return bad_request_response(
+                message="Failed to calculate delivery fee."
+            )
 
         if distance_in_km is None or distance_in_km > 10:
             return bad_request_response(
@@ -615,6 +643,10 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        query_location_latitude = request.GET.get('latitude')
+        query_location_longitude = request.GET.get('latitude')
+        query_address = request.GET.get('address')
+
         user = request.user
         items_data = serializer.validated_data['items']
         vendor_id = serializer.validated_data['vendor_id']
@@ -632,12 +664,36 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 message="Please set your delivery address in settings before placing an order."
             )
 
-        distance_in_km = get_distance_between_two_location(
-            lat1=float(user_address.location_latitude),
-            lon1=float(user_address.location_longitude),
-            lat2=float(vendor.location_latitude),
-            lon2=float(vendor.location_longitude),
-        )
+        location_latitude = None
+        location_longitude = None
+        address = None
+        
+        if any[not query_location_latitude, not query_location_longitude, not query_address]:
+            if any[not user_address.location_latitude, not user_address.location_longitude, not user_address.address]:
+                return bad_request_response(
+                    message="Please set your delivery address in settings."
+                )
+            
+            location_latitude = user_address.location_latitude
+            location_longitude = user_address.location_longitude
+            address = user_address.address
+        else:
+            location_latitude = query_location_latitude
+            location_longitude = query_location_longitude
+            address = query_address
+        
+        try:
+            distance_in_km = get_distance_between_two_location(
+                lat1=float(location_latitude),
+                lon1=float(location_longitude),
+                lat2=float(vendor.location_latitude),
+                lon2=float(vendor.location_longitude),
+            )
+        except Exception as e:
+            print(e)
+            return bad_request_response(
+                message="Failed to calculate delivery fee."
+            )
 
         if distance_in_km is None or distance_in_km > 10:
             return bad_request_response(
@@ -701,9 +757,9 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 # Calculate delivery and finalize order
                 delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
                 order.update_total_amount()
-                order.address = user_address.address
-                order.location_latitude = user_address.location_latitude
-                order.location_longitude = user_address.location_longitude
+                order.address = address
+                order.location_latitude = location_latitude
+                order.location_longitude = location_longitude
                 order.payment_method = request.data.get('payment_method','wallet')
                 order.delivery_fee = delivery_fee
                 order.save()
