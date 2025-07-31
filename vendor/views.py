@@ -643,15 +643,26 @@ class AllVendorsView(generics.GenericAPIView):
 
     def get_queryset(self):
         user:User = self.request.user
-        print("+++++"*20)
-        print(user)
-        print(type(user))
+
+
+
+        query_location_latitude = self.request.GET.get('latitude')
+        query_location_longitude = self.request.GET.get('longitude')
+
         if not user or not isinstance(user, User):
             return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
         
         user_address, _ = Address.objects.get_or_create(user=user)
-        user_lat = user_address.location_latitude
-        user_lon = user_address.location_longitude
+
+        if any([not query_location_latitude, not query_location_longitude]):
+            user_lat = user_address.location_latitude
+            user_lon = user_address.location_longitude
+
+        else:
+            user_lat = query_location_latitude
+            user_lon = query_location_longitude
+
+        
 
         if user_lat is None or user_lon is None:
             return Vendor.objects.none()  # or return all vendors if you prefer
