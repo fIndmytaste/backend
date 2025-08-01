@@ -555,7 +555,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 return bad_request_response(
                     message="Please set your delivery address in settings before placing an order."
                 )
-            if any[not user_address.location_latitude, not user_address.location_longitude, not user_address.address]:
+            if any([not user_address.location_latitude, not user_address.location_longitude, not user_address.address]):
                 return bad_request_response(
                     message="Please set your delivery address in settings."
                 )
