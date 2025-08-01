@@ -79,9 +79,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
     def get_profile_image(self):
-        if self.profile_image:
+        print(self.get_profile_image)
+        try:
             return self.profile_image.url
-        return None
+        except:
+            return None
 
 
 

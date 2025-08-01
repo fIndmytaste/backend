@@ -298,7 +298,7 @@ class VendorInlineUserSerializer(serializers.ModelSerializer):
 
 
     def get_profile_image(self, obj):
-        return obj.profile_image.url if obj.profile_image else None
+        return obj.get_profile_image()
 
 class VendorSerializer(serializers.ModelSerializer):
     thumbnail = serializers.SerializerMethodField()
