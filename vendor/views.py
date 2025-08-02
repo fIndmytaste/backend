@@ -726,11 +726,15 @@ class AllVendorsView(generics.GenericAPIView):
         query_location_longitude = self.request.GET.get('longitude')
 
         if not user or not isinstance(user, User):
-            return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
+            if any([not query_location_latitude, not query_location_latitude]):
+                return Vendor.objects.none()
+            
+            # return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
 
-        user_address, _ = Address.objects.get_or_create(user=user)
+        
 
         if not query_location_latitude or not query_location_longitude:
+            user_address, _ = Address.objects.get_or_create(user=user)
             user_lat = user_address.location_latitude
             user_lon = user_address.location_longitude
         else:
