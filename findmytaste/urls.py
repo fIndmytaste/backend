@@ -40,7 +40,7 @@ urlpatterns = [
     path('swagger.json', schema_view.without_ui(cache_timeout=0),name='schema-json'),
     path("test-redis/", test_redis, name="test_redis"),
     path('', schema_view.with_ui('redoc', cache_timeout=0), name="read-doc"),
-    path('notifications/send/', send_notification, name='send_notification'),
+    
     # path('notifications/history/', NotificationHistoryView.as_view(), name='notification_history'),
 ]
 
