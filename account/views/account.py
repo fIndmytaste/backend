@@ -99,7 +99,9 @@ class UserAddressUpdateView(generics.GenericAPIView):
         - 200: Successfully fetched the user's delivery addresses.
         - 400: Bad request in case of any errors.
         """
-        delivery_addresses = Address.objects.filter(user=request.user).order_by('created_at')
+        delivery_addresses = Address.objects.filter(user=request.user).order_by('-created_at')
+
+        all = Address.objects.filter().order_by('-created_at')
         return success_response(UserAddressSerializer(delivery_addresses, many=True).data)
 
 
@@ -131,8 +133,11 @@ class UserAddressUpdateView(generics.GenericAPIView):
         """
         user = request.user
 
+        serializer = UserAddressCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         # Validate coordinates before passing to serializer
-        data = request.data.copy()
+        data = request.data
         
         # Validate location_latitude
         if 'location_latitude' in data and data['location_latitude'] is not None:
@@ -166,8 +171,8 @@ class UserAddressUpdateView(generics.GenericAPIView):
             country=data.get("country"),
             state=data.get("state"),
             city=data.get("city"),
-            location_latitude=data.get("location_latitude"),
-            location_longitude=data.get("location_longitude"),
+            location_latitude=data['location_latitude'],
+            location_longitude=data['location_longitude'] ,
             is_primary= not Address.objects.filter(user=request.user).exists(),
             address=data.get("address"),
         )

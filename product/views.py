@@ -689,18 +689,24 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
             return bad_request_response(message="Vendor not found")
 
         # Get user address
-        user_address = Address.objects.filter(user=user).first()
-        if not user_address:
-            return bad_request_response(
-                message="Please set your delivery address in settings before placing an order."
-            )
+        
 
         location_latitude = None
         location_longitude = None
         address = None
         
         if any([not query_location_latitude, not query_location_longitude, not query_address]):
-            if any[not user_address.location_latitude, not user_address.location_longitude, not user_address.address]:
+            user_address = Address.objects.filter(user=request.user).order_by('-created_at').last()
+
+            if not user_address:
+                return bad_request_response(
+                    message="Please set your delivery address in settings before placing an order."
+                )
+            print(user_address.location_latitude)
+            print(user_address.location_longitude)
+            print(user_address.address)
+            
+            if any([not user_address.location_latitude, not user_address.location_longitude, not user_address.address]):
                 return bad_request_response(
                     message="Please set your delivery address in settings."
                 )

@@ -31,7 +31,7 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 class UserAddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = Address
-        fields = ['id',  'country', 'state','city','address','created_at','updated_at']
+        fields = ['id',  'country', 'state','city','address','location_latitude','location_longitude','created_at','updated_at']
 
 class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
@@ -146,8 +146,8 @@ class UserAddressCreateSerializer(serializers.Serializer):
     state = serializers.CharField(required=False)
     city = serializers.CharField(required=False)
     address = serializers.CharField()
-    location_latitude = serializers.CharField()
-    location_longitude = serializers.CharField()
+    location_latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
+    location_longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
 
 
 class VendorAddressSerializer(serializers.ModelSerializer):
@@ -318,6 +318,11 @@ class InitiateWithdrawalSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=True)
 
 
+
+class DeliveryLocationCreatSerializer(serializers.Serializer):
+    location_latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
+    location_longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
+    address = serializers.CharField(required=True)
 
 
 class FCMTokenSerializer(serializers.ModelSerializer):
