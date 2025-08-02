@@ -804,29 +804,102 @@ class AllVendorsNewView(generics.GenericAPIView):
     queryset = Vendor.objects.filter(is_featured=True)
 
 
+    # def get_queryset(self):
+    #     queryset = Vendor.objects.all().order_by('-created_at')
+    #     search = self.request.query_params.get('search')
+    #     category = self.request.query_params.get('category')
+    #     if search:
+    #         queryset = queryset.filter(
+    #             Q(name__icontains=search) |
+    #             Q(email__icontains=search) |
+    #             Q(city__icontains=search) |
+    #             Q(state__icontains=search)|
+    #             Q(category__name__icontains=search) |
+    #             Q(category__id__icontains=search)
+    #         )
+
+    #     if category:
+    #         queryset = queryset.filter(
+    #             Q(category__name__icontains=category) |
+    #             Q(category__id__icontains=category)
+    #         )
+
+        
+    #     return queryset
+    
+
     def get_queryset(self):
-        queryset = Vendor.objects.all().order_by('-created_at')
+        user = self.request.user
+
+        query_location_latitude = self.request.GET.get('latitude')
+        query_location_longitude = self.request.GET.get('longitude')
+
+        if not user or not isinstance(user, User):
+            if any([not query_location_latitude, not query_location_latitude]):
+                return Vendor.objects.none()
+            
+            # return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
+
+        
+
+        if not query_location_latitude or not query_location_longitude:
+            user_address, _ = Address.objects.get_or_create(user=user)
+            user_lat = user_address.location_latitude
+            user_lon = user_address.location_longitude
+        else:
+            user_lat = query_location_latitude
+            user_lon = query_location_longitude
+
+        if user_lat is None or user_lon is None:
+            return Vendor.objects.none()
+
+        try:
+            user_lat = float(user_lat)
+            user_lon = float(user_lon)
+        except ValueError:
+            return Vendor.objects.none()
+
+        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
+            product_count__gt=0,
+            location_latitude__isnull=False,
+            location_longitude__isnull=False
+        )
+
+        # Filter by search param
         search = self.request.query_params.get('search')
-        category = self.request.query_params.get('category')
         if search:
             queryset = queryset.filter(
                 Q(name__icontains=search) |
                 Q(email__icontains=search) |
                 Q(city__icontains=search) |
-                Q(state__icontains=search)|
-                Q(category__name__icontains=search) |
-                Q(category__id__icontains=search)
+                Q(state__icontains=search) |
+                Q(category__name__icontains=search)
             )
 
-        if category:
-            queryset = queryset.filter(
-                Q(category__name__icontains=category) |
-                Q(category__id__icontains=category)
-            )
+        def distance_check(vendor):
+            try:
+                dist = get_distance_between_two_location(
+                    lat1=user_lat,
+                    lon1=user_lon,
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude)
+                )
+                return (vendor, dist)
+            except (TypeError, ValueError):
+                return (vendor, None)
 
-        
-        return queryset
-    
+        vendors_within_5km = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
+            for future in as_completed(futures):
+                vendor, dist = future.result()
+                if dist is not None and dist <= 5:
+                    vendors_within_5km.append(vendor)
+
+        return vendors_within_5km
+
+
+
     def get(self, request):
         return paginate_success_response_with_serializer(
             request,
