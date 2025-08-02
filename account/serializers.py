@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db.models import Avg
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, Notification, Profile, Rider, RiderRating, User, Vendor, VendorRating, VirtualAccount
+from account.models import Address, FCMToken, Notification, Profile, PushNotificationLog, Rider, RiderRating, User, Vendor, VendorRating, VirtualAccount
 from product.models import Order
 from vendor.serializers import VendorSerializer
 
@@ -316,3 +316,51 @@ class BankAccountValidationSerializer(serializers.Serializer):
 
 class InitiateWithdrawalSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=True)
+
+
+
+
+class FCMTokenSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FCMToken
+        fields = ['token', 'device_id', 'platform']
+    
+    def create(self, validated_data):
+        user = self.context['request'].user
+        device_id = validated_data.get('device_id')
+        
+        # Update existing token or create new one
+        token, created = FCMToken.objects.update_or_create(
+            user=user,
+            device_id=device_id,
+            defaults={
+                'token': validated_data['token'],
+                'platform': validated_data['platform'],
+                'is_active': True
+            }
+        )
+        return token
+
+
+
+class SendNotificationSerializer(serializers.Serializer):
+    user_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="List of user IDs to send notification to"
+    )
+    title = serializers.CharField(max_length=255)
+    body = serializers.CharField()
+    data = serializers.JSONField(required=False, default=dict)
+    image_url = serializers.URLField(required=False)
+    topic = serializers.CharField(required=False, help_text="Topic to send notification to")
+    
+    def validate(self, attrs):
+        if not attrs.get('user_ids') and not attrs.get('topic'):
+            raise serializers.ValidationError("Either user_ids or topic must be provided")
+        return attrs
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushNotificationLog
+        fields = ['id', 'title', 'body', 'data', 'status', 'created_at']

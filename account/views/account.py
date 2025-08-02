@@ -1,9 +1,11 @@
+from helpers.services.firebase_service import FirebaseNotificationService
 from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi  # Import for custom parameter and response types
-from account.models import Address, Notification, Profile, User, Vendor, VirtualAccount
-from account.serializers import BankAccountValidationSerializer, InitiateWithdrawalSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer, VirtualAccountSerializer
+from account.models import Address, FCMToken, Notification, Profile, PushNotificationLog, User, Vendor, VirtualAccount
+from account.serializers import BankAccountValidationSerializer, FCMTokenSerializer, InitiateWithdrawalSerializer, NotificationLogSerializer, NotificationSerializer, PasswordChangeSerializer, ProfileImageUploadSerializer, SendNotificationSerializer, UpdateBankAccountSerializer, UserAddressCreateSerializer, UserAddressSerializer, UserSerializer, VendorAddressSerializer, VirtualAccountSerializer
 from helpers.account_manager import AccountManager
 from helpers.flutterwave import FlutterwaveManager
 from helpers.paystack import PaystackManager
@@ -537,3 +539,99 @@ class AccountWithdrawalInitiate(generics.GenericAPIView):
             serializer.validated_data['amount'],
 
         )
+    
+
+
+class RegisterFCMTokenView(generics.CreateAPIView):
+    serializer_class = FCMTokenSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.save()
+
+        return success_response(
+            message='FCM token registered successfully',
+            data=serializer.data,
+            status_code=201
+        ) 
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def send_notification(request):
+    """Send push notification to users or topic"""
+    
+    serializer = SendNotificationSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    
+    data = serializer.validated_data
+
+    results = None
+    
+    if data.get('topic'):
+        # Send to topic
+        result = FirebaseNotificationService.send_to_topic(
+            topic=data['topic'],
+            title=data['title'],
+            body=data['body'],
+            data=data.get('data'),
+            image_url=data.get('image_url')
+        )
+    else:
+        # Send to specific users
+        user_ids = data['user_ids']
+        results = []
+        
+        for user_id in user_ids:
+            try:
+                user = User.objects.get(id=user_id)
+                result = FirebaseNotificationService.send_notification_to_user(
+                    user=user,
+                    title=data['title'],
+                    body=data['body'],
+                    data=data.get('data'),
+                    image_url=data.get('image_url')
+                )
+                results.append({
+                    'user_id': user_id,
+                    'username': user.email,
+                    **result
+                })
+            except User.DoesNotExist:
+                results.append({
+                    'user_id': user_id,
+                    'success': False,
+                    'error': 'User not found'
+                })
+        
+
+    
+    return success_response(data=result)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def unregister_fcm_token(request):
+    """Unregister FCM token"""
+    
+    token = request.data.get('token')
+    if not token:
+        return bad_request_response(message='Token is required')
+    
+    deleted_count = FCMToken.objects.filter(
+        user=request.user,
+        token=token
+    ).delete()[0]
+    
+    return success_response(message=f'Removed {deleted_count} token(s)')
+
+class NotificationHistoryView(generics.ListAPIView):
+    serializer_class = NotificationLogSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return PushNotificationLog.objects.filter(
+            user=self.request.user
+        ).order_by('-created_at')

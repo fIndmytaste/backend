@@ -1,8 +1,8 @@
 from django.urls import path
 from account.views.account import (
-    MyVirtualAccountNumberView, NotificationListView, PasswordChangeView, ProfileImageUploadView, 
+    MyVirtualAccountNumberView, NotificationListView, PasswordChangeView, ProfileImageUploadView, RegisterFCMTokenView, 
     UserAddressUpdateView, UserDetailView,
-    UpdateVenderBankAccount, ValidateBankAccountNumber, VendorAddressUpdateView
+    UpdateVenderBankAccount, ValidateBankAccountNumber, VendorAddressUpdateView, unregister_fcm_token
 )
 
 
@@ -18,4 +18,6 @@ urlpatterns = [
     path('vendor/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
     path('rider/update-address/', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
     path('initiate-withdrawal', VendorAddressUpdateView.as_view(), name='update-vendor-address'),
+    path('fcm/register/', RegisterFCMTokenView.as_view(), name='register_fcm_token'),
+    path('fcm/unregister/', unregister_fcm_token, name='unregister_fcm_token'),
 ]

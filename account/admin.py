@@ -15,7 +15,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
-    User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
+    FCMToken, PushNotificationLog, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
     VerificationCode, Notification
 )
 
@@ -111,4 +111,19 @@ class NotificationAdmin(admin.ModelAdmin):
     readonly_fields = ('created_at', 'updated_at')
 
 
+@admin.register(FCMToken)
+class FCMTokenAdmin(admin.ModelAdmin):
+    list_display = ['user', 'platform', 'device_id', 'is_active', 'created_at']
+    list_filter = ['platform', 'is_active', 'created_at']
+    search_fields = ['user__username', 'device_id']
+    readonly_fields = ['created_at', 'updated_at']
+
+@admin.register(PushNotificationLog)
+class NotificationLogAdmin(admin.ModelAdmin):
+    list_display = ['title', 'user', 'status', 'created_at']
+    list_filter = ['status', 'created_at']
+    search_fields = ['title', 'user__username']
+    readonly_fields = ['created_at']
+
+    
 admin.site.register(RiderRating)
