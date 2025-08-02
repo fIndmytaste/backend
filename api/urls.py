@@ -1,7 +1,7 @@
 from django.urls import path, include
 from account.views.account import send_notification
 from rest_framework.routers import DefaultRouter
-from api.views import GetAllBanksView, ValidateBankAccountNumber
+from api.views import GetAllBanksView, TestingWebsocketView, ValidateBankAccountNumber
 from rider.views import EnhancedRiderViewSet, MakeOrderPayment, NearbyRidersView, OrderPaymentWebhookView, OrderTrackingDetailView, OrderViewSet, RiderOrderDetailView, RiderViewSet, UploadRiderDocumentView
 
 
@@ -31,4 +31,5 @@ urlpatterns = [
     path('main/resolve-account-number',ValidateBankAccountNumber.as_view()),
     path('', include(router.urls)),
     path('notifications/send/', send_notification, name='send_notification'),
+    path('websocket/test', TestingWebsocketView.as_view(), name='TestingWebsocketView'),
 ]

@@ -3,6 +3,8 @@ from helpers.paystack import PaystackManager
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg import openapi
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 from django.db.models import F,Q
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
@@ -702,10 +704,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 return bad_request_response(
                     message="Please set your delivery address in settings before placing an order."
                 )
-            print(user_address.location_latitude)
-            print(user_address.location_longitude)
-            print(user_address.address)
-            
+
             if any([not user_address.location_latitude, not user_address.location_longitude, not user_address.address]):
                 return bad_request_response(
                     message="Please set your delivery address in settings."
@@ -824,6 +823,30 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         order=order
                     )
 
+                    try:
+                        channel_layer = get_channel_layer()
+                        vendor_group_name = f'vendor_{vendor.user.id}'
+
+                        async_to_sync(channel_layer.group_send)(
+                            vendor_group_name,
+                            {
+                                'type': 'new_order_notification',
+                                'data': {
+                                    'order_id': str(order.id),
+                                    'customer': {
+                                        'name': order.user.full_name,
+                                        'phone': order.user.phone_number
+                                    },
+                                    'delivery_address': order.address,
+                                    'created_at': order.created_at.isoformat(),
+                                    'status': order.status,
+                                }
+                            }
+                        )
+
+                    except Exception as e:
+                        print(e)
+
                     return success_response(
                         message='Payment successful'
                     )
@@ -835,10 +858,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 klass = PaystackManager()
                 return klass.initiate_payment(request, order_total_price, order)
 
-                return success_response(
-                    message="Order created successfully",
-                    data=OrderSerializer(order).data
-                )
+
 
         except ValidationError as ve:
             return bad_request_response(message=str(ve))

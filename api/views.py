@@ -1,11 +1,37 @@
+import uuid
 from django.shortcuts import render
 from rest_framework import generics
-from drf_yasg.utils import swagger_auto_schema  # Import the decorator
-from drf_yasg import openapi  # Import for custom parameter and response types
+from drf_yasg.utils import swagger_auto_schema 
+from drf_yasg import openapi 
 from account.serializers import BankAccountValidationSerializer, UserSerializer
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import bad_request_response, success_response
-# Create your views here.
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+
+
+
+class TestingWebsocketView(generics.GenericAPIView):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.channel_layer = get_channel_layer()
+
+    def get(self, request):
+        room_group_name = 'testing_socket_connection'
+
+        async_to_sync(self.channel_layer.group_send)(
+            room_group_name,
+            {
+                'type': 'rider_location_update',
+                'data': {
+                    'order_id': str(uuid.uuid4()),
+                    'rider_location': {},
+                }
+            }
+        )
+
+        return success_response()
 
 
 class GetAllBanksView(generics.GenericAPIView):

@@ -210,3 +210,54 @@ class DeliveryTrackingConsumer(AsyncWebsocketConsumer):
         except:
             return None
 
+
+class TestConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.room_group_name = 'testing_socket_connection'
+        await self.channel_layer.group_add(
+            self.room_group_name,
+            self.channel_name
+        )
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(
+            self.room_group_name,
+            self.channel_name
+        )
+
+    async def rider_location_update(self, event):
+        # This will be triggered by group_send
+        await self.send(text_data=json.dumps(event['data']))
+
+
+
+class VendorNotificationConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        user = self.scope["user"]
+        if not user.is_authenticated:
+            await self.close()
+            return
+
+        self.vendor_group_name = f'vendor_{user.id}'
+
+        await self.channel_layer.group_add(
+            self.vendor_group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(
+            self.vendor_group_name,
+            self.channel_name
+        )
+
+    async def new_order_notification(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "new_order",
+            "data": event["data"]
+        }))
+
+
