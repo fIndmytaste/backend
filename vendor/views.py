@@ -4,6 +4,7 @@ from account.models import Address, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.order_utils import get_distance_between_two_location
 from helpers.permissions import IsVendor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory
 from product.serializers import OrderSerializer
@@ -641,31 +642,103 @@ class AllVendorsView(generics.GenericAPIView):
     permission_classes = []
     serializer_class = VendorSerializer
 
+    # def get_queryset(self):
+    #     user:User = self.request.user
+
+
+
+    #     query_location_latitude = self.request.GET.get('latitude')
+    #     query_location_longitude = self.request.GET.get('longitude')
+
+    #     if not user or not isinstance(user, User):
+    #         return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
+        
+    #     user_address, _ = Address.objects.get_or_create(user=user)
+
+    #     if any([not query_location_latitude, not query_location_longitude]):
+    #         user_lat = user_address.location_latitude
+    #         user_lon = user_address.location_longitude
+
+    #     else:
+    #         user_lat = query_location_latitude
+    #         user_lon = query_location_longitude
+
+        
+
+    #     if user_lat is None or user_lon is None:
+    #         return Vendor.objects.none()  # or return all vendors if you prefer
+
+    #     try:
+    #         user_lat = float(user_lat)
+    #         user_lon = float(user_lon)
+    #     except ValueError:
+    #         return Vendor.objects.none()
+
+
+    #     queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
+    #         product_count__gt=0,
+    #         location_latitude__isnull=False,
+    #         location_longitude__isnull=False
+    #     )
+
+    #     distance_in_km = get_distance_between_two_location(
+    #             lat1=float(location_latitude),
+    #             lon1=float(location_longitude),
+    #             lat2=float(vendor.location_latitude),
+    #             lon2=float(vendor.location_longitude),
+    #         )
+
+
+    #     # Filter by search param
+    #     search = self.request.query_params.get('search')
+    #     if search:
+    #         queryset = queryset.filter(
+    #             Q(name__icontains=search) |
+    #             Q(email__icontains=search) |
+    #             Q(city__icontains=search) |
+    #             Q(state__icontains=search) |
+    #             Q(category__name__icontains=search)
+    #         )
+
+    #     # Now filter queryset in Python using exact haversine distance
+    #     vendors_within_10km = []
+    #     for vendor in queryset:
+    #         try:
+    #             v_lat = float(vendor.location_latitude)
+    #             v_lon = float(vendor.location_longitude)
+    #         except (TypeError, ValueError):
+    #             continue
+
+    #         dist = get_distance_between_two_location(
+    #             lat1=user_lat, lon1=user_lon,
+    #             lat2=v_lat, lon2=v_lon
+    #         )
+    #         if dist is not None and dist <= 5: # using 5 kilometer range
+    #             vendors_within_10km.append(vendor)
+
+    #     return vendors_within_10km
+
+
     def get_queryset(self):
-        user:User = self.request.user
-
-
+        user = self.request.user
 
         query_location_latitude = self.request.GET.get('latitude')
         query_location_longitude = self.request.GET.get('longitude')
 
         if not user or not isinstance(user, User):
             return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
-        
+
         user_address, _ = Address.objects.get_or_create(user=user)
 
-        if any([not query_location_latitude, not query_location_longitude]):
+        if not query_location_latitude or not query_location_longitude:
             user_lat = user_address.location_latitude
             user_lon = user_address.location_longitude
-
         else:
             user_lat = query_location_latitude
             user_lon = query_location_longitude
 
-        
-
         if user_lat is None or user_lon is None:
-            return Vendor.objects.none()  # or return all vendors if you prefer
+            return Vendor.objects.none()
 
         try:
             user_lat = float(user_lat)
@@ -673,21 +746,10 @@ class AllVendorsView(generics.GenericAPIView):
         except ValueError:
             return Vendor.objects.none()
 
-        # Approximate latitude/longitude delta for 10 km radius
-        # 1 degree latitude ~= 111 km
-        lat_delta = 10 / 111  # ~0.09 degrees
-        # 1 degree longitude varies, use cos(lat) for approximation
-        lon_delta = 10 / (111 * cos(radians(user_lat)))
-
-        # Filter vendors roughly in bounding box first
         queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
             product_count__gt=0,
             location_latitude__isnull=False,
-            location_longitude__isnull=False,
-            location_latitude__gte=user_lat - lat_delta,
-            location_latitude__lte=user_lat + lat_delta,
-            location_longitude__gte=user_lon - lon_delta,
-            location_longitude__lte=user_lon + lon_delta,
+            location_longitude__isnull=False
         )
 
         # Filter by search param
@@ -701,23 +763,28 @@ class AllVendorsView(generics.GenericAPIView):
                 Q(category__name__icontains=search)
             )
 
-        # Now filter queryset in Python using exact haversine distance
-        vendors_within_10km = []
-        for vendor in queryset:
+        def distance_check(vendor):
             try:
-                v_lat = float(vendor.location_latitude)
-                v_lon = float(vendor.location_longitude)
+                dist = get_distance_between_two_location(
+                    lat1=user_lat,
+                    lon1=user_lon,
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude)
+                )
+                return (vendor, dist)
             except (TypeError, ValueError):
-                continue
+                return (vendor, None)
 
-            dist = get_distance_between_two_location(
-                lat1=user_lat, lon1=user_lon,
-                lat2=v_lat, lon2=v_lon
-            )
-            if dist is not None and dist <= 5: # using 5 kilometer range
-                vendors_within_10km.append(vendor)
+        vendors_within_5km = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
+            for future in as_completed(futures):
+                vendor, dist = future.result()
+                if dist is not None and dist <= 5:
+                    vendors_within_5km.append(vendor)
 
-        return vendors_within_10km
+        return vendors_within_5km
+
 
     def get(self, request):
         vendors = self.get_queryset()
