@@ -511,7 +511,7 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                 message="Failed to calculate delivery fee."
             )
 
-        if distance_in_km is None or distance_in_km > 10:
+        if distance_in_km is None or distance_in_km > 5: # using 5km range
             return bad_request_response(
                 message=f"This vendor cannot deliver to your location (distance too far). Distance {round(distance_in_km or 0 ,2)} km"
             )
@@ -582,7 +582,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             )
 
 
-        if distance_in_km is None or distance_in_km > 10:
+        if distance_in_km is None or distance_in_km > 5:
             return bad_request_response(
                 message="This vendor cannot deliver to your location (distance too far)."
             )
@@ -726,7 +726,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 message="Failed to calculate delivery fee."
             )
 
-        if distance_in_km is None or distance_in_km > 10:
+        if distance_in_km is None or distance_in_km > 5:
             return bad_request_response(
                 message="This vendor cannot deliver to your location (distance too far)."
             )

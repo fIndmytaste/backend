@@ -269,7 +269,7 @@ class NotificationHelper:
             except Exception as e:
                 return {"user": str(user), "success": False, "error": str(e)}
         
-        # Submit all tasks
+      
         future_to_user = {
             self._executor.submit(send_to_single_user, user): user 
             for user in users

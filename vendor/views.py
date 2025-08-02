@@ -597,7 +597,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
             lat1=user_lat, lon1=user_lon,
             lat2=v_lat, lon2=v_lon
         )
-        if dist is not None and dist <= 10:
+        if dist is not None and dist <= 5:
             vendors_within_10km.append(vendor)
 
         return vendors_within_10km
@@ -714,7 +714,7 @@ class AllVendorsView(generics.GenericAPIView):
                 lat1=user_lat, lon1=user_lon,
                 lat2=v_lat, lon2=v_lon
             )
-            if dist is not None and dist <= 10:
+            if dist is not None and dist <= 5: # using 5 kilometer range
                 vendors_within_10km.append(vendor)
 
         return vendors_within_10km
