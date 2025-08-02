@@ -487,7 +487,7 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                     message="Please set your delivery address in settings before placing an order."
                 )
             
-            if any[not user_address.location_latitude, not user_address.location_longitude,]:
+            if any([not user_address.location_latitude, not user_address.location_longitude]):
                 return bad_request_response(
                     message="Please set your delivery address in settings."
                 )
