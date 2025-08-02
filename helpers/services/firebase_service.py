@@ -7,6 +7,20 @@ from django.contrib.auth.models import User
 logger = logging.getLogger(__name__)
 
 class FirebaseNotificationService:
+
+    @staticmethod
+    def send_notification_to_token(token: str, title: str, body: str, data=None, image_url=None):
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+                image=image_url
+            ),
+            data=data or {},
+            token=token
+        )
+        response = messaging.send(message)
+        return {"response": response}
     
     @staticmethod
     def send_notification_to_user(
@@ -105,7 +119,7 @@ class FirebaseNotificationService:
                         invalid_tokens.append(tokens[idx])
                         logger.error(f"Failed to send to token {tokens[idx]}: {resp.exception}")
                 
-                # Deactivate invalid tokens
+      
                 FCMToken.objects.filter(token__in=invalid_tokens).update(is_active=False)
             
             return {
@@ -178,4 +192,5 @@ class FirebaseNotificationService:
         except Exception as e:
             logger.error(f"Error sending topic notification: {str(e)}")
             return {"success": False, "error": str(e)}
+
 

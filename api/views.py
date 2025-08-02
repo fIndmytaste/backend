@@ -1,11 +1,12 @@
 import uuid
 from django.shortcuts import render
+from helpers.services.firebase_service import FirebaseNotificationService
 from rest_framework import generics
 from drf_yasg.utils import swagger_auto_schema 
 from drf_yasg import openapi 
 from account.serializers import BankAccountValidationSerializer, UserSerializer
 from helpers.paystack import PaystackManager
-from helpers.response.response_format import bad_request_response, success_response
+from helpers.response.response_format import bad_request_response, success_response,internal_server_error_response
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
@@ -33,6 +34,28 @@ class TestingWebsocketView(generics.GenericAPIView):
 
         return success_response()
 
+
+
+class TestPushNotificationView(generics.GenericAPIView):
+    """
+    API endpoint to send test push notification to an FCM token.
+    """
+
+    def post(self, request, *args, **kwargs):
+        token = request.data.get('token')
+        if not token:
+            return bad_request_response(message="FCM token is required")
+        
+        try:
+            result = FirebaseNotificationService.send_notification_to_token(
+                token=token,
+                title="Test Notification",
+                body="This is a test push notification!"
+            )
+            return success_response(data={"success": True, "result": result})
+        
+        except Exception as e:
+            return internal_server_error_response(message=str(e))
 
 class GetAllBanksView(generics.GenericAPIView):
 

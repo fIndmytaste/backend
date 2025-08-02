@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 olakay_files/
+firebase-admin-sdk-olg.json
+firebase-admin-sdk.json
 # C extensions
 *.so
 k.txt
