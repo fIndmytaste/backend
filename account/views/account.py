@@ -372,6 +372,17 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
             return bad_request_response(message='An error occurred while updating the bank account details.')
 
 
+    def get(self,request):
+        user = User.objects.get(id=request.user.id)
+        vendor, _ = Vendor.objects.get_or_create(user=user)
+        return success_response(
+            data=dict(
+                account_number=vendor.bank_account,
+                bank_name=vendor.bank_name,
+                bank_account_name=vendor.bank_account_name
+            )
+        )
+
 class MyVirtualAccountNumberView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = VirtualAccountSerializer
