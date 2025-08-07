@@ -833,6 +833,7 @@ class AllVendorsNewView(generics.GenericAPIView):
 
         query_location_latitude = self.request.GET.get('latitude')
         query_location_longitude = self.request.GET.get('longitude')
+        query_category = self.request.GET.get('category')
 
         if not user or not isinstance(user, User):
             if any([not query_location_latitude, not query_location_latitude]):
@@ -875,6 +876,9 @@ class AllVendorsNewView(generics.GenericAPIView):
                 Q(state__icontains=search) |
                 Q(category__name__icontains=search)
             )
+
+        if query_category:
+            queryset = queryset.filter(Q(category__name__icontains=query_category))
 
         def distance_check(vendor):
             try:

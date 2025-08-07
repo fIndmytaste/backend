@@ -9,6 +9,12 @@ class Command(BaseCommand):
     help = "Assign available riders to unassigned orders"
 
     def handle(self, *args, **options):
+
+        email = 'augustinevickky+11@gmail.com'
+        rider = Rider.objects.get(user__email=email)
+        print(rider.user.email)
+
+        # return
         # Get all unassigned orders
         unassigned_orders = Order.objects.filter(rider__isnull=True, status='pending')
 
@@ -26,7 +32,8 @@ class Command(BaseCommand):
         assigned_count = 0
 
         for order in unassigned_orders:
-            rider = random.choice(available_riders)
+            rider = rider
+            # rider = random.choice(available_riders)
             order.rider = rider
             order.status = 'confirmed'  # You can change this if needed
             order.save()
