@@ -530,8 +530,11 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
         query_location_latitude = request.data.get('latitude')
-        query_location_longitude = request.data.get('latitude')
+        query_location_longitude = request.data.get('longitude')
         query_address = request.data.get('address')
+
+
+        print(query_location_latitude,query_location_longitude,query_address)
 
         user = request.user
         items_data = serializer.validated_data['items']
@@ -551,7 +554,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         address = None
         
         if any([not query_location_latitude, not query_location_longitude, not query_address]):
-            
+            print('++++++'*10)
             user_address = Address.objects.filter(user=user).first()
             if not user_address:
                 return bad_request_response(
@@ -577,6 +580,16 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 lat2=float(vendor.location_latitude),
                 lon2=float(vendor.location_longitude),
             )
+
+            print(
+                f"Vendor location: {vendor.location_latitude}, {vendor.location_longitude}"
+            )
+            print(
+                f"User location: {location_latitude}, {location_longitude}"
+            )
+            print(
+                f"Distance between user and vendor: {round(distance_in_km,3)} km"
+            )
         except Exception as e:
             print(e)
             return bad_request_response(
@@ -588,16 +601,32 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             return bad_request_response(
                 message="This vendor cannot deliver to your location (distance too far)."
             )
+        
 
-        product_ids = {item['product'] for item in items_data}
-        variant_ids = {
-            variant['product']
-            for item in items_data if item.get('variants')
-            for variant in item['variants']
-        }
-        all_ids = list(product_ids.union(variant_ids))
-        products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent')
-        product_map = {product.id: product for product in products}
+        # product_ids = {item['product'] for item in items_data} 
+        
+        product_ids = []
+        for item in items_data:
+            if item.get('variants') not in [[],'',False,None]:
+                variants = item['variants']
+                for variant in variants:
+                    product_ids.append(variant['product'])
+            else:
+                product_ids.append(item['product'])
+
+        
+        print(product_ids)
+        # variant_ids = {
+        #     variant['product']
+        #     for item in items_data if item.get('variants')
+        #     for variant in item['variants']
+        # }
+        # all_ids = list(product_ids.union(variant_ids))
+        all_ids = product_ids
+        products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
+        print(products)
+        product_map = {str(product.id): product for product in products}
+        print(product_map)
 
         item_count = 0
 
@@ -677,7 +706,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         query_location_latitude = request.GET.get('latitude')
-        query_location_longitude = request.GET.get('latitude')
+        query_location_longitude = request.GET.get('longitude')
         query_address = request.GET.get('address')
 
         user = request.user
