@@ -256,8 +256,8 @@ class PaystackManager:
     def initiate_payment(self, request, amount,order):
 
         try:
-            user : User
-            user_id = user.id
+            user : User = request.user
+            user_id = str(user.id)
             # uuidb64 = urlsafe_base64_encode(force_bytes(user_id))
             # reference = f'ref_{uuidb64}_{uuid4().hex}' 
             url = f"{self.base_url}/transaction/initialize"
@@ -272,13 +272,13 @@ class PaystackManager:
                 "user_id": user_id,
                 "name": user.full_name,
                 "email": user.email,
-                "reference": transaction.id,
+                "reference": str(transaction.id),
                 "payment_type": 'order-payment',
             }
 
             new_amount = amount * 100
             payload = json.dumps({
-                "amount": new_amount,
+                "amount": float(new_amount),
                 "email": user.email,
                 "callback_url": request.data.get("callback_url"),
                 "cancel_url": request.data.get("callback_url"), 
@@ -297,5 +297,6 @@ class PaystackManager:
                 return bad_request_response(message="Card tokenization can't be completed at the moment")
 
         except Exception as e:
+            print(e)
             return internal_server_error_response()
 

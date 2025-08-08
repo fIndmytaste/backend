@@ -111,13 +111,13 @@ class MakeOrderPayment(generics.GenericAPIView):
         
 
         order_total_price = order.get_total_price() + order.delivery_fee + order.service_fee
-        if float(order_total_price) > float(wallet.balance):
-            return bad_request_response(
-                message='Insufficient balance. Please top up your wallet',
-            )
         
         if not payment_method:
             if order.payment_method == 'wallet':
+                if float(order_total_price) > float(wallet.balance):
+                    return bad_request_response(
+                        message='Insufficient balance. Please top up your wallet',
+                    )
                 # proceed the payment
                 wallet.balance -= order_total_price
                 wallet.save()
