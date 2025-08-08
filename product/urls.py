@@ -5,6 +5,7 @@ from product.views import (
     AllProductsView,
     CustomerCreateOrderMobileView,
     CustomerCreateOrderView,
+    CustomerUpdateOrderView,
     DeleteProductImageView,
     GetDeliveryFeeView,
     HotPickProductsView,
@@ -50,6 +51,7 @@ urlpatterns = [
     path('order/create', CustomerCreateOrderView.as_view(), name='create__order'),
     path('order/create-mobile', CustomerCreateOrderMobileView.as_view(), name='create__order_mobile'),
     path('order/<uuid:order_id>/', OrderDetailView.as_view(), name='get_update_delete_order'),
+    path('order/<uuid:order_id>/update', CustomerUpdateOrderView.as_view(), name='customer_update_delete_order'),
 
 
     path('user/favorites/', UserFavoriteListView.as_view(), name='user_favorites_list'),

@@ -999,3 +999,151 @@ class AddToFavoritesView(generics.GenericAPIView):
 
         existing_product.delete()
         return success_response(message="Product removed from your favorites.", status_code=204)
+
+class CustomerUpdateOrderView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CreateOrderSerializer
+
+    def put(self, request, order_id):
+        try:
+            order = Order.objects.get(id=order_id, user=request.user)
+        except Order.DoesNotExist:
+            return bad_request_response(message="Order not found.")
+
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        query_location_latitude = request.data.get('latitude')
+        query_location_longitude = request.data.get('longitude')
+        query_address = request.data.get('address')
+
+        user = request.user
+        items_data = serializer.validated_data['items']
+        vendor_id = serializer.validated_data['vendor_id']
+
+        # Get vendor
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found")
+
+        # Get user address
+        location_latitude = None
+        location_longitude = None
+        address = None
+
+        if any([not query_location_latitude, not query_location_longitude, not query_address]):
+            user_address = Address.objects.filter(user=user).first()
+            if not user_address:
+                return bad_request_response(
+                    message="Please set your delivery address in settings before placing an order."
+                )
+            if any([not user_address.location_latitude, not user_address.location_longitude, not user_address.address]):
+                return bad_request_response(
+                    message="Please set your delivery address in settings."
+                )
+            location_latitude = user_address.location_latitude
+            location_longitude = user_address.location_longitude
+            address = user_address.address
+        else:
+            location_latitude = query_location_latitude
+            location_longitude = query_location_longitude
+            address = query_address
+
+        try:
+            distance_in_km = get_distance_between_two_location(
+                lat1=float(location_latitude),
+                lon1=float(location_longitude),
+                lat2=float(vendor.location_latitude),
+                lon2=float(vendor.location_longitude),
+            )
+        except Exception as e:
+            print(e)
+            return bad_request_response(
+                message="Failed to calculate delivery fee."
+            )
+
+        if distance_in_km is None or distance_in_km > 5:
+            return bad_request_response(
+                message="This vendor cannot deliver to your location (distance too far)."
+            )
+
+        product_ids = []
+        for item in items_data:
+            if item.get('variants') not in [[], '', False, None]:
+                variants = item['variants']
+                for variant in variants:
+                    product_ids.append(variant['product'])
+            else:
+                product_ids.append(item['product'])
+
+        products = Product.objects.filter(id__in=product_ids).select_related('vendor', 'parent')
+        product_map = {str(product.id): product for product in products}
+
+        item_count = 0
+
+        try:
+            with transaction.atomic():
+                # Clear existing order items
+                OrderItem.objects.filter(order=order).delete()
+
+                # Update order vendor if changed
+                order.vendor = vendor
+
+                # Process each item
+                for item in items_data:
+                    main_product = product_map.get(item['product'])
+                    if not main_product:
+                        raise ValidationError(f"Product with ID {item['product']} not found.")
+
+                    if main_product.vendor.id != vendor.id:
+                        raise ValidationError(f"Product '{main_product.name}' does not belong to the selected vendor.")
+
+                    if item.get('variants'):
+                        for variant in item['variants']:
+                            variant_product = product_map.get(variant['product'])
+                            if not variant_product:
+                                raise ValidationError(f"Variant with ID {variant['product']} not found.")
+
+                            if not variant_product.parent or variant_product.parent.id != main_product.id:
+                                raise ValidationError(f"Variant {variant['product']} is not linked to product {main_product.id}.")
+
+                            if variant_product.vendor.id != vendor.id:
+                                raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
+
+                            OrderItem.objects.create(
+                                order=order,
+                                product=variant_product,
+                                quantity=variant['quantity'],
+                                price=variant_product.price
+                            )
+                            item_count += variant['quantity']
+                    else:
+                        OrderItem.objects.create(
+                            order=order,
+                            product=main_product,
+                            quantity=item['quantity'],
+                            price=main_product.price
+                        )
+                        item_count += item['quantity']
+
+                # Calculate delivery and finalize order
+                delivery_fee = calculate_delivery_fee(distance_in_km)
+                order.address = address
+                order.location_latitude = location_latitude
+                order.location_longitude = location_longitude
+                order.delivery_fee = delivery_fee
+                order.save()
+                order.update_total_amount()
+
+                return success_response(
+                    message="Order updated successfully",
+                    data=OrderSerializer(order).data
+                )
+
+        except ValidationError as ve:
+            return bad_request_response(message=str(ve))
+
+        except Exception as e:
+            traceback_str = traceback.format_exc()
+            print(traceback_str)
+            return internal_server_error_response(message="An error occurred while updating your order.")
