@@ -94,7 +94,10 @@ class MakeOrderPayment(generics.GenericAPIView):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
 
+    
+
     def post(self, request, id):
+        payment_method = request.data.get('payment_method')
         try:
             order = Order.objects.get(id=id)
         except:
@@ -113,32 +116,35 @@ class MakeOrderPayment(generics.GenericAPIView):
                 message='Insufficient balance. Please top up your wallet',
             )
         
-        if order.payment_method == 'wallet':
-            # proceed the payment
-            wallet.balance -= order_total_price
-            wallet.save()
-            order.status = 'paid'
-            order.save()
+        if not payment_method:
+            if order.payment_method == 'wallet':
+                # proceed the payment
+                wallet.balance -= order_total_price
+                wallet.save()
+                order.status = 'paid'
+                order.save()
 
-            WalletTransaction.objects.create(
-                wallet=wallet, 
-                amount=order_total_price,
-                transaction_type='purchase',
-                description='Payment for order',
-                status='completed',
-                order=order
-            )
-
-            return success_response(
-                message='Payment successful'
-            )
-        else:
-            if not request.data.get('callback_url'):
-                return bad_request_response(
-                    message="callback url (callback_url) is required for other payment method"
+                WalletTransaction.objects.create(
+                    wallet=wallet, 
+                    amount=order_total_price,
+                    transaction_type='purchase',
+                    description='Payment for order',
+                    status='completed',
+                    order=order
                 )
-            klass = PaystackManager()
-            return klass.initiate_payment(request, order_total_price, order)
+
+                return success_response(
+                    message='Payment successful'
+                )
+        # else:
+        if not request.data.get('callback_url'):
+            return bad_request_response(
+                message="callback url (callback_url) is required for other payment method"
+            )
+        klass = PaystackManager()
+        order.payment_method = payment_method
+        order.save()
+        return klass.initiate_payment(request, order_total_price, order)
 
         
 
