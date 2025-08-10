@@ -149,6 +149,106 @@ class MakeOrderPayment(generics.GenericAPIView):
         
 
 
+class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
+    permission_classes = []
+
+    def post(self, request): 
+        data = request.data
+        try:
+            reference = data.get('reference')
+            
+            
+
+            # verify transaction with paytsack
+            klass = PaystackManager()
+            success , response = klass.verify_transaction(reference)
+            if not success:
+                print(response)
+                return bad_request_response(
+                    message="Transaction not doest exist"
+                )
+            
+            
+            metadata = response.get('data',{}).get('metadata',{})
+            if not metadata:
+                return bad_request_response(
+                    message="Transaction not doest exist"
+                )
+            
+            transaction_ref = metadata.get('reference')
+
+            try:
+
+                trx_extist = WalletTransaction.objects.get(id=transaction_ref)
+            except:
+                return bad_request_response(
+                    message="Transaction not doest exist"
+                )
+
+            if trx_extist.external_reference != reference:
+                return bad_request_response(
+                    message="Transaction not doest exist"
+                )
+            
+            
+            if response['data'].get('status') == 'success':
+                #  confirm the amount paid
+                amount_paid = response['data']['amount']
+                if float(amount_paid) != float(trx_extist.amount):
+                    return bad_request_response(
+                        message="Transaction not doest exist. Amount paid does not match"
+                    )
+                
+                if trx_extist.status == 'pending':
+                    order = trx_extist.order
+                    order.payment_status = Order.PAID
+                    order.save()
+                    trx_extist.status = "completed"
+                    trx_extist.response_data=response
+                    trx_extist.description = 'Order Payment'
+                    trx_extist.save()
+
+                    # send websocket notification to buyer
+                    try:
+                        channel_layer = get_channel_layer()
+                        vendor_group_name = f'vendor_{order.vendor.user.id}'
+
+                        async_to_sync(channel_layer.group_send)(
+                            vendor_group_name,
+                            {
+                                'type': 'new_order_notification',
+                                'data': {
+                                    'order_id': str(order.id),
+                                    'customer': {
+                                        'name': order.user.full_name,
+                                        'phone': order.user.phone_number
+                                    },
+                                    'delivery_address': order.address,
+                                    'created_at': order.created_at.isoformat(),
+                                    'status': order.status,
+                                    'payment_status': order.payment_status,
+                                }
+                            }
+                        )
+
+                    except Exception as e:
+                        print(e)
+
+                return success_response(
+                    message="Transaction processed successfully"
+                )
+            
+        except:
+            return bad_request_response(
+                message='Transaction not doest exist',
+                status_code=404
+            )
+        return bad_request_response(
+            message="Transaction not doest exist"
+        )
+   
+   
+
 class OrderPaymentWebhookView(generics.GenericAPIView):
     permission_classes = []
 

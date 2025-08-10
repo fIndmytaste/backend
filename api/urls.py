@@ -2,7 +2,7 @@ from django.urls import path, include
 from account.views.account import send_notification
 from rest_framework.routers import DefaultRouter
 from api.views import GetAllBanksView, TestPushNotificationView, TestingWebsocketView, ValidateBankAccountNumber
-from rider.views import EnhancedRiderViewSet, MakeOrderPayment, NearbyRidersView, OrderPaymentWebhookView, OrderTrackingDetailView, OrderViewSet, RiderOrderDetailView, RiderViewSet, UploadRiderDocumentView
+from rider.views import ConfirmOrderPaymentAPIView, EnhancedRiderViewSet, MakeOrderPayment, NearbyRidersView, OrderPaymentWebhookView, OrderTrackingDetailView, OrderViewSet, RiderOrderDetailView, RiderViewSet, UploadRiderDocumentView
 
 
 
@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/orders/<uuid:order_id>/tracking/', OrderTrackingDetailView.as_view(), name='order-tracking'),
     path('api/nearby-riders/', NearbyRidersView.as_view(), name='nearby-riders'),
     path('order/<id>/make-payment',MakeOrderPayment.as_view()),
+    path('order/confirm-payment',ConfirmOrderPaymentAPIView.as_view()),
     path('order/make-payment-webhook',OrderPaymentWebhookView.as_view()),
     path('main/get-all-banks',GetAllBanksView.as_view()),
     path('main/resolve-account-number',ValidateBankAccountNumber.as_view()),
