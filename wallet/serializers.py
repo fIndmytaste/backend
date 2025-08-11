@@ -8,6 +8,16 @@ class WalletSerializer(serializers.ModelSerializer):
         model = Wallet
         fields = ['user', 'balance']
 
+    def to_representation(self, instance:Wallet):
+        data = super().to_representation(instance)
+        data['bank_details'] = dict(
+            id=instance.user.id,
+            bank_account=instance.user.bank_account,
+            bank_name=instance.user.bank_name,
+            bank_account_name=instance.user.bank_account_name,
+        )
+        return super().to_representation(instance)
+
 
 class WalletTransactionSerializer(serializers.ModelSerializer):
     reference_code = serializers.SerializerMethodField()

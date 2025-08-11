@@ -1,3 +1,4 @@
+import json
 import random
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -5,6 +6,7 @@ from django.contrib.auth import get_user_model
 
 from account.models import Rider, Vendor
 from product.models import Order, Product
+from rider.serializers import OrderSerializer
 
 User = get_user_model()
 
@@ -13,6 +15,12 @@ class Command(BaseCommand):
     help = "Seed 20 orders for the first user"
 
     def handle(self, *args, **kwargs):
+        orders = Order.objects.filter(track_id='9DV9AQL0')
+        for order in orders:
+            print(json.dumps(OrderSerializer(order).data))
+
+
+        return
 
         user = User.objects.get(email='mozezcharles@gmail.com')
 
