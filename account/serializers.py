@@ -99,8 +99,13 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'is_active','role',"password","phone_number","profile_image",
-                 'is_verified', 'created_at', 'updated_at', 'staff_profile']
+        fields = [
+            'id', 'email', 'full_name', 'is_active',
+            'role',"password","phone_number","profile_image",
+            "bank_account","bank_name","bank_account_name",
+            'is_verified', 'created_at', 
+            'updated_at', 'staff_profile'
+        ]
 
 
     def get_profile_image(self, obj:User):
