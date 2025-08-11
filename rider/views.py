@@ -193,7 +193,10 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
             
             if response['data'].get('status') == 'success':
                 #  confirm the amount paid
-                amount_paid = response['data']['amount']
+                amount_paid = (response['data']['amount']) / 100
+                print(amount_paid)
+                print(amount_paid)
+                print(amount_paid)
                 if float(amount_paid) != float(trx_extist.amount):
                     return bad_request_response(
                         message="Transaction not doest exist. Amount paid does not match"

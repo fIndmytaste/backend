@@ -109,7 +109,10 @@ class PaystackManager:
     
 
     def verify_transaction(self,transaction_id):
-        response = requests.get('https://api.flutterwave.com/v3/transactions/{}/verify'.format(transaction_id), headers=self.get_header())
+        print(transaction_id)
+        print(transaction_id)
+        print(transaction_id)
+        response = requests.get(f'{self.base_url}/transaction/verify/{transaction_id}', headers=self.get_header())
         if response.status_code == 200:
             return True , response.json()
         return False , 'Payment is not successful'
