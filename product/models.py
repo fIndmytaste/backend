@@ -1,3 +1,4 @@
+from datetime import timedelta
 import uuid
 import string
 import random
@@ -232,9 +233,10 @@ class Order(models.Model):
     service_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The service fee of the order.")
     track_id = models.CharField(max_length=100, help_text="Unique tracking ID per user")
     
-    # Add estimated delivery time fields
-    estimated_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Estimated time when the rider will pick up the order.")
-    estimated_delivery_time = models.DateTimeField(null=True, blank=True, help_text="Estimated time when the order will be delivered.")
+    # Add estimated delivery time fieldsmodels.DurationField(
+        
+    new_estimated_pickup_time = models.DurationField(null=True, blank=True,default=timedelta(minutes=30), help_text="Estimated time when the rider will pick up the order.")
+    new_estimated_delivery_time = models.DurationField(null=True, blank=True,default=timedelta(minutes=30), help_text="Estimated time when the order will be delivered.")
     
     # Add actual delivery time fields for metrics
     actual_pickup_time = models.DateTimeField(null=True, blank=True, help_text="Actual time when the rider picked up the order.")
