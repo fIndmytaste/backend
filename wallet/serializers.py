@@ -16,7 +16,7 @@ class WalletSerializer(serializers.ModelSerializer):
             bank_name=instance.user.bank_name,
             bank_account_name=instance.user.bank_account_name,
         )
-        return super().to_representation(instance)
+        return data
 
 
 class WalletTransactionSerializer(serializers.ModelSerializer):
