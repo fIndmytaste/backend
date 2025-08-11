@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from cloudinary.models import CloudinaryField
-
+from datetime import timedelta
 
 
 
@@ -138,6 +138,10 @@ class Vendor(models.Model):
     bank_account = models.CharField(max_length=20,null=True,blank=True)
     bank_name = models.CharField(max_length=64,null=True,blank=True)
     bank_account_name = models.CharField(max_length=64,null=True,blank=True)
+    estimated_delivery_time = models.DurationField(
+        default=timedelta(minutes=30)
+    )
+    starting_delivery_price = models.DecimalField(max_digits=9, decimal_places=6, default=0.0)
     open_day = models.CharField(
         max_length=10,
         choices=[
