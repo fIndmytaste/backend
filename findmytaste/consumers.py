@@ -249,12 +249,15 @@ class VendorNotificationConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
     async def disconnect(self, close_code):
-        await self.channel_layer.group_discard(
-            self.vendor_group_name,
-            self.channel_name
-        )
+        if hasattr(self, "vendor_group_name"):
+            await self.channel_layer.group_discard(
+                self.vendor_group_name,
+                self.channel_name
+            )
+
 
     async def new_order_notification(self, event):
+        print("🔥 Received new order event:", event)
         await self.send(text_data=json.dumps({
             "type": "new_order",
             "data": event["data"]
