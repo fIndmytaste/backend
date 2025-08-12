@@ -233,13 +233,33 @@ class TestConsumer(AsyncWebsocketConsumer):
 
 
 class VendorNotificationConsumer(AsyncWebsocketConsumer):
+    # async def connect(self):
+    #     user = self.scope["user"]
+    #     if not user.is_authenticated:
+    #         await self.close()
+    #         return
+
+    #     self.vendor_group_name = f'vendor_{user.id}'
+
+    #     await self.channel_layer.group_add(
+    #         self.vendor_group_name,
+    #         self.channel_name
+    #     )
+
+    #     await self.accept()
+
     async def connect(self):
-        user = self.scope["user"]
-        if not user.is_authenticated:
+        # Get query string parameters
+        query_string = self.scope['query_string'].decode()
+        params = dict(qc.split('=') for qc in query_string.split('&') if '=' in qc)
+        user_id = params.get('user_id')
+
+        # Optional: validate that user_id is a valid integer
+        if not user_id or not user_id.isdigit():
             await self.close()
             return
 
-        self.vendor_group_name = f'vendor_{user.id}'
+        self.vendor_group_name = f'vendor_{user_id}'
 
         await self.channel_layer.group_add(
             self.vendor_group_name,

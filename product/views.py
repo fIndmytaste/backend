@@ -462,13 +462,20 @@ class OrderListCreateView(generics.ListAPIView):
 
 
 class GetDeliveryFeeView(generics.GenericAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
+    # permission_classes = [IsAuthenticated]
     def get(self,request,vendor_id):
         user = request.user
         # Get vendor
 
+        user = User.objects.get(email='tester@gmail.com')
+
         query_location_latitude = request.GET.get('latitude')
-        query_location_longitude = request.GET.get('latitude')
+        query_location_longitude = request.GET.get('longitude')
+
+        print(
+            "Query param data ", query_location_latitude, query_location_longitude
+        )
         query_address = request.GET.get('address')
 
         try:
@@ -500,6 +507,8 @@ class GetDeliveryFeeView(generics.GenericAPIView):
             location_latitude = query_location_latitude
             location_longitude = query_location_longitude
         
+
+        print(location_latitude, location_longitude)
         try:
             distance_in_km = get_distance_between_two_location(
                 lat1=float(location_latitude),
@@ -518,10 +527,13 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                 message=f"This vendor cannot deliver to your location (distance too far). Distance {round(distance_in_km or 0 ,2)} km"
             )
         
-        delivery_fee = calculate_delivery_fee(distance_in_km)
+        delivery_fee = calculate_delivery_fee(distance_in_km)['total_delivery_fee']
         return success_response(
             data={"delivery_fee": delivery_fee},
         )
+
+
+
 class CustomerCreateOrderView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = CreateOrderSerializer
@@ -673,7 +685,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                         item_count += item['quantity']
 
                 # Calculate delivery and finalize order
-                delivery_fee = calculate_delivery_fee(distance_in_km)
+                delivery_fee = calculate_delivery_fee(distance_in_km)['total_delivery_fee']
                 # delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
                 order.update_total_amount()
                 order.address = address
@@ -820,7 +832,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         item_count += item['quantity']
 
                 # Calculate delivery and finalize order
-                delivery_fee = calculate_delivery_fee(distance_in_km, item_count)
+                delivery_fee = calculate_delivery_fee(distance_in_km, item_count)['total_delivery_fee']
                 order.update_total_amount()
                 order.address = address
                 order.location_latitude = location_latitude
@@ -1124,7 +1136,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                         item_count += item['quantity']
 
                 # Calculate delivery and finalize order
-                delivery_fee = calculate_delivery_fee(distance_in_km)
+                delivery_fee = calculate_delivery_fee(distance_in_km)['total_delivery_fee']
                 order.address = address
                 order.location_latitude = location_latitude
                 order.location_longitude = location_longitude

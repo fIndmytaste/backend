@@ -273,6 +273,9 @@ class Order(models.Model):
         self.save()
         # Create a delivery tracking entry when a rider is assigned
         DeliveryTracking.objects.create(order=self)
+        # notify user of about the accepted order via websoket
+        # notify_user_of_accepted_order(self.user, self)
+
         
     def get_delivery_status(self):
         """Get detailed delivery status including rider location if available."""
