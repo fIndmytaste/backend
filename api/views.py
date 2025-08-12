@@ -2,13 +2,16 @@ import uuid
 from django.shortcuts import render
 from helpers.services.firebase_service import FirebaseNotificationService
 from rest_framework import generics
+from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema 
 from drf_yasg import openapi 
 from account.serializers import BankAccountValidationSerializer, UserSerializer
 from helpers.paystack import PaystackManager
-from helpers.response.response_format import bad_request_response, success_response,internal_server_error_response
+from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from product.models import DeliveryTracking, Order
+from rider.serializers import OrderSerializer
 
 
 
@@ -85,3 +88,26 @@ class ValidateBankAccountNumber(generics.GenericAPIView):
             request.data['bank_code'],
         )
         return success_response(data=response) if success else bad_request_response(message=response)
+
+
+
+class CustomerOrdersListView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = OrderSerializer
+    queryset = Order.objects.all().order_by('-created_at')
+
+    def get(self,request):
+        """
+        Retrieve a list of all orders for the authenticated user.
+        """
+        status = request.GET.get('status')
+        queryset = self.get_queryset().filter(user=request.user)
+        if status:
+            queryset = queryset.filter(status=status)
+            
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            queryset,
+            page_size=int(request.GET.get('page_size',20))
+        )
