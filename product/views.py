@@ -880,13 +880,10 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         message='Payment successful'
                     )
                 else:
-                    if not request.data.get('callback_url'):
-                        return bad_request_response(
-                            message="callback url (callback_url) is required for other payment method"
-                        )
-                klass = PaystackManager()
-                return klass.initiate_payment(request, order_total_price, order)
-
+                    klass = PaystackManager()
+                    order.payment_method = 'link'
+                    order.save()
+                    return klass.initiate_payment(request, order_total_price, order,is_mobile=True)
 
 
         except ValidationError as ve:

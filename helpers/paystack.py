@@ -256,7 +256,7 @@ class PaystackManager:
 
     
     
-    def initiate_payment(self, request, amount,order):
+    def initiate_payment(self, request, amount,order, is_mobile=False):
 
         try:
             user : User = request.user
@@ -277,9 +277,18 @@ class PaystackManager:
                 "email": user.email,
                 "reference": str(transaction.id),
                 "payment_type": 'order-payment',
+                "payment_mode": 'website-link',
             }
 
             new_amount = amount * 100
+
+            if is_mobile:
+                metadata['payment_mode'] =  'mobile-payment'
+                response_data = dict(
+                    metadata=metadata
+                )
+                return success_response(data=response_data)
+
             payload = json.dumps({
                 "amount": float(new_amount),
                 "email": user.email,

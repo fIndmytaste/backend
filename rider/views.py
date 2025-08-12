@@ -94,7 +94,62 @@ class MakeOrderPayment(generics.GenericAPIView):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
 
-    
+    def post(self, request, id):
+        payment_method = request.data.get('payment_method')
+        try:
+            order = Order.objects.get(id=id)
+        except:
+            return bad_request_response(
+                message='Order not found',
+                status_code=404
+            )
+
+        user:User = request.user
+        wallet, _ = Wallet.objects.get_or_create(user=user)
+        
+
+        order_total_price = order.get_total_price() + order.delivery_fee + order.service_fee
+        
+        if not payment_method:
+            if order.payment_method == 'wallet':
+                if float(order_total_price) > float(wallet.balance):
+                    return bad_request_response(
+                        message='Insufficient balance. Please top up your wallet',
+                    )
+                # proceed the payment
+                wallet.balance -= order_total_price
+                wallet.save()
+                order.status = 'paid'
+                order.save()
+
+                WalletTransaction.objects.create(
+                    wallet=wallet, 
+                    amount=order_total_price,
+                    transaction_type='purchase',
+                    description='Payment for order',
+                    status='completed',
+                    order=order
+                )
+
+                return success_response(
+                    message='Payment successful'
+                )
+        # else:
+        if not request.data.get('callback_url'):
+            return bad_request_response(
+                message="callback url (callback_url) is required for other payment method"
+            )
+        klass = PaystackManager()
+        order.payment_method = payment_method
+        order.save()
+        return klass.initiate_payment(request, order_total_price, order)
+
+
+
+class MakeOrderPayment(generics.GenericAPIView):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, id):
         payment_method = request.data.get('payment_method')
@@ -146,7 +201,7 @@ class MakeOrderPayment(generics.GenericAPIView):
         order.save()
         return klass.initiate_payment(request, order_total_price, order)
 
-        
+      
 
 
 class ConfirmOrderPaymentAPIView(generics.GenericAPIView):

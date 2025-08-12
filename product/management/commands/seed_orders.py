@@ -15,6 +15,13 @@ class Command(BaseCommand):
     help = "Seed 20 orders for the first user"
 
     def handle(self, *args, **kwargs):
+
+        user = User.objects.get(id='0ed7a160-8c78-4998-b293-460652dc136b')
+
+        print(user.email)
+
+        return
+
         orders = Order.objects.filter(track_id='9DV9AQL0')
         for order in orders:
             print(json.dumps(OrderSerializer(order).data))
