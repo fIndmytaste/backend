@@ -99,10 +99,15 @@ class UserAddressUpdateView(generics.GenericAPIView):
         - 200: Successfully fetched the user's delivery addresses.
         - 400: Bad request in case of any errors.
         """
-        delivery_addresses = Address.objects.filter(user=request.user).order_by('-created_at')
-
-        all = Address.objects.filter().order_by('-created_at')
-        return success_response(UserAddressSerializer(delivery_addresses, many=True).data)
+        # delivery_addresses = Address.objects.filter(user=request.user).order_by('-created_at')
+        delivery_addresses = Address.objects.filter(user=request.user).first()
+        if delivery_addresses:
+            serializer = UserAddressSerializer(delivery_addresses)
+            return success_response(
+                message="Delivery addresses retrieved successfully",
+                data=[serializer.data]
+            )
+        return success_response(data=[])
 
 
     @swagger_auto_schema(
@@ -164,6 +169,13 @@ class UserAddressUpdateView(generics.GenericAPIView):
                 return bad_request_response(
                     message="Longitude must be a valid number."
                 )
+            
+
+        has_address = Address.objects.filter(user=request.user)
+        if has_address:
+            return bad_request_response(
+                message="You already have an address."
+            )
 
 
         address_object = Address.objects.create(
@@ -215,18 +227,24 @@ class UserAddressUpdateView(generics.GenericAPIView):
                 )
 
 
-        address_object = Address.objects.create(
-            user=request.user,
-            country=data.get("country"),
-            state=data.get("state"),
-            city=data.get("city"),
-            location_latitude=data.get("location_latitude"),
-            location_longitude=data.get("location_longitude"),
-            is_primary= not Address.objects.filter(user=request.user).exists(),
-            address=data.get("address"),
-        )
         
-        return success_response(UserAddressSerializer(address_object).data, status_code=201)
+        address_object = Address.objects.filter(user=request.user).first()
+        if not address_object:
+            return bad_request_response(
+                message="You must have an address to update."
+            )
+        
+
+        address_object.country = data.get('country',address_object.country)
+        address_object.state = data.get('state',address_object.state)
+        address_object.city = data.get('city',address_object.city)
+        address_object.address = data.get('address',address_object.address)
+        address_object.location_latitude = data.get('location_latitude',address_object.location_latitude)
+        address_object.location_longitude = data.get('location_longitude',address_object.location_longitude)
+        address_object.save()
+    
+        
+        return success_response(UserAddressSerializer(address_object).data)
 
 
 class PasswordChangeView(generics.GenericAPIView):
