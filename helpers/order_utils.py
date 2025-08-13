@@ -46,8 +46,9 @@
 
 #     return round(base_rate * (per_km_rate * distance_km) + (per_item_rate * item_count), 2)
 
-
 from math import radians, sin, cos, sqrt, atan2
+import random
+import requests
 
 # -------------------------
 # 1. Distance Calculation
@@ -97,7 +98,59 @@ def get_base_fee(distance_km):
 
 
 # -------------------------
-# 3. Surge & Surcharge
+# 3. Dynamic Factor Fetchers
+# -------------------------
+def fetch_traffic_level(origin, destination):
+    """
+    Placeholder for real-time traffic API.
+    Replace this with API call to Google Maps, TomTom, or HERE.
+    """
+    # Example: Simulate with random
+    traffic_ratio = random.uniform(0.4, 1.0)  # 1.0 = free flow, 0.4 = heavy traffic
+    if traffic_ratio >= 0.8:
+        return 1.0
+    elif traffic_ratio >= 0.5:
+        return 1.2
+    else:
+        return 1.5
+
+
+def fetch_weather_factor(lat, lon):
+    """
+    Placeholder for weather API (e.g., OpenWeather).
+    Replace this with actual API call.
+    """
+    # Simulated weather conditions
+    conditions = ['clear', 'rain', 'thunderstorm']
+    condition = random.choice(conditions)
+
+    mapping = {
+        'clear': 1.0,
+        'rain': 1.3,
+        'thunderstorm': 1.5
+    }
+    return mapping.get(condition, 1.0)
+
+
+def fetch_rider_availability():
+    """
+    Placeholder for rider availability calculation.
+    Should be replaced with data from your rider/dispatch system.
+    """
+    available_riders = random.randint(5, 20)
+    expected_demand = random.randint(10, 20)
+    ratio = available_riders / expected_demand
+
+    if ratio >= 1.0:
+        return 1.0
+    elif ratio >= 0.5:
+        return 1.2
+    else:
+        return 1.5
+
+
+# -------------------------
+# 4. Surge & Surcharge
 # -------------------------
 def apply_surge(base_fee, traffic_level=1.0, weather_factor=1.0, rider_availability=1.0):
     """Adjusts fee for traffic, weather, and rider availability."""
@@ -119,35 +172,26 @@ def calculate_delivery_fee(distance_km, item_count=1, traffic_level=1.0, weather
     return {
         "distance_km": round(distance_km, 2),
         "base_fee": round(base_fee, 2),
+        "traffic_level": traffic_level,
+        "weather_factor": weather_factor,
+        "rider_availability": rider_availability,
         "surged_fee": surged_fee,
         "total_delivery_fee": round(total_fee, 2)
     }
 
 
 # -------------------------
-# 4. Vendor Delivery Price from Coordinates
+# 5. Vendor Delivery Price from Coordinates
 # -------------------------
-def calculate_fee_from_coords(lat1, lon1, lat2, lon2, item_count=1, traffic_level=1.0, weather_factor=1.0, rider_availability=1.0):
+def calculate_fee_from_coords(lat1, lon1, lat2, lon2, item_count=1):
     distance_km = get_distance_between_two_location(lat1, lon1, lat2, lon2)
     if distance_km is None:
         return None
+
+    # Get dynamic multipliers
+    traffic_level = fetch_traffic_level((lat1, lon1), (lat2, lon2))
+    weather_factor = fetch_weather_factor(lat1, lon1)
+    rider_availability = fetch_rider_availability()
+
     return calculate_delivery_fee(distance_km, item_count, traffic_level, weather_factor, rider_availability)
 
-
-# # -------------------------
-# # Example Usage
-# # -------------------------
-# if __name__ == "__main__":
-#     vendor_lat, vendor_lon = 6.6751345, 3.3301271
-#     customer_lat, customer_lon = 6.6852000, 3.3405000
-
-#     result = calculate_fee_from_coords(
-#         vendor_lat, vendor_lon,
-#         customer_lat, customer_lon,
-#         item_count=3,
-#         traffic_level=1.2,   # Heavy traffic
-#         weather_factor=1.3,  # Rain
-#         rider_availability=1.1  # Slight shortage of riders
-#     )
-
-#     print(result)
