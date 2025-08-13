@@ -365,7 +365,7 @@ class RiderViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def update_location(self, request, pk=None):
-        rider = self.get_object()
+        rider:Rider = self.get_object()
         serializer = RiderLocationUpdateSerializer(data=request.data)
         
         if serializer.is_valid():
@@ -462,6 +462,30 @@ class RiderViewSet(viewsets.ModelViewSet):
             )
         
         order.assign_rider(rider)
+        # Send WebSocket notification to vendor
+        try:
+            channel_layer = get_channel_layer()
+            vendor_group_name = f'vendor_{order.vendor.user.id}'
+
+            async_to_sync(channel_layer.group_send)(
+                vendor_group_name,
+                {
+                    'type': 'order_accepted_notification',
+                    'data': {
+                        'order_id': str(order.id),
+                        'rider': {
+                            'id': rider.id,
+                            'name': rider.user.get_full_name(),
+                            'phone': rider.user.phone_number,
+                        },
+                        'accepted_at': order.updated_at.isoformat(),
+                        'status': order.status,
+                    }
+                }
+            )
+        except Exception as e:
+            print("WebSocket error:", e)
+
         return success_response(
             message='Order accepted successfully'
         )
@@ -626,7 +650,7 @@ class RiderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def confirm_delivery(self, request, pk=None):
-        rider = self.get_object()
+        rider:Rider = self.get_object()
         order_id = request.data.get('order_id')
         otp = request.data.get('otp')
 
@@ -652,6 +676,30 @@ class RiderViewSet(viewsets.ModelViewSet):
         order.delivery_otp_expiry = None
         order.delivered_at = timezone.now()
         order.save()
+
+        # Send WebSocket notification to vendor
+        try:
+            channel_layer = get_channel_layer()
+            vendor_group_name = f'vendor_{order.vendor.user.id}' 
+
+            async_to_sync(channel_layer.group_send)(
+                vendor_group_name,
+                {
+                    'type': 'order_delivered_notification',
+                    'data': {
+                        'order_id': str(order.id),
+                        'status': order.status,
+                        'delivered_at': order.delivered_at.isoformat(),
+                        'rider': {
+                            'id': rider.id,
+                            'name': rider.user.get_full_name(),
+                            'phone': rider.user.phone_number
+                        }
+                    }
+                }
+            )
+        except Exception as e:
+            print("WebSocket error:", e)
 
         return success_response(
             message='Order delivered successfully',

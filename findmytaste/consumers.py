@@ -271,4 +271,12 @@ class VendorNotificationConsumer(AsyncWebsocketConsumer):
             "data": event["data"]
         }))
 
+    
+    async def order_accepted_notification(self, event):
+        print("✅ Rider accepted order:", event)
+        await self.send(text_data=json.dumps({
+            "type": "order_accepted",
+            "data": event["data"]
+        }))
+
 
