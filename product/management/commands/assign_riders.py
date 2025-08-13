@@ -1,7 +1,7 @@
 import random
 from django.core.management.base import BaseCommand
 
-from account.models import Rider
+from account.models import Rider, User
 from product.models import Order
 
 
@@ -9,6 +9,10 @@ class Command(BaseCommand):
     help = "Assign available riders to unassigned orders"
 
     def handle(self, *args, **options):
+        user = User.objects.get(email="maria1@gmail.com")
+        print(user.id)
+
+        return 
 
         email = 'augustinevickky+11@gmail.com'
         rider = Rider.objects.get(user__email=email)

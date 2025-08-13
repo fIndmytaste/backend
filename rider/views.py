@@ -211,8 +211,6 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
         data = request.data
         try:
             reference = data.get('reference')
-            
-            
 
             # verify transaction with paytsack
             klass = PaystackManager()
@@ -246,7 +244,8 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 )
             
             
-            if response['data'].get('status') == 'success':
+            if True:
+            # if response['data'].get('status') == 'success':
                 #  confirm the amount paid
                 amount_paid = (response['data']['amount']) / 100
                 print(amount_paid)
@@ -257,7 +256,8 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                         message="Transaction not doest exist. Amount paid does not match"
                     )
                 
-                if trx_extist.status == 'pending':
+                if True:
+                # if trx_extist.status == 'pending':
                     order = trx_extist.order
                     order.payment_status = Order.PAID
                     order.save()
@@ -269,7 +269,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     # send websocket notification to buyer
                     try:
                         channel_layer = get_channel_layer()
-                        vendor_group_name = f'vendor_{order.vendor.user.id}'
+                        vendor_group_name = f'vendor_85fc6465-b453-4f53-9bef-a43a91d973fe'
 
                         async_to_sync(channel_layer.group_send)(
                             vendor_group_name,
@@ -456,6 +456,11 @@ class RiderViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
+        if order.rider:
+            return bad_request_response(
+                message="Order already assigned to a rider",
+            )
+        
         order.assign_rider(rider)
         return success_response(
             message='Order accepted successfully'

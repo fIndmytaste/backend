@@ -717,9 +717,9 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        query_location_latitude = request.GET.get('latitude')
-        query_location_longitude = request.GET.get('longitude')
-        query_address = request.GET.get('address')
+        query_location_latitude = request.GET.get('latitude') or request.data.get('latitude') 
+        query_location_longitude = request.GET.get('longitude') or request.data.get('longitude') 
+        query_address = request.GET.get('address') or request.data.get('address')
 
         user = request.user
         items_data = serializer.validated_data['items']
