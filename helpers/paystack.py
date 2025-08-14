@@ -26,6 +26,7 @@ class PaystackManager:
             'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
             'Content-Type': 'application/json',
         }
+        print(header)
         return header
 
     
@@ -279,7 +280,6 @@ class PaystackManager:
                 "payment_mode": 'website-link',
             }
 
-            
 
             if is_mobile:
                 metadata['payment_mode'] =  'mobile-payment'
