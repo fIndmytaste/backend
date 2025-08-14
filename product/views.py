@@ -843,7 +843,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
 
 
-                if order.payment_method == 'wallet':
+                if request.data.get('payment_method') != 'wallet' and order.payment_method == 'wallet':
                     wallet, _ = Wallet.objects.get_or_create(user=user)
                     order_total_price = order.get_total_price() + order.delivery_fee + order.service_fee
                     if float(order_total_price) > float(wallet.balance):
