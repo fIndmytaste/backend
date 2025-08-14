@@ -99,10 +99,10 @@ class UserAddressUpdateView(generics.GenericAPIView):
         - 200: Successfully fetched the user's delivery addresses.
         - 400: Bad request in case of any errors.
         """
-        # delivery_addresses = Address.objects.filter(user=request.user).order_by('-created_at')
-        delivery_addresses = Address.objects.filter(user=request.user).first()
+        delivery_addresses = Address.objects.filter(user=request.user).order_by('-created_at')
+        # delivery_addresses = Address.objects.filter(user=request.user).first()
         if delivery_addresses:
-            serializer = UserAddressSerializer(delivery_addresses)
+            serializer = UserAddressSerializer(delivery_addresses, many=True)
             return success_response(
                 message="Delivery addresses retrieved successfully",
                 data=[serializer.data]
@@ -169,13 +169,7 @@ class UserAddressUpdateView(generics.GenericAPIView):
                 return bad_request_response(
                     message="Longitude must be a valid number."
                 )
-            
 
-        has_address = Address.objects.filter(user=request.user)
-        if has_address:
-            return bad_request_response(
-                message="You already have an address."
-            )
 
 
         address_object = Address.objects.create(
@@ -227,12 +221,18 @@ class UserAddressUpdateView(generics.GenericAPIView):
                 )
 
 
-        
-        address_object = Address.objects.filter(user=request.user).first()
-        if not address_object:
+        try:
+            address_object = Address.objects.get(id=request.data.get('address_id'))
+        except:
             return bad_request_response(
-                message="You must have an address to update."
+                message="address does not exist"
             )
+        
+        # address_object = Address.objects.filter(user=request.user).first()
+        # if not address_object:
+        #     return bad_request_response(
+        #         message="You must have an address to update."
+        #     )
         
 
         address_object.country = data.get('country',address_object.country)
