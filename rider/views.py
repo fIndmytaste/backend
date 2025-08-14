@@ -1,4 +1,5 @@
 # views.py
+import json
 import math
 import random
 from channels.layers import get_channel_layer
@@ -223,9 +224,11 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
             
             
             metadata = response.get('data',{}).get('metadata',{})
+            print(json.dumps(response.get('data',{})))
+            print(response.get('data',{}).get('metadata',{}))
             if not metadata:
                 return bad_request_response(
-                    message="Transaction not doest exist"
+                    message="Transaction doest not exist"
                 )
             
             transaction_ref = metadata.get('reference')
@@ -235,17 +238,19 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 trx_extist = WalletTransaction.objects.get(id=transaction_ref)
             except:
                 return bad_request_response(
-                    message="Transaction not doest exist"
+                    message="Transaction doest not exist"
                 )
 
-            if trx_extist.external_reference != reference:
-                return bad_request_response(
-                    message="Transaction not doest exist"
-                )
+            if trx_extist.external_reference:
+                if trx_extist.external_reference != reference:
+                    return bad_request_response(
+                        message="Transaction doest not exist"
+                    )
+                
+
             
             
-            if True:
-            # if response['data'].get('status') == 'success':
+            if response['data'].get('status') == 'success':
                 #  confirm the amount paid
                 amount_paid = (response['data']['amount']) / 100
                 print(amount_paid)
@@ -256,13 +261,13 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                         message="Transaction not doest exist. Amount paid does not match"
                     )
                 
-                if True:
-                # if trx_extist.status == 'pending':
+                if trx_extist.status == 'pending':
                     order = trx_extist.order
                     order.payment_status = Order.PAID
                     order.save()
                     trx_extist.status = "completed"
                     trx_extist.response_data=response
+                    trx_extist.external_reference = reference
                     trx_extist.description = 'Order Payment'
                     trx_extist.save()
 
