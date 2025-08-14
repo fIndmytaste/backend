@@ -150,7 +150,7 @@ class UserAddressCreateSerializer(serializers.Serializer):
     country = serializers.CharField(required=False)
     state = serializers.CharField(required=False)
     city = serializers.CharField(required=False)
-    address = serializers.CharField()
+    address = serializers.CharField(required=True)
     location_latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
     location_longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
 

@@ -164,6 +164,11 @@ class UserAddressUpdateView(generics.GenericAPIView):
                 )
 
 
+        address_objects = Address.objects.filter(user=request.user)
+        for address in address_objects:
+            address.is_active =False
+            address.save()
+
 
         address_object = Address.objects.create(
             user=request.user,
@@ -172,7 +177,8 @@ class UserAddressUpdateView(generics.GenericAPIView):
             city=data.get("city"),
             location_latitude=data['location_latitude'],
             location_longitude=data['location_longitude'] ,
-            is_primary= not Address.objects.filter(user=request.user).exists(),
+            is_primary= True,
+            is_active=True,
             address=data.get("address"),
         )
         
