@@ -100,14 +100,7 @@ class UserAddressUpdateView(generics.GenericAPIView):
         - 400: Bad request in case of any errors.
         """
         delivery_addresses = Address.objects.filter(user=request.user).order_by('-created_at')
-        # delivery_addresses = Address.objects.filter(user=request.user).first()
-        if delivery_addresses:
-            serializer = UserAddressSerializer(delivery_addresses, many=True)
-            return success_response(
-                message="Delivery addresses retrieved successfully",
-                data=[serializer.data]
-            )
-        return success_response(data=[])
+        return success_response(data=UserAddressSerializer(delivery_addresses, many=True).data)
 
 
     @swagger_auto_schema(
