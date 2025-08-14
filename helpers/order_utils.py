@@ -55,6 +55,10 @@ import requests
 # -------------------------
 def get_distance_between_two_location(lat1, lon1, lat2, lon2):
     """Returns distance in kilometers between two GPS coordinates."""
+
+    print("====="*10)
+    print(f"User Location :: Latitude -> {lat1}  Longitude -> {lon1}")
+    print(f"Vendor Location :: Latitude -> {lat2}  Longitude -> {lon2}")
     try:
         for value in [lat1, lon1, lat2, lon2]:
             if not isinstance(value, (int, float)):

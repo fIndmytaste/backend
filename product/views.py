@@ -739,7 +739,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         address = None
         
         if any([not query_location_latitude, not query_location_longitude, not query_address]):
-            user_address = Address.objects.filter(user=request.user,is_active=True).last()
+            user_address = Address.objects.filter(user=request.user,is_active=True).first()
 
             if not user_address:
                 return bad_request_response(
@@ -773,6 +773,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 message="Failed to calculate delivery fee."
             )
 
+        print(distance_in_km)
         if distance_in_km is None or distance_in_km > 5:
             return bad_request_response(
                 message="This vendor cannot deliver to your location (distance too far)."
