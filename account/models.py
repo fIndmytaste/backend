@@ -263,22 +263,22 @@ class Rider(models.Model):
             status__in=['picked_up', 'in_transit', 'near_delivery']
         )
         
-        for order in active_orders:
-            try:
-                tracking = order.delivery_tracking.latest('updated_at')
-                tracking.update_rider_location(latitude, longitude)
+        # for order in active_orders:
+        #     try:
+        #         tracking = order.delivery_tracking.latest('updated_at')
+        #         tracking.update_rider_location(latitude, longitude)
                 
-                # Check if rider is near delivery location and update status if needed
-                if order.status == 'in_transit' and tracking.is_near_delivery_location():
-                    order.mark_as_near_delivery()
+        #         # Check if rider is near delivery location and update status if needed
+        #         if order.status == 'in_transit' and tracking.is_near_delivery_location():
+        #             order.mark_as_near_delivery()
                     
-            except DeliveryTracking.DoesNotExist:
-                # Create a new tracking entry if one doesn't exist
-                DeliveryTracking.objects.create(
-                    order=order,
-                    rider_latitude=latitude,
-                    rider_longitude=longitude
-                )
+        #     except DeliveryTracking.DoesNotExist:
+        #         # Create a new tracking entry if one doesn't exist
+        #         DeliveryTracking.objects.create(
+        #             order=order,
+        #             rider_latitude=latitude,
+        #             rider_longitude=longitude
+        #         )
     
     def go_online(self):
         """Set the rider as online and available for deliveries."""

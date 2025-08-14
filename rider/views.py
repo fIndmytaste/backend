@@ -773,7 +773,15 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
             )
             
             # Update order status if near delivery
-            if distance_to_customer <= 0.5 and order.status == 'in_transit':  # 500m threshold
+            distance_value = distance_to_customer
+            if distance_value < 1:
+                distance_value = distance_value * 1000 
+                distance_type = "meter"
+            else:
+                distance_type = "kilometer"
+
+            if True:  # 500m threshold
+            # if distance_to_customer <= 0.5 and order.status == 'in_transit':  # 500m threshold
                 order.status = 'near_delivery'
                 order.save()
                 
@@ -785,17 +793,16 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
                         'data': convert_decimals({
                             'order_id': str(order.id),
                             'status': 'near_delivery',
+                            'distance_to_customer': round(distance_value,3),
+                            'distance_to_customer_type': distance_type,
+                            'estimated_arrival': self.calculate_eta(distance_value if distance_type == "kilometer" else distance_value / 1000),
+                            'estimated_arrival_type':"minutes",
                             'updated_at': order.updated_at.isoformat()
                         })
                     }
                 )
 
-            distance_value = distance_to_customer
-            if distance_value < 1:
-                distance_value = distance_value * 1000 
-                distance_type = "meter"
-            else:
-                distance_type = "kilometer"
+            
             # Send location update
             async_to_sync(self.channel_layer.group_send)(
                 room_group_name,
@@ -807,6 +814,11 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
                             'latitude': latitude,
                             'longitude': longitude,
                             'updated_at': rider.location_updated_at.isoformat()
+                        },
+                        "rider":{
+                            'id':rider.id,
+                            'name':rider.user.full_name,
+                            "email":rider.user.email
                         },
                         'distance_to_customer': round(distance_value,3),
                         'distance_to_customer_type': distance_type,
