@@ -739,7 +739,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         address = None
         
         if any([not query_location_latitude, not query_location_longitude, not query_address]):
-            user_address = Address.objects.filter(user=request.user).order_by('-created_at').first()
+            user_address = Address.objects.filter(user=request.user,is_active=True).last()
 
             if not user_address:
                 return bad_request_response(
@@ -778,16 +778,6 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 message="This vendor cannot deliver to your location (distance too far)."
             )
 
-        # product_ids = {item['product'] for item in items_data}
-        # variant_ids = {
-        #     variant['product']
-        #     for item in items_data if item.get('variants')
-        #     for variant in item['variants']
-        # }
-        # all_ids = list(product_ids.union(variant_ids))
-        # products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent')
-        # product_map = {product.id: product for product in products}
-
         product_ids = []
         for item in items_data:
             if item.get('variants') not in [[],'',False,None]:
@@ -799,9 +789,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
-        print(products)
         product_map = {str(product.id): product for product in products}
-        print(product_map)
 
         item_count = 0
 
