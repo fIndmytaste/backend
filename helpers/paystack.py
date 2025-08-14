@@ -271,16 +271,19 @@ class PaystackManager:
                 transaction_type='purchase'
             )
 
+            new_amount = amount * 100
+
             metadata = {
                 "user_id": user_id,
                 "name": user.full_name,
                 "email": user.email,
+                "amount": new_amount,
                 "reference": str(transaction.id),
                 "payment_type": 'order-payment',
                 "payment_mode": 'website-link',
             }
 
-            new_amount = amount * 100
+            
 
             if is_mobile:
                 metadata['payment_mode'] =  'mobile-payment'
