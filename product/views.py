@@ -777,15 +777,30 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 message="This vendor cannot deliver to your location (distance too far)."
             )
 
-        product_ids = {item['product'] for item in items_data}
-        variant_ids = {
-            variant['product']
-            for item in items_data if item.get('variants')
-            for variant in item['variants']
-        }
-        all_ids = list(product_ids.union(variant_ids))
-        products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent')
-        product_map = {product.id: product for product in products}
+        # product_ids = {item['product'] for item in items_data}
+        # variant_ids = {
+        #     variant['product']
+        #     for item in items_data if item.get('variants')
+        #     for variant in item['variants']
+        # }
+        # all_ids = list(product_ids.union(variant_ids))
+        # products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent')
+        # product_map = {product.id: product for product in products}
+
+        product_ids = []
+        for item in items_data:
+            if item.get('variants') not in [[],'',False,None]:
+                variants = item['variants']
+                for variant in variants:
+                    product_ids.append(variant['product'])
+            else:
+                product_ids.append(item['product'])
+
+        all_ids = product_ids
+        products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
+        print(products)
+        product_map = {str(product.id): product for product in products}
+        print(product_map)
 
         item_count = 0
 
@@ -841,11 +856,11 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.save()
 
-
+                order_total_price = float(order.get_total_price()) + order.delivery_fee + order.service_fee
 
                 if request.data.get('payment_method') != 'wallet' and order.payment_method == 'wallet':
                     wallet, _ = Wallet.objects.get_or_create(user=user)
-                    order_total_price = order.get_total_price() + order.delivery_fee + order.service_fee
+                    
                     if float(order_total_price) > float(wallet.balance):
                         raise ValueError('Insufficient balance. Please top up your wallet')
                     
