@@ -789,7 +789,13 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
                         })
                     }
                 )
-            
+
+            distance_value = distance_to_customer
+            if distance_value < 1:
+                distance_value = distance_value * 1000 
+                distance_type = "meter"
+            else:
+                distance_type = "kilometer"
             # Send location update
             async_to_sync(self.channel_layer.group_send)(
                 room_group_name,
@@ -802,8 +808,10 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
                             'longitude': longitude,
                             'updated_at': rider.location_updated_at.isoformat()
                         },
-                        'distance_to_customer': distance_to_customer,
-                        'estimated_arrival': self.calculate_eta(distance_to_customer)
+                        'distance_to_customer': round(distance_value,3),
+                        'distance_to_customer_type': distance_type,
+                        'estimated_arrival': self.calculate_eta(distance_value if distance_type == "kilometer" else distance_value / 1000),
+                        'estimated_arrival_type':"minutes"
                     })
                 }
             )
@@ -887,7 +895,8 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
 
     def calculate_eta(self, distance_km):
         """Calculate estimated time of arrival in minutes"""
-        if distance_km <= 0:
+        print(distance_km)
+        if distance_km == 0:
             return 0
         
         # Assume average speed of 25 km/h for delivery

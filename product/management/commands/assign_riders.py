@@ -9,14 +9,17 @@ class Command(BaseCommand):
     help = "Assign available riders to unassigned orders"
 
     def handle(self, *args, **options):
-        user = User.objects.get(email="maria1@gmail.com")
-        print(user.id)
+        # user = User.objects.get(email="maria1@gmail.com")
+        # print(user.id)
 
-        return 
+        # return 
 
         email = 'augustinevickky+11@gmail.com'
         rider = Rider.objects.get(user__email=email)
         print(rider.user.email)
+        print(rider.id)
+
+        return
 
         # return
         # Get all unassigned orders

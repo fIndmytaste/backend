@@ -69,8 +69,8 @@ class DeliveryTrackingSerializer(serializers.ModelSerializer):
 
 
 class RiderLocationUpdateSerializer(serializers.Serializer):
-    latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
-    longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
+    longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
 
 
 class RiderDocumentUploadSerializer(serializers.Serializer):
@@ -141,8 +141,8 @@ class RiderRatingCreateSerializer(serializers.ModelSerializer):
     
 
 class RiderLocationUpdateSerializer(serializers.Serializer):
-    latitude = serializers.DecimalField(max_digits=9, decimal_places=6)
-    longitude = serializers.DecimalField(max_digits=9, decimal_places=6)
+    latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
+    longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=True)
 
 
 class DeliveryTrackingSerializer(serializers.ModelSerializer):
