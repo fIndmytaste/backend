@@ -490,7 +490,7 @@ class GetDeliveryFeeView(generics.GenericAPIView):
 
         
         if any([not query_location_latitude, not query_location_longitude]):
-            user_address = Address.objects.filter(user=user).first()
+            user_address = Address.objects.filter(user=user, is_active=True).first()
             if not user_address:
                 return bad_request_response(
                     message="Please set your delivery address in settings before placing an order."
