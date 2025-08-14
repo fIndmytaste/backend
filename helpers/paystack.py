@@ -3,10 +3,6 @@ import json
 import requests
 from findmytaste import settings
 from account.models import User, Vendor, VirtualAccount
-from django.urls import reverse
-from django.utils.http import urlsafe_base64_encode
-from django.utils.encoding import force_bytes 
-from uuid import uuid4
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 from wallet.models import Wallet, WalletTransaction
 
@@ -277,7 +273,7 @@ class PaystackManager:
                 "user_id": user_id,
                 "name": user.full_name,
                 "email": user.email,
-                "amount": new_amount,
+                "amount": str(new_amount),
                 "reference": str(transaction.id),
                 "payment_type": 'order-payment',
                 "payment_mode": 'website-link',
