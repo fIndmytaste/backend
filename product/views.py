@@ -739,7 +739,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         address = None
         
         if any([not query_location_latitude, not query_location_longitude, not query_address]):
-            user_address = Address.objects.filter(user=request.user).order_by('-created_at').last()
+            user_address = Address.objects.filter(user=request.user).order_by('-created_at').first()
 
             if not user_address:
                 return bad_request_response(
