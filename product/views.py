@@ -355,11 +355,9 @@ class VendorRatingCreateView(generics.CreateAPIView):
     serializer_class = VendorRatingSerializer
     permission_classes = [IsAuthenticated]
 
-    
     def perform_create(self, serializer):
         # Automatically associate the user with the rating
         serializer.save(user=self.request.user)
-        return success_response(serializer.data)
 
     @swagger_auto_schema(
         operation_description="Submit a rating for a specific vendor.",
@@ -375,9 +373,12 @@ class VendorRatingCreateView(generics.CreateAPIView):
         }
     )
     def post(self, request, *args, **kwargs):
-        response_message = super().post(request, *args, **kwargs)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
         return success_response(
-            # data=response_message
+            data=serializer.data,
+            message="Vendor rating successfully created."
         )
 
 class ProductByVendorCategoryView(generics.GenericAPIView):
