@@ -271,7 +271,8 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     # send websocket notification to buyer
                     try:
                         channel_layer = get_channel_layer()
-                        vendor_group_name = f'vendor_85fc6465-b453-4f53-9bef-a43a91d973fe'
+                        # vendor_group_name = f'vendor_85fc6465-b453-4f53-9bef-a43a91d973fe'
+                        vendor_group_name = f'vendor_{order.vendor.user.id}'
 
                         async_to_sync(channel_layer.group_send)(
                             vendor_group_name,

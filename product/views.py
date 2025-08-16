@@ -375,7 +375,10 @@ class VendorRatingCreateView(generics.CreateAPIView):
         }
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        response_message = super().post(request, *args, **kwargs)
+        return success_response(
+            # data=response_message
+        )
 
 class ProductByVendorCategoryView(generics.GenericAPIView):
     serializer_class = ProductSerializer
