@@ -307,6 +307,7 @@ class VendorSerializer(serializers.ModelSerializer):
     total_ratings = serializers.SerializerMethodField()
     recent_reviews = serializers.SerializerMethodField()
     user_rating = serializers.SerializerMethodField()
+    is_favorite = serializers.SerializerMethodField()
     user = VendorInlineUserSerializer()
     category = SystemCategorySerializer()
     
@@ -355,6 +356,17 @@ class VendorSerializer(serializers.ModelSerializer):
             except VendorRating.DoesNotExist:
                 return None
         return None
+    
+
+    def get_is_favorite(self, obj):
+        request = self.context.get('request')
+        try:
+            if request and request.user.is_authenticated:
+                return UserFavoriteVendor.objects.filter(user=request.user, vendor=obj).exists()
+            return False
+        except:
+            return False
+             
 
 
 class VendorRatingCreateSerializer(serializers.ModelSerializer):
