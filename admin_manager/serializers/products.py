@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from product.models import Favorite, Order, OrderItem, Product, Rating, SystemCategory
+from product.models import SystemCategory
 
 
 

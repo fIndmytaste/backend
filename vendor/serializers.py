@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models import Q, Avg
 from account.models import User, Vendor, VendorRating
-from product.models import Favorite, Product, ProductImage, Rating, SystemCategory, VendorCategory
+from product.models import UserFavoriteVendor, Product, ProductImage, Rating, SystemCategory, VendorCategory
 from collections import defaultdict
 class SystemCategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -241,7 +241,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
 class FavoriteSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Favorite
+        model = UserFavoriteVendor
         fields = '__all__'
 
 

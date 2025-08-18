@@ -16,7 +16,7 @@
 from django.contrib import admin
 from .models import (
     SystemCategory, VendorCategory, Product, ProductImage,
-    Order, OrderItem, Rating, Favorite, ProductView, DeliveryTracking
+    Order, OrderItem, Rating, UserFavoriteVendor, ProductView, DeliveryTracking
 )
 
 # Inline for OrderItem
@@ -90,10 +90,10 @@ class RatingAdmin(admin.ModelAdmin):
     readonly_fields = ('created_at',)
 
 # Favorite Admin
-@admin.register(Favorite)
+@admin.register(UserFavoriteVendor)
 class FavoriteAdmin(admin.ModelAdmin):
-    list_display = ('user', 'product', 'created_at')
-    search_fields = ('user__username', 'product__name')
+    list_display = ('user', 'vendor', 'created_at')
+    search_fields = ('user__username',)
     readonly_fields = ('created_at',)
 
 # ProductView Admin

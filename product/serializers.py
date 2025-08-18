@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Favorite, Order, OrderItem, Product, Rating, ProductImage
+from .models import UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
 
 
 
@@ -130,11 +130,11 @@ class CreateOrderSerializer(serializers.Serializer):
 
 
 class FavoriteSerializer(serializers.ModelSerializer):
-    product = BuyerProductSerializer()  # Serialize the product object
+    # vendor = BuyerProductSerializer()  # Serialize the product object
 
     class Meta:
-        model = Favorite
-        fields = ['user', 'product', 'created_at']
+        model = UserFavoriteVendor
+        fields = ['user', 'vendor', 'created_at']
         read_only_fields = ['user', 'created_at']
 
 

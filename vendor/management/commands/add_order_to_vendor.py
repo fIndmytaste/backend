@@ -8,8 +8,13 @@ from product.models import Order, OrderItem, Product  # Don't forget to import t
 
 class Command(BaseCommand):
     def handle(self, *args, **kwargs):
-        admin_user = User.objects.filter(is_admin=True).first()
-        vendor = Vendor.objects.get(id='02debcb2-00b1-48b6-baf1-2e017ae2fba1')
+        # admin_user = User.objects.filter(is_admin=True).first()
+        vendor = Vendor.objects.get(id='2b555c76-5c95-46c7-a924-4f1117d50044')
+
+        print(vendor.id)
+        print(vendor.user.id)
+
+        return
 
         products = Product.objects.filter(parent=None,vendor=vendor)
 

@@ -8,6 +8,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from cloudinary.models import CloudinaryField
 
+from account.models import Vendor
+
 
 
 User = get_user_model()
@@ -110,7 +112,7 @@ class Product(models.Model):
         """
         Returns True if the product is in the user's favorites, otherwise False.
         """
-        return Favorite.objects.filter(user=self.user, product=self.product).exists()
+        return None
 
 
     def all_images(self):
@@ -361,19 +363,18 @@ class Rating(models.Model):
         return f"Rating for {self.product.name} by {self.user.username}"
 
 
-class Favorite(models.Model):
+class UserFavoriteVendor(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='favorites')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='favorited_by')
-
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ['user', 'product']  # A user can only favorite a product once
+        unique_together = ['user', 'vendor']  # A user can only favorite a product once
 
     def __str__(self):
-        return f"{self.user} - {self.product.name}"
+        return f"{self.user} - {self.vendor}"
 
 class ProductView(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

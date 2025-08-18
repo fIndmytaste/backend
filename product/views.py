@@ -14,7 +14,7 @@ from helpers.order_utils import calculate_delivery_fee, get_distance_between_two
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
 from wallet.models import WalletTransaction
-from .models import Favorite, Order, OrderItem, ProductImage, Rating, SystemCategory, Product
+from .models import UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
 from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 
@@ -209,7 +209,7 @@ class HotPickProductsView(generics.GenericAPIView):
         """
         Get all the user's favorited products.
         """
-        favorites = Favorite.objects.filter(user=user)
+        favorites = UserFavoriteVendor.objects.filter(user=user)
         return [favorite.product for favorite in favorites]
 
     def get_top_viewed_products(self, limit=10):
@@ -963,7 +963,7 @@ class UserFavoriteListView(generics.ListAPIView):
         return super().get(request, *args, **kwargs)
     
     def get_queryset(self):
-        return Favorite.objects.filter(user=self.request.user).order_by('-created_at')
+        return UserFavoriteVendor.objects.filter(user=self.request.user).order_by('-created_at')
 
 
 class AddToFavoritesView(generics.GenericAPIView):
@@ -978,20 +978,21 @@ class AddToFavoritesView(generics.GenericAPIView):
             401: "Unauthorized",
         }
     )
-    def post(self, request, product_id):
+    def post(self, request):
         """
         Add a product to the user's favorites.
         """
+        product_id = request.data.get('vendor_id')
         try:
-            product = Product.objects.get(id=product_id)
-        except Product.DoesNotExist:
-            return bad_request_response(message="Product not found.")
+            vendor = Vendor.objects.get(id=product_id)
+        except Vendor.DoesNotExist:
+            return bad_request_response(message="Vendor not found.")
 
         # Check if the product is already in the user's favorites
-        if Favorite.objects.filter(user=request.user, product=product).exists():
+        if UserFavoriteVendor.objects.filter(user=request.user, vendor=vendor).exists():
             return bad_request_response(message="Product is already in your favorites.")
 
-        favorite = Favorite.objects.create(user=request.user, product=product)
+        favorite = UserFavoriteVendor.objects.create(user=request.user, vendor=vendor)
         serializer = FavoriteSerializer(favorite)
         return success_response(serializer.data, status_code=201)
 
@@ -1004,13 +1005,14 @@ class AddToFavoritesView(generics.GenericAPIView):
             401: "Unauthorized",
         }
     )
-    def delete(self, request, product_id):
+    def delete(self, request):
+        product_id = request.data.get('vendor_id')
         try:
-            product = Product.objects.get(id=product_id)
-        except Product.DoesNotExist:
+            vendor = Vendor.objects.get(id=product_id)
+        except Vendor.DoesNotExist:
             return bad_request_response(message="Product not found.")
 
-        existing_product = Favorite.objects.filter(user=request.user, product=product).first()
+        existing_product = UserFavoriteVendor.objects.filter(user=request.user, vendor=vendor).first()
 
         if not existing_product:
             return bad_request_response(message="Product is not in your favorites.")
