@@ -1,6 +1,6 @@
 from django.urls import path
 
-from product.views import VendorRatingListView
+from product.views import AddToFavoritesView, UserFavoriteListView, VendorRatingListView
 from .views import (
     AllVendorsNewView,
     AllVendorsView,
@@ -34,6 +34,8 @@ urlpatterns = [
     path('orders', VendorOrderListView.as_view(), name='order_list'),
     path('orders/<uuid:id>/', VendorOrderDetailAPIView.as_view(), name='vendor-order-detail'),
     path('overview', VendorOverviewView.as_view(), name='VendorOverviewView'),
+    path('user/favorites/', UserFavoriteListView.as_view(), name='user_favorites_list'),
+    path('user/favorites/add/', AddToFavoritesView.as_view(), name='add_to_favorites'),
 
     path('<vendor_id>', GetVendorDetailView.as_view(), name='GetVendorDetailView'),
     path('<vendor_id>/products', BuyerVendorProductListView.as_view(), name='order_list'),
