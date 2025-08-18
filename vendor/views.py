@@ -545,7 +545,9 @@ class FeaturedVendorsView(generics.GenericAPIView):
         if not user or not isinstance(user, User):
             return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
         
-        user_address, _ = Address.objects.get_or_create(user=user)
+        user_address = Address.objects.filter(is_primary=True).first()
+        if user_address:return Vendor.objects.none() 
+        # user_address, _ = Address.objects.get_or_create(user=user)
         user_lat = user_address.location_latitude
         user_lon = user_address.location_longitude
         if user_lat is None or user_lon is None:
