@@ -1113,8 +1113,34 @@ class VendorRatingCreateView(generics.CreateAPIView):
     serializer_class = VendorRatingCreateSerializer
     permission_classes = [IsAuthenticated]
     
+
     def perform_create(self, serializer):
-        serializer.save()
+        serializer.save(user=self.request.user)
+
+    @swagger_auto_schema(
+        operation_description="Submit a rating for a specific vendor.",
+        operation_summary="Submit a rating for a vendor.",
+        request_body=VendorRatingSerializer,
+        responses={
+            201: openapi.Response(
+                description="Vendor rating successfully created.",
+                schema=VendorRatingSerializer
+            ),
+            400: "Bad request if the rating data is invalid.",
+            401: "Authentication required."
+        }
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        return success_response(
+            data=serializer.data,
+            message="Vendor rating successfully created."
+        )
+
+
+
 
 
 class VendorRatingListView(generics.ListAPIView):
