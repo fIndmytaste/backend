@@ -12,7 +12,11 @@ class Command(BaseCommand):
         vendor = Vendor.objects.get(id='2b555c76-5c95-46c7-a924-4f1117d50044')
 
         print(vendor.id)
-        print(vendor.user.id)
+        print(vendor.user.email)
+
+        # user = User.objects.get(email=vendor.user.email)
+        # user.set_password('123456')
+        # user.save()
 
         return
 

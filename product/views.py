@@ -909,6 +909,9 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
         except ValidationError as ve:
             return bad_request_response(message=str(ve))
+        except ValueError as ve:
+            return bad_request_response(message=str(ve))
+
 
         except Exception as e:
             traceback_str = traceback.format_exc()
