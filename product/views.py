@@ -967,6 +967,20 @@ class UserFavoriteListView(generics.ListAPIView):
     
     def get_queryset(self):
         return UserFavoriteVendor.objects.filter(user=self.request.user).order_by('-created_at')
+    
+
+    def get(self, request,*args, **kwargs):
+        limit = int(request.GET.get('limit', 10))
+
+        
+        # Limit the results to 'limit' number of vendors
+        # return success_response(data=self.serializer_class(list(combined_vendors)[:limit], many=True).data)
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            limit,
+        )
 
 
 class AddToFavoritesView(generics.GenericAPIView):
