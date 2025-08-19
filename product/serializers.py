@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from vendor.serializers import VendorSerializer
 from .models import UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
 
 
@@ -136,6 +137,18 @@ class FavoriteSerializer(serializers.ModelSerializer):
         model = UserFavoriteVendor
         fields = ['user', 'vendor', 'created_at']
         read_only_fields = ['user', 'created_at']
+
+class FavoriteVendorSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = UserFavoriteVendor
+        fields = ['user', 'vendor', 'created_at']
+        read_only_fields = ['user', 'created_at']
+
+
+    def to_representation(self, instance):
+        request = self.context.get('request')
+        return VendorSerializer(instance.vendor, context={'request': request}).data
 
 
 

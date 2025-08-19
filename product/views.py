@@ -11,7 +11,7 @@ from rest_framework.exceptions import ValidationError
 from account.models import Address, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.order_utils import calculate_delivery_fee, get_distance_between_two_location
-from product.serializers import CreateOrderSerializer, FavoriteSerializer, OrderSerializer, RatingSerializer
+from product.serializers import CreateOrderSerializer, FavoriteSerializer, FavoriteVendorSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
 from wallet.models import WalletTransaction
 from .models import UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
@@ -952,7 +952,7 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class UserFavoriteListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = VendorSerializer
+    serializer_class = FavoriteVendorSerializer
 
     @swagger_auto_schema(
         operation_description="List all products in the user's favorites.",
