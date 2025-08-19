@@ -952,7 +952,7 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class UserFavoriteListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = FavoriteSerializer
+    serializer_class = VendorSerializer
 
     @swagger_auto_schema(
         operation_description="List all products in the user's favorites.",
