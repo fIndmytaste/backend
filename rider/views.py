@@ -4,6 +4,7 @@ import math
 import random
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from helpers.websocket_notification import send_order_accepted_notification_customer
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -25,6 +26,7 @@ from .serializers import (
     DeliveryTrackingSerializer,
     RiderLocationUpdateSerializer
 )
+from helpers.push_notification import notification_helper
 from decimal import Decimal
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
@@ -261,6 +263,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 if trx_extist.status == 'pending':
                     order = trx_extist.order
                     order.payment_status = Order.PAID
+                    order.status = 'confirmed'
                     order.save()
                     trx_extist.status = "completed"
                     trx_extist.response_data=response
@@ -294,6 +297,38 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
 
                     except Exception as e:
                         print(e)
+
+                    try:
+                        thread = notification_helper.send_to_user_async(
+                            user=order.vendor.user,
+                            title="New Order Received!",
+                            body=f"New order #{order.id} has been placed",
+                            # body=f"Order #{order.id} has been placed by {order.user.full_name}.",
+                            data={
+                                "event": "new_order",
+                                "order_id": str(order.id)
+                            }
+                        )
+                    except Exception as e:
+                        print(e)
+                    
+                    try:
+                        thread = notification_helper.send_to_user_async(
+                            user=order.user,
+                            title="Payment Successful 💳",
+                            body=f"Your payment for Order #{order.track_id} was successful!",
+                            data={
+                                "event": "payment_success",
+                                "order_id": str(order.id)
+                            }
+                        )
+                    except Exception as e:
+                        print(e)
+
+
+                    try:send_order_accepted_notification_customer(order)
+                    except:pass
+
 
                 return success_response(
                     message="Transaction processed successfully"

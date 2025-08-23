@@ -280,3 +280,50 @@ class VendorNotificationConsumer(AsyncWebsocketConsumer):
         }))
 
 
+
+class CustomerNotificationConsumer(AsyncWebsocketConsumer):
+
+    async def connect(self):
+        # Get query string parameters
+        query_string = self.scope['query_string'].decode()
+        print(query_string)
+        params = dict(qc.split('=') for qc in query_string.split('&') if '=' in qc)
+        user_id = params.get('user_id')
+        
+        print(user_id)
+        # Optional: validate that user_id is a valid integer
+        if not user_id:
+            await self.close()
+            return
+
+        self.customer_group_name = f'customer_{user_id}'
+
+        await self.channel_layer.group_add(
+            self.customer_group_name,
+            self.channel_name
+        )
+
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, "customer_group_name"):
+            await self.channel_layer.group_discard(
+                self.customer_group_name,
+                self.channel_name
+            )
+
+    async def order_accepted_notification(self, event):
+        """Handle order accepted notification"""
+        await self.send(text_data=json.dumps({
+            'type': 'order_accepted',
+            'data': event['data']
+        }))
+
+
+    async def order_status_update(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'status_update',
+            'data': event['data']
+        }))
+
+

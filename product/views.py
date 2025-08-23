@@ -1,5 +1,6 @@
 import traceback
 from helpers.paystack import PaystackManager
+from helpers.websocket_notification import send_order_accepted_notification_customer
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg import openapi
@@ -17,7 +18,7 @@ from wallet.models import WalletTransaction
 from .models import UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
 from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
-
+from helpers.push_notification import notification_helper
 from wallet.models import Wallet
 
 
@@ -698,6 +699,8 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.save()
 
+                
+
                 return success_response(
                     message="Order created successfully",
                     data=OrderSerializer(order).data
@@ -861,7 +864,8 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                     # proceed the payment
                     wallet.balance -= order_total_price
                     wallet.save()
-                    order.status = 'paid'
+                    order.payment_status = 'paid'
+                    order.status = 'confirmed'
                     order.save()
 
                     WalletTransaction.objects.create(
@@ -896,6 +900,21 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
                     except Exception as e:
                         print(e)
+
+                    # send other created push notification
+                    try:
+                        thread = notification_helper.send_to_user_async(
+                            user=order.user,
+                            title="Order Confirmed!",
+                            body="Your order has been successfully placed. We’ll notify you when it’s on the way 🚚",
+                            data={"event": "order_created", "order_id": order.id}
+                        )
+                    except Exception as e:
+                        print(e)
+
+                    try:
+                        send_order_accepted_notification_customer(order)
+                    except:pass
 
                     return success_response(
                         message='Payment successful'
@@ -958,7 +977,7 @@ class UserFavoriteListView(generics.ListAPIView):
         operation_description="List all products in the user's favorites.",
         operation_summary="Retrieve products from the user's favorites.",
         responses={
-            200: FavoriteSerializer(many=True),
+            200: FavoriteVendorSerializer(many=True),
             401: "Unauthorized",
         }
     )

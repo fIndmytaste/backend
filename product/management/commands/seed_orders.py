@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from account.models import Rider, Vendor
 from product.models import Order, Product
 from rider.serializers import OrderSerializer
-
+from helpers.services.firebase_service import FirebaseNotificationService
 User = get_user_model()
 
 
@@ -15,6 +15,24 @@ class Command(BaseCommand):
     help = "Seed 20 orders for the first user"
 
     def handle(self, *args, **kwargs):
+
+        test_token = "cS3y5kVs4kY-m55IuzwsQD:APA91bEVBmLZhU0auoZffsnv0-ll4pAkwYfqw0eVFxZqVOUJas-WUssqYYtHEErMCT-4S-R0Ici9nVp_GQzKPtbZcSahSRnOzRJHeFGRN3cXOEbSeyBCMp4"
+
+        result = FirebaseNotificationService.send_to_token(
+            token=test_token,
+            title="Test Notification",
+            body="This is a test push notification.",
+            data={"test_key": "test_value"}
+        )
+
+        print("Notification result:", result)
+
+
+
+
+
+
+        return
 
         user = User.objects.get(id='0ed7a160-8c78-4998-b293-460652dc136b')
 

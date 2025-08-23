@@ -255,14 +255,17 @@ CHANNEL_LAYERS = {
 }
 
 
+
 try:
-
-
     FIREBASE_CREDENTIALS_PATH = os.getenv('FIREBASE_CREDENTIALS_PATH', default='firebase-admin-sdk.json')
 
-    # Initialize Firebase Admin SDK
     if FIREBASE_CREDENTIALS_PATH and os.path.exists(FIREBASE_CREDENTIALS_PATH):
         cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
         firebase_admin.initialize_app(cred)
+    
+    # Confirm initialization
+    app = firebase_admin.get_app()
+    print(f"Firebase Admin SDK initialized: {app.name}")
 
-except:pass
+except Exception as e:
+    print(f"Firebase initialization error: {e}")

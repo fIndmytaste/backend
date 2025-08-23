@@ -8,6 +8,32 @@ logger = logging.getLogger(__name__)
 
 class FirebaseNotificationService:
 
+
+    @staticmethod
+    def send_to_token(
+        token: str,
+        title: str,
+        body: str,
+        data: Optional[Dict[str, Any]] = None,
+        image_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(
+                    title=title,
+                    body=body,
+                    image=image_url
+                ),
+                data=data or {},
+                token=token
+            )
+            response = messaging.send(message)
+            return {"success": True, "response": response}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        
+        
+
     @staticmethod
     def send_notification_to_token(token: str, title: str, body: str, data=None, image_url=None):
         message = messaging.Message(

@@ -25,6 +25,46 @@ class NotificationHelper:
         """
         self.max_workers = max_workers
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    
+    def send_to_token_async(
+        self,
+        token: str,
+        title: str,
+        body: str,
+        data: Optional[Dict[str, Any]] = None,
+        image_url: Optional[str] = None,
+        callback: Optional[Callable] = None
+    ) -> threading.Thread:
+        """
+        Send notification to a raw FCM device token asynchronously
+        """
+        def _send_notification():
+            try:
+                result = FirebaseNotificationService.send_to_token(
+                    token=token,
+                    title=title,
+                    body=body,
+                    data=data,
+                    image_url=image_url
+                )
+                logger.info(f"Notification sent to token: {result}")
+
+                if callback:
+                    callback(result, token)
+
+                return result
+            except Exception as e:
+                error_msg = f"Error sending notification to token {token}: {str(e)}"
+                logger.error(error_msg)
+                return {"success": False, "error": str(e)}
+
+        thread = threading.Thread(target=_send_notification)
+        thread.daemon = True
+        thread.start()
+        return thread
+
+
     
     def send_to_user_async(
         self,
@@ -84,6 +124,7 @@ class NotificationHelper:
         thread.start()
         return thread
     
+
     def send_to_topic_async(
         self,
         topic: str,
@@ -436,63 +477,7 @@ def send_promotional_notification(topic: str, title: str, body: str, promo_code:
         callback=callback
     )
 
-# Example usage in views or services
-"""
-Usage Examples:
 
-1. Simple async notification to user:
-    from myapp.helpers.notification_helper import notification_helper
-    
-    thread = notification_helper.send_to_user_async(
-        user=request.user,
-        title="Profile Updated",
-        body="Your profile has been successfully updated!"
-    )
 
-2. Notification with callback:
-    def notification_callback(result, user):
-        if result.get('success'):
-            print(f"Notification sent successfully to {user.username}")
-        else:
-            print(f"Failed to send notification: {result.get('error')}")
-    
-    notification_helper.send_to_user_async(
-        user='john_doe',
-        title="New Message",
-        body="You have a new message!",
-        callback=notification_callback
-    )
 
-3. Bulk notifications with results:
-    users = ['user1', 'user2', 'user3']
-    results = notification_helper.send_to_users_with_executor(
-        users=users,
-        title="System Maintenance",
-        body="System will be down for maintenance tonight."
-    )
-    print(f"Sent to {results['success_count']} users successfully")
 
-4. Using convenience functions:
-    from myapp.helpers.notification_helper import send_welcome_notification
-    
-    send_welcome_notification(new_user)
-
-5. Multiple different notifications:
-    notifications = [
-        {
-            "type": "user",
-            "target": "john_doe",
-            "title": "Welcome!",
-            "body": "Thanks for joining!",
-            "data": {"screen": "welcome"}
-        },
-        {
-            "type": "topic",
-            "target": "news",
-            "title": "Breaking News",
-            "body": "Important update available!"
-        }
-    ]
-    
-    threads = notification_helper.send_bulk_notifications_async(notifications)
-"""
