@@ -266,6 +266,11 @@ class Order(models.Model):
                     self.track_id = new_track_id
                     break
 
+        if not self.delivery_otp:
+            self.delivery_otp = str(random.randint(10000, 99999)) 
+            self.delivery_otp_expiry = timezone.now() + timedelta(minutes=15)  # expires in 15 minutes
+
+
         super().save(*args, **kwargs)
     
     def assign_rider(self, rider):
