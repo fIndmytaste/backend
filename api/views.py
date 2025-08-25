@@ -103,7 +103,17 @@ class CustomerOrdersListView(generics.GenericAPIView):
         status = request.GET.get('status')
         queryset = self.get_queryset().filter(user=request.user)
         if status:
-            queryset = queryset.filter(status=status)
+            in_progress = [
+                'confirmed','ready_for_pickup',
+                'picked_up','in_transit',
+                'near_delivery'
+            ]
+            if status == 'in_progress':
+                queryset = queryset.filter(status__in=in_progress)
+            else:
+                queryset = queryset.filter(status=status)
+
+            
             
         return paginate_success_response_with_serializer(
             request,
