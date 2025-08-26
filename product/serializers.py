@@ -115,6 +115,19 @@ class OrderSerializer(serializers.ModelSerializer):
                 )
             else:
                 rep['rider'] = None
+
+
+        if context.get('addition_serializer_data',{}).get('is_vendor'):
+            if instance.rider:
+                rep['vendor'] = dict(
+                    id=instance.vendor.id,
+                    name=instance.vendor.name,
+                    email=instance.vendor.email,
+                    first_name=instance.vendor.user.first_name,
+                    last_name=instance.vendor.user.last_name,
+                )
+            else:
+                rep['vendor'] = None
         
         return rep
     

@@ -459,11 +459,15 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self,request):
+        addition_serializer_data = {
+            'is_vendor':True
+        }
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             self.get_queryset(),
-            page_size=int(request.GET.get('page_size',20))
+            page_size=int(request.GET.get('page_size',20)),
+            addition_serializer_data=addition_serializer_data
         )
 
 
