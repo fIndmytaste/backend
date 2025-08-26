@@ -598,15 +598,6 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 lon2=float(vendor.location_longitude),
             )
 
-            print(
-                f"Vendor location: {vendor.location_latitude}, {vendor.location_longitude}"
-            )
-            print(
-                f"User location: {location_latitude}, {location_longitude}"
-            )
-            print(
-                f"Distance between user and vendor: {round(distance_in_km,3)} km"
-            )
         except Exception as e:
             print(e)
             return bad_request_response(
@@ -641,9 +632,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         # all_ids = list(product_ids.union(variant_ids))
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
-        print(products)
         product_map = {str(product.id): product for product in products}
-        print(product_map)
 
         item_count = 0
 
@@ -917,6 +906,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                     except:pass
 
                     return success_response(
+                        data=OrderSerializer(order).data,
                         message='Payment successful'
                     )
                 else:

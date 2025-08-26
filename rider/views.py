@@ -331,7 +331,8 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
 
 
                 return success_response(
-                    message="Transaction processed successfully"
+                    message="Transaction processed successfully",
+                    data=OrderSerializer(order).data
                 )
             
         except:
