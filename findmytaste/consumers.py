@@ -156,6 +156,7 @@ class DeliveryTrackingConsumer(AsyncWebsocketConsumer):
             'data': event['data']
         }))
 
+
     async def order_status_update(self, event):
         await self.send(text_data=json.dumps({
             'type': 'status_update',

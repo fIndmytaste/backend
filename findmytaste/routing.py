@@ -1,8 +1,3 @@
-# Using Django Channels for real-time tracking updates
-
-# settings.py additions
-
-# routing.py
 from django.urls import re_path
 from . import consumers
 

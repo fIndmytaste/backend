@@ -223,14 +223,14 @@ EMAIL_USE_TLS = True
 
 # APPEND_SLASH = False
 
-# CHANNEL_LAYERS = {
-#     'default': {
-#         'BACKEND': 'channels_redis.core.RedisChannelLayer',
-#         'CONFIG': {
-#             "hosts": [('127.0.0.1', 6379)],
-#         },
-#     },
-# }
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],
+        },
+    },
+}
 # CHANNEL_LAYERS = {
 #     "default": {
 #         "BACKEND": "channels_redis.core.RedisChannelLayer",
@@ -241,18 +241,18 @@ EMAIL_USE_TLS = True
 #     },
 # }
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [{
-                "host": "redis-15216.c263.us-east-1-2.ec2.redns.redis-cloud.com",
-                "port": 15216,
-                "password": os.getenv("REDIS_PASSWORD"),
-            }],
-        },
-    },
-}
+# CHANNEL_LAYERS = {
+#     "default": {
+#         "BACKEND": "channels_redis.core.RedisChannelLayer",
+#         "CONFIG": {
+#             "hosts": [{
+#                 "host": "redis-15216.c263.us-east-1-2.ec2.redns.redis-cloud.com",
+#                 "port": 15216,
+#                 "password": os.getenv("REDIS_PASSWORD"),
+#             }],
+#         },
+#     },
+# }
 
 
 

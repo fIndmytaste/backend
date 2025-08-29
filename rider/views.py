@@ -379,6 +379,11 @@ class OrderPaymentWebhookView(generics.GenericAPIView):
    
 
 class RiderViewSet(viewsets.ModelViewSet):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.channel_layer = get_channel_layer()
+
     queryset = Rider.objects.all()
     serializer_class = RiderSerializer
     permission_classes = [IsAuthenticated]
@@ -412,11 +417,127 @@ class RiderViewSet(viewsets.ModelViewSet):
             longitude = serializer.validated_data['longitude']
             
             rider.update_location(latitude, longitude)
+
+            self.broadcast_location_update(rider, latitude, longitude)
             return success_response(
                 message='Location updated'
             )
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+
+
+
+    def calculate_distance(self, lat1, lon1, lat2, lon2):
+        """Calculate distance between two points in kilometers"""
+        if not all([lat1, lon1, lat2, lon2]):
+            return 0
+            
+        R = 6371  # Earth's radius in kilometers
+        
+        lat1_rad = math.radians(lat1)
+        lon1_rad = math.radians(lon1)
+        lat2_rad = math.radians(lat2)
+        lon2_rad = math.radians(lon2)
+        
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        
+        a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        
+        return R * c
+
+    def calculate_eta(self, distance_km):
+        """Calculate estimated time of arrival in minutes"""
+        print(distance_km)
+        if distance_km == 0:
+            return 0
+        
+        # Assume average speed of 25 km/h for delivery
+        average_speed = 25
+        eta_hours = distance_km / average_speed
+        return int(eta_hours * 60)  # Convert to minutes
+
+
+
+
+    
+    def broadcast_location_update(self, rider, latitude, longitude):
+        """Broadcast rider location to all active order tracking rooms"""
+        active_orders = rider.orders.filter(
+            status__in=['confirmed', 'ready_for_pickup', 'picked_up', 'in_transit', 'near_delivery']
+        )
+        
+        for order in active_orders:
+            room_group_name = f'delivery_{order.id}'
+            
+            # Calculate distance to customer
+            distance_to_customer = self.calculate_distance(
+                latitude, longitude,
+                float(order.delivery_latitude) if order.delivery_latitude else 0,
+                float(order.delivery_longitude) if order.delivery_longitude else 0
+            )
+            
+            # Update order status if near delivery
+            distance_value = distance_to_customer
+            if distance_value < 1:
+                distance_value = distance_value * 1000 
+                distance_type = "meter"
+            else:
+                distance_type = "kilometer"
+
+            # if True:  # 500m threshold
+            if distance_to_customer <= 1.5 and order.status in ['in_transit','picked_up']:  # 1500m threshold
+                order.status = 'near_delivery'
+                order.save()
+                
+                # Send status update
+                async_to_sync(self.channel_layer.group_send)(
+                    room_group_name,
+                    {
+                        'type': 'order_status_update',
+                        'data': convert_decimals({
+                            'order_id': str(order.id),
+                            'status': 'near_delivery',
+                            'distance_to_customer': round(distance_value,3),
+                            'distance_to_customer_type': distance_type,
+                            'estimated_arrival': self.calculate_eta(distance_value if distance_type == "kilometer" else distance_value / 1000),
+                            'estimated_arrival_type':"minutes",
+                            'updated_at': order.updated_at.isoformat()
+                        })
+                    }
+                )
+
+            
+            try:
+                # Send location update
+                async_to_sync(self.channel_layer.group_send)(
+                    room_group_name,
+                    {
+                        'type': 'rider_location_update',
+                        'data': convert_decimals({
+                            'order_id': str(order.id),
+                            'rider_location': {
+                                'latitude': latitude,
+                                'longitude': longitude,
+                                'updated_at': rider.location_updated_at.isoformat()
+                            },
+                            "rider":{
+                                'id':str(rider.id),
+                                'name':rider.user.full_name,
+                                "email":rider.user.email
+                            },
+                            'distance_to_customer': round(distance_value,3),
+                            'distance_to_customer_type': distance_type,
+                            'estimated_arrival': self.calculate_eta(distance_value if distance_type == "kilometer" else distance_value / 1000),
+                            'estimated_arrival_type':"minutes"
+                        })
+                    }
+                )
+            except:pass
+
+
     
 
 
