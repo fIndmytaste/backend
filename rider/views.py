@@ -583,7 +583,7 @@ class RiderViewSet(viewsets.ModelViewSet):
     def picked_up_orders(self, request, pk=None):
         rider = self.get_object()
         active_orders = rider.orders.filter(
-            status__in=['picked_up']
+            status__in=['picked_up','near_delivery']
         )
         return paginate_success_response_with_serializer(
             request,
