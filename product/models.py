@@ -187,6 +187,17 @@ class Order(models.Model):
         ('delivered', 'Delivered'),
         ('canceled', 'Canceled'),
     ]
+    DELIVERY_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('confirmed', 'confirmed'),
+        ('awaiting_rider', 'awaiting_rider'),
+        ('rider_assigned', 'Rider Assigned'),
+        ('ready_for_pickup', 'Ready for Pickup'),
+        ('picked_up', 'Picked Up'),
+        ('in_transit', 'In Transit'),
+        ('delivered', 'Delivered'),
+        ('canceled', 'Canceled'),
+    ]
     ORDER_PAYMENT_METHOD_CHOICES = [
         ('wallet', 'Wallet'),
         ('link', 'Link'),
@@ -221,7 +232,7 @@ class Order(models.Model):
     )
     delivery_status = models.CharField(
         max_length=20,
-        choices=ORDER_STATUS_CHOICES,
+        choices=DELIVERY_STATUS_CHOICES,
         default='pending',
         help_text="The delivery status of the order."
     )
