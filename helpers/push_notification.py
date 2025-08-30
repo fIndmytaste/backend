@@ -479,5 +479,3 @@ def send_promotional_notification(topic: str, title: str, body: str, promo_code:
 
 
 
-
-
