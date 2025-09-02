@@ -591,7 +591,7 @@ class RiderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def available_order(self, request, pk=None):
         rider = self.get_object()
-        querset = Order.objects.filter(rider=None, status='pending')
+        querset = Order.objects.filter(rider=None, status__in=['pending','confirmed'])
         
         return paginate_success_response_with_serializer(
             self.request,
