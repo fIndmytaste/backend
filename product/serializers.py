@@ -117,6 +117,20 @@ class OrderSerializer(serializers.ModelSerializer):
             else:
                 rep['rider'] = None
 
+            if instance.rider:
+                rep['vendor'] = dict(
+                    id=instance.vendor.id,
+                    name=instance.vendor.name,
+                    email=instance.vendor.email,
+                    first_name=instance.vendor.user.first_name,
+                    last_name=instance.vendor.user.last_name,
+                    location_latitude=instance.vendor.location_latitude,
+                    location_longitude=instance.vendor.location_longitude,
+                    address=instance.vendor.address,
+                )
+            else:
+                rep['vendor'] = None
+
 
         if context.get('addition_serializer_data',{}).get('is_vendor'):
             if instance.rider:

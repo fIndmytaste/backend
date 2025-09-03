@@ -19,6 +19,16 @@ class Command(BaseCommand):
         print(rider.user.email)
         print(rider.id)
 
+        orders = Order.objects.filter(payment_status="paid")
+
+        for order in orders:
+            print(order.status)
+            print(order.payment_status)
+            order.rider = rider
+            order.save()
+
+        
+
         return
 
         # return

@@ -426,6 +426,61 @@ class RiderViewSet(viewsets.ModelViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 
+    @action(detail=True, methods=['post'])
+    def update_order_status(self, request, pk=None):
+        rider = self.get_object()
+        order_id = request.data.get('order_id')
+        new_status = request.data.get('status')
+        
+        try:
+            order = Order.objects.get(id=order_id, rider=rider)
+        except Order.DoesNotExist:
+            return bad_request_response(message="Order not found")
+        
+
+        if order.rider != rider:
+            return bad_request_response(message="Order not found")
+        
+
+        # Update order status
+        valid_statuses = [choice[0] for choice in Order.DELIVERY_STATUS_CHOICES]
+        if new_status not in valid_statuses:
+            return bad_request_response(
+                message=f"Invalid status: '{new_status}'. Must be one of: {', '.join(valid_statuses)}"
+            )
+        old_status = order.delivery_status
+        order.delivery_status = new_status
+        order.save()
+
+        
+        # Broadcast status update
+        try:
+            room_group_name = f'delivery_{order.id}'
+            async_to_sync(self.channel_layer.group_send)(
+                room_group_name,
+                {
+                    'type': 'order_status_update',
+                    'data': {
+                        'order_id': str(order.id),
+                        'old_status': old_status,
+                        'new_status': new_status,
+                        'updated_at': order.updated_at.isoformat(),
+                        'rider': {
+                            'id':str(rider.id),
+                            'name': rider.user.full_name if rider.user else None,
+                            'phone': rider.user.phone_number if rider.user else None
+                        }
+                    }
+                }
+            )
+        except:
+            pass
+        
+        return success_response(
+            message=f'Order status updated to {new_status}',
+            data={'order_id': str(order.id), 'status': new_status}
+        )
+
 
 
     def calculate_distance(self, lat1, lon1, lat2, lon2):
@@ -458,8 +513,6 @@ class RiderViewSet(viewsets.ModelViewSet):
         average_speed = 25
         eta_hours = distance_km / average_speed
         return int(eta_hours * 60)  # Convert to minutes
-
-
 
 
     
@@ -537,8 +590,6 @@ class RiderViewSet(viewsets.ModelViewSet):
                 )
             except:pass
 
-
-    
 
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
@@ -1001,21 +1052,7 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found")
         
-        # Validate status transition
-        valid_transitions = {
-            'confirmed': ['ready_for_pickup'],
-            'ready_for_pickup': ['picked_up'],
-            'picked_up': ['in_transit'],
-            'in_transit': ['near_delivery'],
-            'near_delivery': ['delivered']
-        }
-        # print(order.status)
-        # print(order.status)
-        # print(new_status)
-        # print(new_status)
-        # if new_status not in valid_transitions.get(order.status, []):
-        #     return bad_request_response(message="Invalid status transition")
-        
+
         # Update order status
         old_status = order.status
         order.status = new_status
@@ -1033,8 +1070,9 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
                     'new_status': new_status,
                     'updated_at': order.updated_at.isoformat(),
                     'rider': {
-                        'name': rider.user.full_name,
-                        'phone': rider.user.phone_number
+                        'id':str(rider.id),
+                        'name': rider.user.full_name if rider.user else None,
+                        'phone': rider.user.phone_number if rider.user else None
                     }
                 }
             }
@@ -1044,6 +1082,8 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
             message=f'Order status updated to {new_status}',
             data={'order_id': str(order.id), 'status': new_status}
         )
+
+
 
     def calculate_distance(self, lat1, lon1, lat2, lon2):
         """Calculate distance between two points in kilometers"""
@@ -1064,6 +1104,8 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
         
         return R * c
+
+
 
     def calculate_eta(self, distance_km):
         """Calculate estimated time of arrival in minutes"""
