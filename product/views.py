@@ -10,7 +10,7 @@ from django.db.models import F,Q
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 from account.models import Address, User, Vendor, VendorRating
-from account.serializers import VendorRatingSerializer
+from account.serializers import VendorIssueReportSerializer, VendorRatingSerializer
 from helpers.order_utils import calculate_delivery_fee, get_distance_between_two_location
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, FavoriteVendorSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
@@ -435,6 +435,39 @@ class VendorRatingListView(generics.ListAPIView):
         return success_response(
             data=self.serializer_class(self.get_queryset()).data
         )
+    
+class VendorIssueReportView(generics.GenericAPIView):
+    serializer_class = VendorIssueReportSerializer
+    permission_classes = [IsAuthenticated]
+
+    
+    def get_queryset(self):
+        vendor_id = self.kwargs['vendor_id']
+        try:
+            vendor = Vendor.objects.get(id=vendor_id)
+            return VendorRating.objects.filter(vendor=vendor)
+        except Vendor.DoesNotExist:
+            return VendorRating.objects.none()  
+
+    @swagger_auto_schema(
+        operation_description="Get all ratings for a specific vendor.",
+        operation_summary="Retrieve ratings for a vendor.",
+        responses={
+            200: VendorIssueReportSerializer(many=True),
+            404: "Vendor not found.",
+            401: "Authentication required."
+        }
+    )
+    def post(self,request,*args,**kwargs):
+        data = request.data
+        data['user'] = request.user.id
+        serializer = self.serializer_class(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(p)
+        return success_response(
+            data=self.serializer_class(self.get_queryset()).data
+        )
+    
 class OrderListCreateView(generics.ListAPIView):
     """
     View to list and create orders.
@@ -624,12 +657,6 @@ class CustomerCreateOrderView(generics.GenericAPIView):
 
         
         print(product_ids)
-        # variant_ids = {
-        #     variant['product']
-        #     for item in items_data if item.get('variants')
-        #     for variant in item['variants']
-        # }
-        # all_ids = list(product_ids.union(variant_ids))
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
         product_map = {str(product.id): product for product in products}

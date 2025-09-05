@@ -429,3 +429,12 @@ class PushNotificationLog(models.Model):
     def __str__(self):
         return f"{self.title} - {self.user.username}"
 
+
+
+class VendorIssueReporting(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

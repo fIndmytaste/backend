@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db.models import Avg
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from account.models import Address, FCMToken, Notification, Profile, PushNotificationLog, Rider, RiderRating, User, Vendor, VendorRating, VirtualAccount
+from account.models import Address, FCMToken, Notification, Profile, PushNotificationLog, Rider, RiderRating, User, Vendor, VendorIssueReporting, VendorRating, VirtualAccount
 from product.models import Order
 from vendor.serializers import VendorSerializer
 
@@ -283,7 +283,12 @@ class VendorRatingSerializer(serializers.ModelSerializer):
         return value
 
 
-
+class VendorIssueReportSerializer(serializers.ModelSerializer):
+    user = UserSerializer()
+    class Meta:
+        model = VendorIssueReporting 
+        fields = ['id', 'vendor', 'user', 'message', 'created_at']
+        read_only_fields = ['id', 'created_at', 'user'] 
 
 class VirtualAccountSerializer(serializers.ModelSerializer):
     class Meta:
