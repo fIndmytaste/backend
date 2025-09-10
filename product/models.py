@@ -290,7 +290,9 @@ class Order(models.Model):
         self.status = 'confirmed'
         self.save()
         # Create a delivery tracking entry when a rider is assigned
-        DeliveryTracking.objects.create(order=self)
+        try:
+            DeliveryTracking.objects.create(order=self)
+        except:pass
         # notify user of about the accepted order via websoket
         # notify_user_of_accepted_order(self.user, self)
 

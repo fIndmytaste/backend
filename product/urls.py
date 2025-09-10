@@ -50,7 +50,7 @@ urlpatterns = [
     path('order/', OrderListCreateView.as_view(), name='list_order'),
     path('order/create', CustomerCreateOrderView.as_view(), name='create__order'),
     path('order/create-mobile', CustomerCreateOrderMobileView.as_view(), name='create__order_mobile'),
-    path('order/<uuid:order_id>/', OrderDetailView.as_view(), name='get_update_delete_order'),
+    path('order/<uuid:pk>/', OrderDetailView.as_view(), name='get_update_delete_order'),
     path('order/<uuid:order_id>/update', CustomerUpdateOrderView.as_view(), name='customer_update_delete_order'),
 
 

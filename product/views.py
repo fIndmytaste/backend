@@ -978,12 +978,12 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['include_delivery_info'] = True
-        context['requested_by'] = self.request.user.username
+        # context['requested_by'] = self.request.user.username
         return context
     
     def get_queryset(self):
         """Only return orders belonging to the authenticated user."""
-        return Order.objects.filter(user=self.request.user)
+        return Order.objects.all()
 
 
 class UserFavoriteListView(generics.ListAPIView):

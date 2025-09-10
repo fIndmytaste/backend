@@ -844,19 +844,12 @@ class RiderViewSet(viewsets.ModelViewSet):
                 status_code=404
             )
         
-        # if order.status not in ['in_transit', 'near_delivery']:
-        #     return Response({'error': 'Order not in deliverable status'}, status=400)
+        if order.delivery_otp != request.data.get('code'):
+            return bad_request_response(
+                message="Invalid delivery code"
+            )
 
-        # Generate OTP
-        otp = random.randint(10000, 99999)
-        order.delivery_otp = str(otp)
-        order.delivery_otp_expiry = timezone.now() + timedelta(minutes=10)
-        order.save()
-
-        # TODO: Send OTP to customer (SMS/Email)
-        # send_otp_to_customer(order.customer, otp)
-
-        return success_response(message=f'OTP sent: {otp}')
+        return success_response(message="Delivery code verification successful")
 
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])

@@ -14,7 +14,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
 
-        orders =  Order.objects.filter(rider=None, status__in=['pending','confirmed'])
+        orders =  Order.objects.filter(id='f5061579-e5e2-443e-9738-5f6a82dbb5c2')
+        # orders =  Order.objects.filter(rider=None, status__in=['pending','confirmed'])
+        
         for order in orders:
             print(order)
 
