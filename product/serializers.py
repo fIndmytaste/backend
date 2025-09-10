@@ -59,6 +59,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "track_id",
             "delivery_fee",
             "delivery_otp",
+            "location_latitude",
+            "location_longitude",
             "delivery_status",
             'created_at', 
             'updated_at'
@@ -84,6 +86,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
         order = Order.objects.create(user=user, **validated_data)
 
+
         for item_data in items_data:
             try:
                 product = Product.objects.get(id=item_data['product'])
@@ -107,9 +110,22 @@ class OrderSerializer(serializers.ModelSerializer):
         context = self.context
 
         if context.get('include_delivery_info'):
+            if instance.user:
+                rep['user'] = dict(
+                    id=instance.user.id,
+                    full_name=instance.user.full_name,
+                    first_name=instance.user.first_name,
+                    last_name=instance.user.last_name,
+                    email=instance.user.email,
+                    email=instance.user.phone_number,
+                )
+            else:
+                rep['user'] = None
+
             if instance.rider:
                 rep['rider'] = dict(
                     id=instance.rider.id,
+                    full_name=instance.rider.user.full_name,
                     first_name=instance.rider.user.first_name,
                     last_name=instance.rider.user.last_name,
                     email=instance.rider.user.email,
@@ -117,11 +133,12 @@ class OrderSerializer(serializers.ModelSerializer):
             else:
                 rep['rider'] = None
 
-            if instance.rider:
+            if instance.vendor:
                 rep['vendor'] = dict(
                     id=instance.vendor.id,
                     name=instance.vendor.name,
                     email=instance.vendor.email,
+                    full_name=instance.vendor.user.full_name,
                     first_name=instance.vendor.user.first_name,
                     last_name=instance.vendor.user.last_name,
                     location_latitude=instance.vendor.location_latitude,
