@@ -20,7 +20,7 @@ from helpers.response.response_format import paginate_success_response_with_seri
 from drf_yasg.utils import swagger_auto_schema
 from helpers.push_notification import notification_helper
 from wallet.models import Wallet
-
+from rest_framework.exceptions import NotFound
 
 class InternalProductListView(generics.GenericAPIView):
     # permission_classes = [IsAuthenticated]
@@ -961,6 +961,7 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     permission_classes = [IsAuthenticated]
     serializer_class = OrderSerializer
+    lookup_field = "pk"
 
     @swagger_auto_schema(
         operation_description="Retrieve, update, or delete a specific order.",
@@ -974,6 +975,13 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
+
+    def get_object(self):
+        try:
+            # Restrict to current user's orders only (optional)
+            return self.get_queryset().get(pk=self.kwargs.get(self.lookup_field))
+        except Order.DoesNotExist:
+            raise NotFound("Order not found.")
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
