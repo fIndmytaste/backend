@@ -1,0 +1,28 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+  <h1>{{ title }}</h1>
+  <div style="max-width: 600px; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px;">
+    <form method="post">{% csrf_token %}
+      {{ form.as_p }}
+      {% for hidden in form.hidden_fields %}
+        {{ hidden }}
+      {% endfor %}
+      <input type="hidden" name="action" value="send_bulk_notification_to_selected" />
+      <div style="margin-top: 20px;">
+        <input type="submit" name="apply" value="Send Push Notification" class="default" style="background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer;" />
+        <a href="." style="margin-left: 15px; text-decoration: none; color: #6c757d;">Cancel</a>
+      </div>
+    </form>
+  </div>
+  
+  <h3>Review Selected Users ({{ users|length }})</h3>
+  <div style="max-height: 200px; overflow-y: auto; padding: 10px; border: 1px solid #dee2e6; border-radius: 4px; background: white;">
+    <ul style="list-style: none; padding: 0;">
+      {% for user in users %}
+        <li style="padding: 5px 0; border_bottom: 1px solid #eee;">
+          <strong>{{ user.full_name|default:"No Name" }}</strong> &lt;{{ user.email }}&gt;
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endblock %}

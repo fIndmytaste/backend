@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backblaze B2 Upload Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fafafa;
+        }
+        .test-section h3 {
+            color: #555;
+            margin-top: 0;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="file"], input[type="text"], select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.danger {
+            background-color: #dc3545;
+        }
+        button.danger:hover {
+            background-color: #c82333;
+        }
+        button.info {
+            background-color: #17a2b8;
+        }
+        button.info:hover {
+            background-color: #138496;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .loading {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+        .file-info {
+            background-color: #e2e3e5;
+            border: 1px solid #d6d8db;
+            color: #383d41;
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Backblaze B2 Upload Test</h1>
+        
+        <!-- Upload Test Section -->
+        <div class="test-section">
+            <h3>📤 File Upload Test</h3>
+            <form id="uploadForm">
+                <div class="form-group">
+                    <label for="file">Select File:</label>
+                    <input type="file" id="file" name="file" required>
+                </div>
+                <div class="form-group">
+                    <label for="folder">Folder (optional):</label>
+                    <input type="text" id="folder" name="folder" placeholder="e.g., test_uploads">
+                </div>
+                <div class="form-group">
+                    <label for="testType">Test Type:</label>
+                    <select id="testType" name="test_type">
+                        <option value="simple">Simple Upload</option>
+                        <option value="with_folder">Upload with Folder</option>
+                        <option value="custom_name">Custom Name</option>
+                        <option value="with_timestamp">With Timestamp</option>
+                    </select>
+                </div>
+                <button type="submit">Upload File</button>
+            </form>
+            <div id="uploadResult" class="result" style="display: none;"></div>
+        </div>
+
+        <!-- Delete Test Section -->
+        <div class="test-section">
+            <h3>🗑️ File Delete Test</h3>
+            <form id="deleteForm">
+                <div class="form-group">
+                    <label for="deleteFileName">File Name:</label>
+                    <input type="text" id="deleteFileName" name="file_name" placeholder="e.g., test_file.jpg" required>
+                </div>
+                <div class="form-group">
+                    <label for="deleteFileId">File ID:</label>
+                    <input type="text" id="deleteFileId" name="file_id" placeholder="Backblaze file ID" required>
+                </div>
+                <button type="submit" class="danger">Delete File</button>
+            </form>
+            <div id="deleteResult" class="result" style="display: none;"></div>
+        </div>
+
+        <!-- List Files Test Section -->
+        <div class="test-section">
+            <h3>📋 List Files Test</h3>
+            <form id="listForm">
+                <div class="form-group">
+                    <label for="listFolder">Folder (optional):</label>
+                    <input type="text" id="listFolder" name="folder" placeholder="e.g., test_uploads">
+                </div>
+                <div class="form-group">
+                    <label for="maxFiles">Max Files:</label>
+                    <input type="text" id="maxFiles" name="max_files" value="10" placeholder="10">
+                </div>
+                <button type="submit" class="info">List Files</button>
+            </form>
+            <div id="listResult" class="result" style="display: none;"></div>
+        </div>
+
+        <!-- File Info Test Section -->
+        <div class="test-section">
+            <h3>ℹ️ File Info Test</h3>
+            <form id="infoForm">
+                <div class="form-group">
+                    <label for="infoFileId">File ID:</label>
+                    <input type="text" id="infoFileId" name="file_id" placeholder="Backblaze file ID" required>
+                </div>
+                <button type="submit" class="info">Get File Info</button>
+            </form>
+            <div id="infoResult" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        // Upload form handler
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('uploadResult');
+            const formData = new FormData(this);
+            
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result loading';
+            resultDiv.textContent = 'Uploading file...';
+            
+            try {
+                const response = await fetch('/api/test/backblaze/upload/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ Upload Successful!\n\n${JSON.stringify(data, null, 2)}`;
+                    
+                    // Auto-fill delete form with uploaded file info
+                    if (data.file_info) {
+                        document.getElementById('deleteFileName').value = data.file_info.file_name;
+                        document.getElementById('deleteFileId').value = data.file_info.file_id;
+                        document.getElementById('infoFileId').value = data.file_info.file_id;
+                    }
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Upload Failed!\n\n${JSON.stringify(data, null, 2)}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Network Error!\n\n${error.message}`;
+            }
+        });
+
+        // Delete form handler
+        document.getElementById('deleteForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('deleteResult');
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData);
+            
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result loading';
+            resultDiv.textContent = 'Deleting file...';
+            
+            try {
+                const response = await fetch('/api/test/backblaze/delete/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const responseData = await response.json();
+                
+                if (response.ok && responseData.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ Delete Successful!\n\n${JSON.stringify(responseData, null, 2)}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Delete Failed!\n\n${JSON.stringify(responseData, null, 2)}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Network Error!\n\n${error.message}`;
+            }
+        });
+
+        // List form handler
+        document.getElementById('listForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('listResult');
+            const formData = new FormData(this);
+            const params = new URLSearchParams();
+            
+            for (let [key, value] of formData.entries()) {
+                if (value) params.append(key, value);
+            }
+            
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result loading';
+            resultDiv.textContent = 'Listing files...';
+            
+            try {
+                const response = await fetch(`/api/test/backblaze/list/?${params}`);
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ List Successful!\n\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ List Failed!\n\n${JSON.stringify(data, null, 2)}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Network Error!\n\n${error.message}`;
+            }
+        });
+
+        // Info form handler
+        document.getElementById('infoForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('infoResult');
+            const formData = new FormData(this);
+            const params = new URLSearchParams();
+            
+            for (let [key, value] of formData.entries()) {
+                if (value) params.append(key, value);
+            }
+            
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result loading';
+            resultDiv.textContent = 'Getting file info...';
+            
+            try {
+                const response = await fetch(`/api/test/backblaze/info/?${params}`);
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.textContent = `✅ Info Retrieved!\n\n${JSON.stringify(data, null, 2)}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = `❌ Info Failed!\n\n${JSON.stringify(data, null, 2)}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `❌ Network Error!\n\n${error.message}`;
+            }
+        });
+    </script>
+</body>
+</html>

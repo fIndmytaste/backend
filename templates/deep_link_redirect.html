@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Opening FindMyTaste App...</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            max-width: 400px;
+            padding: 40px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: white;
+            border-radius: 20px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        h1 {
+            margin: 0 0 10px;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        
+        p {
+            margin: 0 0 30px;
+            opacity: 0.9;
+            line-height: 1.5;
+        }
+        
+        .buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .btn-primary {
+            background: white;
+            color: #667eea;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .status {
+            margin-top: 20px;
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                margin: 20px;
+                padding: 30px 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🍽️</div>
+        <h1>Opening FindMyTaste</h1>
+        <p>We're trying to open the FindMyTaste app for the best experience.</p>
+        
+        <div class="spinner" id="spinner"></div>
+        <div class="status" id="status">Attempting to open app...</div>
+        
+        <div class="buttons" id="buttons" style="display: none;">
+            <a href="{{ web_url }}" class="btn btn-primary">Continue in Browser</a>
+            <a href="{{ deep_link }}" class="btn btn-secondary">Try App Again</a>
+        </div>
+    </div>
+
+    <script>
+        // Deep link URL
+        const deepLink = "{{ deep_link }}";
+        const webUrl = "{{ web_url }}";
+        
+        // Track if app was opened
+        let appOpened = false;
+        let startTime = Date.now();
+        
+        // Function to attempt opening the app
+        function attemptAppOpen() {
+            // Create a hidden iframe to trigger the deep link
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = deepLink;
+            document.body.appendChild(iframe);
+            
+            // Also try direct window location for some browsers
+            setTimeout(() => {
+                if (!appOpened) {
+                    window.location.href = deepLink;
+                }
+            }, 100);
+            
+            // Clean up iframe
+            setTimeout(() => {
+                document.body.removeChild(iframe);
+            }, 1000);
+        }
+        
+        // Function to show fallback options
+        function showFallback() {
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('status').textContent = "Can't open the app? No problem!";
+            document.getElementById('buttons').style.display = 'block';
+        }
+        
+        // Function to handle visibility change (app switch detection)
+        function handleVisibilityChange() {
+            if (document.hidden) {
+                appOpened = true;
+            }
+        }
+        
+        // Function to handle page focus/blur (app switch detection)
+        function handleBlur() {
+            appOpened = true;
+        }
+        
+        function handleFocus() {
+            if (Date.now() - startTime > 2000 && !appOpened) {
+                showFallback();
+            }
+        }
+        
+        // Set up event listeners
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('blur', handleBlur);
+        window.addEventListener('focus', handleFocus);
+        
+        // Attempt to open app immediately
+        attemptAppOpen();
+        
+        // Show fallback after 3 seconds if app didn't open
+        setTimeout(() => {
+            if (!appOpened) {
+                showFallback();
+            }
+        }, 3000);
+        
+        // Fallback to web after 5 seconds if nothing happened
+        setTimeout(() => {
+            if (!appOpened && !document.getElementById('buttons').style.display) {
+                window.location.href = webUrl;
+            }
+        }, 5000);
+        
+        // Handle Android Chrome intent fallback
+        if (navigator.userAgent.includes('Android') && navigator.userAgent.includes('Chrome')) {
+            const intentUrl = `intent://${deepLink.replace('findmytaste://', '')}#Intent;scheme=findmytaste;package=com.findmytaste.app;S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
+            
+            setTimeout(() => {
+                if (!appOpened) {
+                    window.location.href = intentUrl;
+                }
+            }, 500);
+        }
+    </script>
+</body>
+</html>

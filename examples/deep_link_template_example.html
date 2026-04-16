@@ -1,0 +1,245 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deep Link Template Examples</title>
+    <style>
+        .example-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .deep-link-button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 5px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+        .qr-code {
+            max-width: 200px;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>FindMyTaste Deep Link Examples</h1>
+
+    <!-- Example 1: Basic Deep Links -->
+    <div class="example-section">
+        <h2>1. Basic Deep Links</h2>
+        <p>Simple deep links to different sections of the app:</p>
+        
+        <a href="{% url 'deep_link:deep_link_redirect' 'marketplace' %}" class="deep-link-button">
+            Open Marketplace
+        </a>
+        
+        <a href="{% url 'deep_link:deep_link_redirect' 'profile' %}" class="deep-link-button">
+            View Profile
+        </a>
+        
+        <a href="{% url 'deep_link:deep_link_redirect' 'cart' %}" class="deep-link-button">
+            Open Cart
+        </a>
+    </div>
+
+    <!-- Example 2: Parameterized Deep Links -->
+    <div class="example-section">
+        <h2>2. Parameterized Deep Links</h2>
+        <p>Deep links with parameters for specific content:</p>
+        
+        <!-- Product deep link -->
+        <a href="{% url 'deep_link:product_deep_link' product_id=123 %}" class="deep-link-button">
+            View Product #123
+        </a>
+        
+        <!-- Order deep link -->
+        <a href="{% url 'deep_link:order_deep_link' order_id=456 %}" class="deep-link-button">
+            Track Order #456
+        </a>
+        
+        <!-- Vendor deep link -->
+        <a href="{% url 'deep_link:vendor_deep_link' vendor_id=789 %}" class="deep-link-button">
+            View Restaurant #789
+        </a>
+    </div>
+
+    <!-- Example 3: Smart Mobile Detection -->
+    <div class="example-section">
+        <h2>3. Smart Mobile Detection</h2>
+        <p>Different behavior based on device type:</p>
+        
+        {% if platform_info.is_mobile %}
+            {% if platform_info.is_app %}
+                <p>✅ You're using the FindMyTaste app!</p>
+                <a href="{% url 'deep_link:deep_link_redirect' 'marketplace' %}" class="deep-link-button">
+                    Continue in App
+                </a>
+            {% else %}
+                <p>📱 Mobile browser detected. Get the app for better experience!</p>
+                <a href="/mobile-app-bridge/?route=marketplace&auto_redirect=true" class="deep-link-button">
+                    Open in App
+                </a>
+            {% endif %}
+        {% else %}
+            <p>💻 Desktop browser detected.</p>
+            <a href="{% url 'deep_link:universal_link' 'marketplace' %}" class="deep-link-button">
+                View Web Version
+            </a>
+        {% endif %}
+    </div>
+
+    <!-- Example 4: QR Code Integration -->
+    <div class="example-section">
+        <h2>4. QR Code Integration</h2>
+        <p>QR codes for easy sharing:</p>
+        
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <div>
+                <h4>Marketplace QR Code</h4>
+                <img src="{% url 'deep_link:qr_code' 'marketplace' %}" alt="Marketplace QR Code" class="qr-code">
+                <p><small>Scan to open marketplace</small></p>
+            </div>
+            
+            <div>
+                <h4>Product QR Code</h4>
+                <img src="{% url 'deep_link:qr_code' 'product_detail' %}?product_id=123" alt="Product QR Code" class="qr-code">
+                <p><small>Scan to view product #123</small></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Example 5: Social Sharing -->
+    <div class="example-section">
+        <h2>5. Social Sharing</h2>
+        <p>Share deep links on social media:</p>
+        
+        {% with share_url="https://findmytaste.app/marketplace" share_text="Check out FindMyTaste marketplace!" %}
+        <a href="https://www.facebook.com/sharer/sharer.php?u={{ share_url|urlencode }}" 
+           target="_blank" class="deep-link-button" style="background: #3b5998;">
+            Share on Facebook
+        </a>
+        
+        <a href="https://twitter.com/intent/tweet?url={{ share_url|urlencode }}&text={{ share_text|urlencode }}" 
+           target="_blank" class="deep-link-button" style="background: #1da1f2;">
+            Share on Twitter
+        </a>
+        
+        <a href="https://wa.me/?text={{ share_text|urlencode }} {{ share_url|urlencode }}" 
+           target="_blank" class="deep-link-button" style="background: #25d366;">
+            Share on WhatsApp
+        </a>
+        {% endwith %}
+    </div>
+
+    <!-- Example 6: Conditional App Store Links -->
+    <div class="example-section">
+        <h2>6. App Store Links</h2>
+        <p>Platform-specific app store links:</p>
+        
+        {% if platform_info.platform == 'ios' %}
+            <a href="{% url 'deep_link:app_download' %}?platform=ios" class="deep-link-button" style="background: #000;">
+                Download on App Store
+            </a>
+        {% elif platform_info.platform == 'android' %}
+            <a href="{% url 'deep_link:app_download' %}?platform=android" class="deep-link-button" style="background: #01875f;">
+                Get it on Google Play
+            </a>
+        {% else %}
+            <a href="{% url 'deep_link:app_download' %}?platform=ios" class="deep-link-button" style="background: #000;">
+                Download on App Store
+            </a>
+            <a href="{% url 'deep_link:app_download' %}?platform=android" class="deep-link-button" style="background: #01875f;">
+                Get it on Google Play
+            </a>
+        {% endif %}
+    </div>
+
+    <!-- Example 7: JavaScript Integration -->
+    <div class="example-section">
+        <h2>7. JavaScript Integration</h2>
+        <p>Dynamic deep link generation with JavaScript:</p>
+        
+        <button onclick="shareProduct(123)" class="deep-link-button">
+            Share Product #123
+        </button>
+        
+        <button onclick="openInApp('marketplace')" class="deep-link-button">
+            Smart App Open
+        </button>
+        
+        <div id="share-result" style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px; display: none;"></div>
+    </div>
+
+    <!-- Example 8: Restaurant Table QR -->
+    <div class="example-section">
+        <h2>8. Restaurant Table QR Code</h2>
+        <p>QR code for restaurant table ordering:</p>
+        
+        <div style="text-align: center; padding: 20px; border: 2px dashed #ccc; border-radius: 8px;">
+            <h3>Table #5</h3>
+            <img src="{% url 'deep_link:qr_code' 'vendor_profile' %}?vendor_id=789&table=5" alt="Table QR Code" class="qr-code">
+            <p><strong>Scan to view menu and order</strong></p>
+            <p><small>Restaurant: Delicious Bites</small></p>
+        </div>
+    </div>
+
+    <script>
+        // JavaScript functions for dynamic deep linking
+        function shareProduct(productId) {
+            const shareData = {
+                title: 'Check out this product!',
+                text: `Amazing product on FindMyTaste`,
+                url: `https://findmytaste.app/product/${productId}`
+            };
+            
+            if (navigator.share) {
+                navigator.share(shareData);
+            } else {
+                // Fallback: copy to clipboard
+                navigator.clipboard.writeText(shareData.url).then(() => {
+                    document.getElementById('share-result').innerHTML = 
+                        `<strong>Link copied to clipboard:</strong><br>${shareData.url}`;
+                    document.getElementById('share-result').style.display = 'block';
+                });
+            }
+        }
+        
+        function openInApp(route) {
+            // Detect if user is on mobile
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            
+            if (isMobile) {
+                // Try to open in app first
+                const appUrl = `findmytaste://${route}`;
+                const fallbackUrl = `/mobile-app-bridge/?route=${route}&auto_redirect=true`;
+                
+                // Attempt to open app
+                window.location.href = appUrl;
+                
+                // Fallback to app bridge after delay
+                setTimeout(() => {
+                    window.location.href = fallbackUrl;
+                }, 2000);
+            } else {
+                // Desktop: open universal link
+                window.open(`https://findmytaste.app/${route}`, '_blank');
+            }
+        }
+        
+        // Auto-detect platform and show relevant information
+        document.addEventListener('DOMContentLoaded', function() {
+            const platform = '{{ platform_info.platform|default:"unknown" }}';
+            const isMobile = {% if platform_info.is_mobile %}true{% else %}false{% endif %};
+            const isApp = {% if platform_info.is_app %}true{% else %}false{% endif %};
+            
+            console.log('Platform detected:', { platform: platform, isMobile: isMobile, isApp: isApp });
+        });
+    </script>
+</body>
+</html>

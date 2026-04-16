@@ -1,0 +1,394 @@
+{
+  "customer_notifications": {
+    "account_onboarding": {
+      "sign_up": {
+        "type": "account_status_update",
+        "target": "customer",
+        "title": "Welcome to {{app_name}}!",
+        "body": "🎉 You're all set to start exploring amazing meals near you.",
+        "variables": ["app_name"]
+      },
+      "login": {
+        "type": "account_activity",
+        "target": "customer",
+        "title": "Welcome back, {{name}}!",
+        "body": "We missed you — great to see you again.",
+        "variables": ["name"]
+      },
+      "profile_updated": {
+        "type": "account_status_update",
+        "target": "customer",
+        "title": "Profile updated successfully!",
+        "body": "Keep your info current for faster delivery.",
+        "variables": []
+      },
+      "password_change": {
+        "type": "security_update",
+        "target": "customer",
+        "title": "Password Updated!",
+        "body": "🔐 Your password has been successfully changed.",
+        "variables": []
+      },
+      "security_alert": {
+        "type": "security_alert",
+        "target": "customer",
+        "title": "New Login Detected",
+        "body": "⚠️ Someone just logged into your account from a new device. If this wasn't you, reset your password immediately.",
+        "variables": []
+      }
+    },
+    "orders": {
+      "order_created": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Order Received!",
+        "body": "🛍 Your order #{{order_id}} has been placed successfully.",
+        "variables": ["order_id"]
+      },
+      "vendor_accepted_order": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Order Confirmed!",
+        "body": "Your vendor has accepted your order and is preparing it.",
+        "variables": []
+      },
+      "rider_assigned": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Rider On the Way!",
+        "body": "🚴 {{rider_name}} is heading to pick up your order.",
+        "variables": ["rider_name"]
+      },
+      "order_picked_up": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Order Picked Up!",
+        "body": "Your rider has collected your order and is en route.",
+        "variables": []
+      },
+      "order_delivered": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Delivered!",
+        "body": "🎉 Your order #{{order_id}} has arrived. Enjoy your meal!",
+        "variables": ["order_id"]
+      },
+      "order_cancelled": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Order Cancelled",
+        "body": "We're sorry — your order was cancelled. Refunds (if any) will be processed shortly.",
+        "variables": []
+      },
+      "delivery_delayed": {
+        "type": "order_status_update",
+        "target": "customer",
+        "title": "Slight Delay",
+        "body": "Your delivery might take a little longer than expected. Thanks for your patience!",
+        "variables": []
+      },
+      "payment_failed": {
+        "type": "payment_alert",
+        "target": "customer",
+        "title": "Payment Unsuccessful",
+        "body": "⚠️ Please retry your payment for order #{{order_id}}.",
+        "variables": ["order_id"]
+      }
+    },
+    "promotions_engagement": {
+      "admin_promo": {
+        "type": "promotional",
+        "target": "customer",
+        "title": "🔥 Exclusive Offer",
+        "body": "{{promo_details}}. Don't miss out!",
+        "variables": ["promo_details"]
+      },
+      "referral_reward_earned": {
+        "type": "reward_notification",
+        "target": "customer",
+        "title": "Congrats!",
+        "body": "🎁 You've earned {{reward_details}}. Invite more friends to earn more.",
+        "variables": ["reward_details"]
+      },
+      "festive_seasonal_message": {
+        "type": "promotional",
+        "target": "customer",
+        "title": "Happy Holidays!",
+        "body": "🎄 Treat yourself today with our special deals.",
+        "variables": []
+      }
+    },
+    "feedback_support": {
+      "after_delivery": {
+        "type": "feedback_request",
+        "target": "customer",
+        "title": "How was your order?",
+        "body": "⭐ Rate your experience to help us serve you better.",
+        "variables": []
+      },
+      "support_response": {
+        "type": "support_update",
+        "target": "customer",
+        "title": "Support Update",
+        "body": "Your issue #{{ticket_id}} has been resolved. Thanks for your patience!",
+        "variables": ["ticket_id"]
+      }
+    },
+    "system_security": {
+      "system_maintenance": {
+        "type": "system_notification",
+        "target": "customer",
+        "title": "Scheduled Maintenance",
+        "body": "🛠 Some features may be unavailable from {{start_time}} to {{end_time}}.",
+        "variables": ["start_time", "end_time"]
+      },
+      "location_restriction": {
+        "type": "location_alert",
+        "target": "customer",
+        "title": "Out of Range",
+        "body": "📍 You're currently outside our delivery area. Please update your location to continue.",
+        "variables": []
+      }
+    }
+  },
+  "vendor_notifications": {
+    "account_review": {
+      "sign_up": {
+        "type": "account_status_update",
+        "target": "vendor",
+        "title": "Welcome to {{app_name}}!",
+        "body": "🎉 You're now part of our vendor network. Let's start earning.",
+        "variables": ["app_name"]
+      },
+      "account_approved": {
+        "type": "account_status_update",
+        "target": "vendor",
+        "title": "Account Approved!",
+        "body": "✅ You're ready to start accepting orders.",
+        "variables": []
+      },
+      "account_rejected": {
+        "type": "account_status_update",
+        "target": "vendor",
+        "title": "Account Review Update",
+        "body": "❌ Unfortunately, your account didn't meet our requirements. Please review and try again.",
+        "variables": []
+      },
+      "login": {
+        "type": "account_activity",
+        "target": "vendor",
+        "title": "Welcome back!",
+        "body": "👋 Ready to serve your next customer?",
+        "variables": []
+      },
+      "password_change": {
+        "type": "security_update",
+        "target": "vendor",
+        "title": "Password Updated!",
+        "body": "🔐 Your password was successfully changed.",
+        "variables": []
+      },
+      "security_alert": {
+        "type": "security_alert",
+        "target": "vendor",
+        "title": "New Login Detected",
+        "body": "⚠️ If this wasn't you, reset your password immediately.",
+        "variables": []
+      }
+    },
+    "orders": {
+      "new_order_received": {
+        "type": "order_alert",
+        "target": "vendor",
+        "title": "New Order Alert!",
+        "body": "🛒 Order #{{order_id}} just came in. Review and accept now.",
+        "variables": ["order_id"]
+      },
+      "order_accepted": {
+        "type": "order_status_update",
+        "target": "vendor",
+        "title": "Order Accepted",
+        "body": "You're now preparing order #{{order_id}}.",
+        "variables": ["order_id"]
+      },
+      "order_cancelled_by_customer": {
+        "type": "order_status_update",
+        "target": "vendor",
+        "title": "Order Cancelled",
+        "body": "Customer has cancelled order #{{order_id}}.",
+        "variables": ["order_id"]
+      },
+      "order_picked_up_by_rider": {
+        "type": "order_status_update",
+        "target": "vendor",
+        "title": "Rider Picked Up",
+        "body": "🚴 {{rider_name}} has collected order #{{order_id}}.",
+        "variables": ["rider_name", "order_id"]
+      },
+      "order_delivered": {
+        "type": "order_status_update",
+        "target": "vendor",
+        "title": "Order Completed!",
+        "body": "🎉 Great job — another satisfied customer.",
+        "variables": []
+      },
+      "payment_confirmed": {
+        "type": "payment_notification",
+        "target": "vendor",
+        "title": "Payment Received",
+        "body": "💰 Your earnings for order #{{order_id}} have been added to your wallet.",
+        "variables": ["order_id"]
+      }
+    },
+    "promotions_engagement": {
+      "admin_promo": {
+        "type": "promotional",
+        "target": "vendor",
+        "title": "Vendor Update",
+        "body": "📣 Check out our new vendor incentives and promotions.",
+        "variables": []
+      },
+      "low_sales_reminder": {
+        "type": "engagement",
+        "target": "vendor",
+        "title": "Boost Your Sales!",
+        "body": "⚡ Try offering discounts or updating your menu to attract more buyers.",
+        "variables": []
+      },
+      "new_feature_announcement": {
+        "type": "feature_update",
+        "target": "vendor",
+        "title": "New Tools Added!",
+        "body": "🧰 Explore our latest vendor dashboard features now.",
+        "variables": []
+      },
+      "system_maintenance": {
+        "type": "system_notification",
+        "target": "vendor",
+        "title": "Scheduled Maintenance",
+        "body": "🛠 Certain vendor features may be unavailable from {{start_time}} to {{end_time}}.",
+        "variables": ["start_time", "end_time"]
+      }
+    }
+  },
+  "rider_notifications": {
+    "account_review": {
+      "sign_up": {
+        "type": "account_status_update",
+        "target": "rider",
+        "title": "Welcome to {{app_name}}!",
+        "body": "🚴 You're one step closer to earning with deliveries.",
+        "variables": ["app_name"]
+      },
+      "account_approved": {
+        "type": "account_status_update",
+        "target": "rider",
+        "title": "Account Approved!",
+        "body": "✅ You can now start accepting delivery requests.",
+        "variables": []
+      },
+      "account_rejected": {
+        "type": "account_status_update",
+        "target": "rider",
+        "title": "Account Review Update",
+        "body": "❌ Your account could not be approved. Please review your submission.",
+        "variables": []
+      },
+      "login": {
+        "type": "account_activity",
+        "target": "rider",
+        "title": "Welcome back, {{rider_name}}!",
+        "body": "Time to make some deliveries!",
+        "variables": ["rider_name"]
+      },
+      "password_change": {
+        "type": "security_update",
+        "target": "rider",
+        "title": "Password Updated!",
+        "body": "🔐 Your password has been successfully changed.",
+        "variables": []
+      },
+      "security_alert": {
+        "type": "security_alert",
+        "target": "rider",
+        "title": "New Login Detected",
+        "body": "⚠️ Your account was accessed from a new device. If this wasn't you, reset your password now.",
+        "variables": []
+      }
+    },
+    "orders": {
+      "new_order_available": {
+        "type": "delivery_alert",
+        "target": "rider",
+        "title": "New Delivery Available!",
+        "body": "🚨 Check your app to accept order #{{order_id}}.",
+        "variables": ["order_id"]
+      },
+      "order_accepted": {
+        "type": "delivery_status_update",
+        "target": "rider",
+        "title": "Delivery Accepted!",
+        "body": "📦 You've accepted order #{{order_id}}. Pick it up soon.",
+        "variables": ["order_id"]
+      },
+      "order_picked_up": {
+        "type": "delivery_status_update",
+        "target": "rider",
+        "title": "Picked Up!",
+        "body": "✅ You've collected order #{{order_id}}. Deliver promptly.",
+        "variables": ["order_id"]
+      },
+      "order_delivered": {
+        "type": "delivery_status_update",
+        "target": "rider",
+        "title": "Delivery Completed!",
+        "body": "🎉 Great job, order #{{order_id}} delivered successfully.",
+        "variables": ["order_id"]
+      },
+      "delivery_delayed": {
+        "type": "delivery_reminder",
+        "target": "rider",
+        "title": "Delivery Reminder",
+        "body": "⏳ Ensure timely delivery for a better rating.",
+        "variables": []
+      },
+      "order_cancelled": {
+        "type": "delivery_status_update",
+        "target": "rider",
+        "title": "Order Cancelled",
+        "body": "Customer cancelled order #{{order_id}}. No worries, more orders coming!",
+        "variables": ["order_id"]
+      }
+    },
+    "promotions_engagement": {
+      "admin_promo": {
+        "type": "promotional",
+        "target": "rider",
+        "title": "Top Riders Earn More!",
+        "body": "💰 Check out our latest bonuses and incentives.",
+        "variables": []
+      },
+      "weekly_performance": {
+        "type": "performance_update",
+        "target": "rider",
+        "title": "Weekly Summary",
+        "body": "You completed {{delivery_count}} deliveries this week. Keep it up!",
+        "variables": ["delivery_count"]
+      },
+      "rider_earnings": {
+        "type": "earnings_update",
+        "target": "rider",
+        "title": "Earnings Update!",
+        "body": "💵 You've earned ₦{{amount}} today.",
+        "variables": ["amount"]
+      },
+      "system_maintenance": {
+        "type": "system_notification",
+        "target": "rider",
+        "title": "System Maintenance",
+        "body": "🛠 Certain delivery features will be paused from {{start_time}} to {{end_time}}.",
+        "variables": ["start_time", "end_time"]
+      }
+    }
+  }
+}

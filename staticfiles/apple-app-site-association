@@ -1,0 +1,23 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.findmytaste.app",
+        "paths": [
+          "/dl/*",
+          "/app/*",
+          "/share/*",
+          "/product/*",
+          "/vendor/*",
+          "/order/*"
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "TEAMID.com.findmytaste.app"
+    ]
+  }
+}

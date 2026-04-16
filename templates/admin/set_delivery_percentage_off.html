@@ -1,0 +1,19 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+  <h1>{{ title }}</h1>
+  <form method="post">{% csrf_token %}
+    {{ form.as_p }}
+    {# Render all hidden fields, including _selected_action, using the form's hidden_fields method #}
+    {% for hidden in form.hidden_fields %}
+      {{ hidden }}
+    {% endfor %}
+    <input type="hidden" name="action" value="set_delivery_percentage_off_for_selected" />
+    <input type="submit" name="apply" value="Apply" class="default" />
+  </form>
+  <p>Selected users:</p>
+  <ul>
+    {% for user in users %}
+      <li>{{ user.email }}</li>
+    {% endfor %}
+  </ul>
+{% endblock %}

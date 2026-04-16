@@ -1,0 +1,484 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}FindMyTaste - Mobile App Bridge{% endblock %}</title>
+    
+    <!-- Deep Link Configuration -->
+    {{ deep_link_config|json_script:"deep-link-config" }}
+    <script>
+        const deepLinkConfigData = JSON.parse(document.getElementById('deep-link-config').textContent);
+        window.deepLinkConfig = {
+            appScheme: deepLinkConfigData.app_scheme || 'findmytaste',
+            iosAppStoreUrl: deepLinkConfigData.ios_app_store_url || '',
+            androidPlayStoreUrl: deepLinkConfigData.android_play_store_url || '',
+            enableSmartBanner: deepLinkConfigData.enable_smart_banner || false,
+            enableAutoRedirect: deepLinkConfigData.enable_auto_redirect || false,
+            fallbackDelay: deepLinkConfigData.fallback_delay || 3000,
+            appOpenTimeout: deepLinkConfigData.app_open_timeout || 2000
+        };
+    </script>
+    
+    <!-- Deep Link Styles -->
+    <link rel="stylesheet" href="{% static 'css/deep-link.css' %}">
+    
+    <!-- Meta Tags for App Integration -->
+    <meta name="apple-itunes-app" content="app-id={{ deep_link_config.ios_app_id }}">
+    <meta name="google-play-app" content="app-id={{ deep_link_config.android_package_name }}">
+    
+    <!-- Universal Links / App Links -->
+    <link rel="alternate" href="ios-app://{{ deep_link_config.ios_app_id }}/{{ request.path|slice:'1:' }}">
+    <link rel="alternate" href="android-app://{{ deep_link_config.android_package_name }}/{{ deep_link_config.app_scheme }}/{{ request.path|slice:'1:' }}">
+    
+    {% block extra_head %}{% endblock %}
+</head>
+<body 
+    data-auto-redirect="{% if auto_redirect %}true{% else %}false{% endif %}"
+    data-deep-link-route="{{ deep_link_route|default:'' }}"
+    data-platform="{{ platform }}"
+    data-is-mobile="{{ is_mobile|yesno:'true,false' }}"
+    data-is-app="{{ is_app|yesno:'true,false' }}"
+>
+    <!-- Mobile App Bridge Content -->
+    <div class="mobile-app-bridge">
+        {% block content %}
+        <div class="bridge-container">
+            <div class="bridge-header">
+                <div class="app-icon">🍽️</div>
+                <h1>FindMyTaste</h1>
+                <p>Connecting you to the best food experience</p>
+            </div>
+            
+            <div class="bridge-content">
+                {% if is_app %}
+                    <!-- Already in app -->
+                    <div class="status-message success">
+                        <h2>You're in the app!</h2>
+                        <p>Redirecting you to the requested content...</p>
+                    </div>
+                {% elif is_mobile %}
+                    <!-- Mobile device -->
+                    <div class="status-message">
+                        <h2>Opening in App</h2>
+                        <p>We're redirecting you to the FindMyTaste app for the best experience.</p>
+                        <div class="loading-spinner"></div>
+                    </div>
+                    
+                    <div class="fallback-options" style="display: none;">
+                        <h3>Don't have the app?</h3>
+                        <div class="download-buttons">
+                            {% if platform == 'ios' %}
+                                <a href="{{ deep_link_config.ios_app_store_url }}" class="download-button ios">
+                                    <span class="icon">📱</span>
+                                    Download for iOS
+                                </a>
+                            {% elif platform == 'android' %}
+                                <a href="{{ deep_link_config.android_play_store_url }}" class="download-button android">
+                                    <span class="icon">🤖</span>
+                                    Download for Android
+                                </a>
+                            {% endif %}
+                        </div>
+                        <a href="#" class="continue-web" onclick="continueOnWeb()">Continue on Web</a>
+                    </div>
+                {% else %}
+                    <!-- Desktop -->
+                    <div class="status-message">
+                        <h2>Get the Mobile App</h2>
+                        <p>Scan the QR code below with your mobile device to open in the FindMyTaste app.</p>
+                    </div>
+                    
+                    <div class="qr-code-section">
+                        <div class="qr-code-container">
+                            <img src="{% url 'deep_link:qr_code' deep_link_route %}?{{ request.GET.urlencode }}" 
+                                 alt="QR Code for {{ deep_link_route }}" 
+                                 class="qr-code">
+                        </div>
+                        <p class="qr-instructions">
+                            Point your camera at the QR code to open in the app
+                        </p>
+                    </div>
+                    
+                    <div class="download-section">
+                        <h3>Download the App</h3>
+                        <div class="download-buttons">
+                            <a href="{{ deep_link_config.ios_app_store_url }}" class="download-button ios">
+                                <span class="icon">📱</span>
+                                App Store
+                            </a>
+                            <a href="{{ deep_link_config.android_play_store_url }}" class="download-button android">
+                                <span class="icon">🤖</span>
+                                Google Play
+                            </a>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <div class="bridge-footer">
+                <p>Having trouble? <a href="mailto:support@findmytaste.com">Contact Support</a></p>
+            </div>
+        </div>
+        {% endblock %}
+    </div>
+    
+    <!-- Native App Communication Bridge -->
+    <script>
+        // Mobile App Bridge JavaScript
+        class MobileAppBridge {
+            constructor() {
+                this.isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                this.isAndroid = /Android/.test(navigator.userAgent);
+                this.isApp = this.detectApp();
+                
+                this.init();
+            }
+            
+            detectApp() {
+                const userAgent = navigator.userAgent.toLowerCase();
+                return userAgent.includes('findmytaste') || 
+                       window.webkit?.messageHandlers?.findMyTaste ||
+                       window.Android?.findMyTaste;
+            }
+            
+            init() {
+                if (this.isApp) {
+                    this.handleInAppNavigation();
+                } else {
+                    this.handleWebToAppRedirect();
+                }
+                
+                this.setupNativeBridge();
+            }
+            
+            handleInAppNavigation() {
+                const route = document.body.dataset.deepLinkRoute;
+                const params = this.getUrlParams();
+                
+                if (route) {
+                    this.navigateInApp(route, params);
+                }
+            }
+            
+            handleWebToAppRedirect() {
+                const autoRedirect = document.body.dataset.autoRedirect === 'true';
+                const route = document.body.dataset.deepLinkRoute;
+                
+                if (autoRedirect && route) {
+                    setTimeout(() => {
+                        this.attemptAppRedirect(route);
+                    }, 1000);
+                }
+            }
+            
+            attemptAppRedirect(route) {
+                const params = this.getUrlParams();
+                const deepLink = this.buildDeepLink(route, params);
+                
+                if (this.isIOS) {
+                    this.redirectIOS(deepLink);
+                } else if (this.isAndroid) {
+                    this.redirectAndroid(deepLink);
+                }
+                
+                // Show fallback options after delay
+                setTimeout(() => {
+                    this.showFallbackOptions();
+                }, window.deepLinkConfig.fallbackDelay || 3000);
+            }
+            
+            redirectIOS(deepLink) {
+                // Try Universal Link first
+                const universalLink = deepLink.replace(
+                    `${window.deepLinkConfig.appScheme}://`, 
+                    'https://findmytaste.app/dl/'
+                );
+                
+                window.location.href = universalLink;
+                
+                // Fallback to custom scheme
+                setTimeout(() => {
+                    window.location.href = deepLink;
+                }, 500);
+            }
+            
+            redirectAndroid(deepLink) {
+                // Try intent URL
+                const route = deepLink.replace(`${window.deepLinkConfig.appScheme}://`, '');
+                const intentUrl = `intent://${route}#Intent;scheme=${window.deepLinkConfig.appScheme};package={{ deep_link_config.android_package_name }};end`;
+                
+                try {
+                    window.location.href = intentUrl;
+                } catch (error) {
+                    window.location.href = deepLink;
+                }
+            }
+            
+            buildDeepLink(route, params = {}) {
+                const queryString = new URLSearchParams(params).toString();
+                const paramString = queryString ? `?${queryString}` : '';
+                
+                return `${window.deepLinkConfig.appScheme}://${route}${paramString}`;
+            }
+            
+            navigateInApp(route, params) {
+                if (window.webkit?.messageHandlers?.findMyTaste) {
+                    // iOS
+                    window.webkit.messageHandlers.findMyTaste.postMessage({
+                        action: 'navigate',
+                        route: route,
+                        params: params
+                    });
+                } else if (window.Android?.findMyTaste) {
+                    // Android
+                    window.Android.findMyTaste.navigate(JSON.stringify({
+                        route: route,
+                        params: params
+                    }));
+                }
+            }
+            
+            setupNativeBridge() {
+                // Expose bridge methods to native apps
+                window.webAppBridge = {
+                    navigate: (route, params) => {
+                        window.location.href = `/${route}?${new URLSearchParams(params).toString()}`;
+                    },
+                    
+                    getPageData: () => {
+                        return {
+                            title: document.title,
+                            url: window.location.href,
+                            route: document.body.dataset.deepLinkRoute
+                        };
+                    },
+                    
+                    showMessage: (message, type = 'info') => {
+                        this.showMessage(message, type);
+                    }
+                };
+            }
+            
+            showFallbackOptions() {
+                const fallbackOptions = document.querySelector('.fallback-options');
+                const loadingSpinner = document.querySelector('.loading-spinner');
+                
+                if (fallbackOptions) {
+                    fallbackOptions.style.display = 'block';
+                }
+                
+                if (loadingSpinner) {
+                    loadingSpinner.style.display = 'none';
+                }
+            }
+            
+            showMessage(message, type) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `bridge-message ${type}`;
+                messageDiv.textContent = message;
+                
+                document.body.appendChild(messageDiv);
+                
+                setTimeout(() => {
+                    messageDiv.remove();
+                }, 5000);
+            }
+            
+            getUrlParams() {
+                const params = {};
+                const urlParams = new URLSearchParams(window.location.search);
+                
+                for (const [key, value] of urlParams) {
+                    params[key] = value;
+                }
+                
+                return params;
+            }
+        }
+        
+        // Helper functions
+        function continueOnWeb() {
+            // Hide app redirect UI and continue with web experience
+            document.querySelector('.mobile-app-bridge').style.display = 'none';
+            
+            // Redirect to web version
+            const route = document.body.dataset.deepLinkRoute;
+            if (route) {
+                window.location.href = `/${route}${window.location.search}`;
+            } else {
+                window.location.href = '/';
+            }
+        }
+        
+        // Initialize bridge when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            window.mobileAppBridge = new MobileAppBridge();
+        });
+    </script>
+    
+    <!-- Deep Link JavaScript -->
+    <script src="{% static 'js/deep-link.js' %}"></script>
+    
+    {% block extra_scripts %}{% endblock %}
+    
+    <style>
+        .mobile-app-bridge {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: white;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .bridge-container {
+            max-width: 400px;
+            width: 100%;
+        }
+        
+        .bridge-header .app-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+        
+        .bridge-header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin: 0 0 10px;
+        }
+        
+        .bridge-header p {
+            font-size: 16px;
+            opacity: 0.9;
+            margin: 0 0 40px;
+        }
+        
+        .status-message h2 {
+            font-size: 24px;
+            margin: 0 0 15px;
+        }
+        
+        .status-message p {
+            font-size: 16px;
+            opacity: 0.9;
+            margin: 0 0 30px;
+        }
+        
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 30px;
+        }
+        
+        .download-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        
+        .download-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        .download-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+        
+        .continue-web {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: underline;
+            font-size: 14px;
+        }
+        
+        .qr-code-container {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+            display: inline-block;
+        }
+        
+        .qr-code {
+            max-width: 200px;
+            width: 100%;
+        }
+        
+        .qr-instructions {
+            font-size: 14px;
+            opacity: 0.8;
+            margin: 10px 0 30px;
+        }
+        
+        .bridge-footer {
+            margin-top: 40px;
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        
+        .bridge-footer a {
+            color: white;
+        }
+        
+        .bridge-message {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+        
+        .bridge-message.success {
+            background: #28a745;
+        }
+        
+        .bridge-message.error {
+            background: #dc3545;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @media (max-width: 480px) {
+            .bridge-container {
+                padding: 20px;
+            }
+            
+            .bridge-header h1 {
+                font-size: 28px;
+            }
+            
+            .bridge-header .app-icon {
+                font-size: 48px;
+            }
+        }
+    </style>
+</body>
+</html>

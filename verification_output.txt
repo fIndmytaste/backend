@@ -1,0 +1,8 @@
+Starting Verification with ID: 903c4e49
+Created Order 6bdbb1da-ed1e-4e65-96d8-276682c92210
+Test 1 (Pending, Vendor->Cust): None mins
+❌ Test 1 Failed: Expected ~33, got None
+Test 2 (Picked Up, No Tracking): None mins
+✅ Test 2 Passed (Fallback worked)
+Test 3 (Picked Up, With Tracking): None mins
+❌ Test 3 Failed: Expected ~16, got None
