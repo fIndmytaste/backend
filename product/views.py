@@ -2,6 +2,34 @@
 
 from decimal import Decimal
 import traceback
+
+
+def resolve_validation_error_message(error):
+    detail = getattr(error, 'detail', error)
+
+    if isinstance(detail, (list, tuple)):
+        if not detail:
+            return "Invalid request."
+        return resolve_validation_error_message(detail[0])
+
+    if isinstance(detail, dict):
+        if not detail:
+            return "Invalid request."
+        first_value = next(iter(detail.values()))
+        return resolve_validation_error_message(first_value)
+
+    return str(detail)
+
+
+def validate_vendor_accepting_orders(vendor):
+    if not vendor.is_active:
+        raise ValidationError("This vendor is currently unavailable.")
+
+    if vendor.approval_status != 'approved':
+        raise ValidationError("This vendor is currently unavailable.")
+
+    if not vendor.is_currently_open():
+        raise ValidationError(vendor.get_closed_message())
 from helpers.paystack import PaystackManager
 from helpers.websocket_notification import send_order_accepted_notification_customer
 from rest_framework import generics
@@ -9,13 +37,18 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from drf_yasg import openapi
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from django.db.models import F,Q, Avg,Sum, Count
+from django.db.models import F
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
-from account.models import Address, User, Vendor, VendorRating,VendorIssueReporting
+from account.models import Address, Vendor, VendorRating,VendorIssueReporting
 from account.serializers import VendorIssueReportSerializer, VendorRatingSerializer
 from helpers.order_utils import apply_promo_code, calculate_delivery_fee, get_distance_between_two_location, calculate_rider_fare
+from helpers.vendor_discovery import (
+    approved_vendor_queryset,
+    apply_vendor_search,
+    nearest_first_vendors,
+    resolve_request_coordinates,
+)
 from product.promo_models import PromoCode
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, FavoriteVendorSerializer, OrderSerializer, PromoCodeSerializer, RatingSerializer
 from vendor.models import MarketPlace
@@ -78,6 +111,11 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
 
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=resolve_validation_error_message(exc))
+
         # Address logic (reuse from existing view)
         query_location_latitude = request.GET.get('latitude') or request.data.get('latitude') 
         query_location_longitude = request.GET.get('longitude') or request.data.get('longitude') 
@@ -121,19 +159,21 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             address = query_address
 
         print('Vendor location:', vendor.location_latitude, vendor.location_longitude )
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
-        except Exception as e:
-            print(e)
-            return bad_request_response(message=f"Failed to calculate delivery fee. {str(e)}")
+        is_in_marketplace = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(message=f"Failed to calculate delivery fee. {str(e)}")
 
-        if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
-            return bad_request_response(message="This vendor cannot deliver to your location (distance too far).")
+            if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
+                return bad_request_response(message="This vendor cannot deliver to your location (distance too far).")
 
         # --- Main logic for ProductVariant/OrderItemVariant ---
         main_product_ids = [item['product'] for item in items_data]
@@ -383,7 +423,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 )
 
         except ValidationError as ve:
-            return bad_request_response(message=str(ve))
+            return bad_request_response(message=resolve_validation_error_message(ve))
         except Exception as e:
             import traceback
             traceback_str = traceback.format_exc()
@@ -459,123 +499,46 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
     queryset = Vendor.objects.all()
 
     def get_queryset(self,category_id=None):
+        if not category_id:
+            return Vendor.objects.none()
 
+        try:
+            system_category = SystemCategory.objects.get(id=category_id)
+        except SystemCategory.DoesNotExist:
+            return Vendor.objects.none()
 
-        # category_id
-        user = self.request.user
+        is_marketplace_category = system_category.name.lower() == 'marketplace'
 
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-
-        is_marketplace = False
-
-        if category_id:
-            try:
-                system_category = SystemCategory.objects.get(id=category_id)
-                if system_category.name.lower() == 'marketplace':
-                    is_marketplace = True
-            except Exception as e:
-                return Vendor.objects.none()
-
-        if not is_marketplace:
-            if not user or not isinstance(user, User):
-                if any([not query_location_latitude, not query_location_latitude]):
-                    return Vendor.objects.none()  
-
-            print(f"User: {user}, query_location_latitude: {query_location_latitude}, query_location_longitude: {query_location_longitude}")
-            if not query_location_latitude or not query_location_longitude:
-                # user_address, _ = Address.objects.get_or_create(user=user)
-                user_address = Address.objects.filter(user=user).order_by('-updated_at').first()
-                if not user_address:
-                    return Vendor.objects.none()
-                user_lat = user_address.location_latitude
-                user_lon = user_address.location_longitude
-            else:
-                user_lat = query_location_latitude
-                user_lon = query_location_longitude
-
-            if user_lat is None or user_lon is None:
-                return Vendor.objects.none()
-
-            try:
-                user_lat = float(user_lat)
-                user_lon = float(user_lon)
-            except ValueError:
-                return Vendor.objects.none()
-            
-        
-            queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
-                product_count__gt=0,
-                location_latitude__isnull=False,
-                location_longitude__isnull=False
-            )
-
-
-
-            if category_id:
-                queryset = queryset.filter(category=system_category)
-
-
-
+        if is_marketplace_category:
+            marketplace_vendor_ids = MarketPlace.objects.filter(
+                is_active=True
+            ).values_list('vendors', flat=True)
+            base_queryset = Vendor.objects.filter(id__in=marketplace_vendor_ids)
         else:
-            marketplaces = MarketPlace.objects.all()
+            base_queryset = Vendor.objects.filter(category=system_category)
 
-            if not marketplaces.exists():
-                return Vendor.objects.none()
-
-            vendor_ids = []
-
-            for marketplace in marketplaces:
-                vendor_ids.extend(
-                    marketplace.vendors.values_list('id', flat=True)
-                )
-
-            queryset = Vendor.objects.filter(id__in=vendor_ids).distinct()
-
-                
-                # system_category = None
-                
-            
-        
-
-        # Filter by search param
         search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
-            )
 
-        if category_id:return queryset
-            
+        queryset = approved_vendor_queryset(
+            base_queryset,
+            require_products=True,
+            require_location=False,
+        )
+        queryset = apply_vendor_search(queryset, search)
 
-        def distance_check(vendor):
-            try:
-                dist = get_distance_between_two_location(
-                    lat1=user_lat,
-                    lon1=user_lon,
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude)
-                )
-                return (vendor, dist)
-            except (TypeError, ValueError):
-                return (vendor, None)
+        # Marketplace system category: no location, just search + rating sort
+        if is_marketplace_category:
+            return queryset.order_by('-rating', 'name')
 
-        vendors_within_5km = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
-            for future in as_completed(futures):
-                vendor, dist = future.result()
-                if dist is not None and dist <= vendor.delivery_radius_km:
-                    vendors_within_5km.append(vendor)
+        # All other system categories: nearest-first when location provided
+        user_lat, user_lon = resolve_request_coordinates(self.request)
+        if user_lat is None or user_lon is None:
+            return queryset.order_by('-rating', 'name')
 
-        return vendors_within_5km
+        return nearest_first_vendors(queryset, user_lat, user_lon, enforce_delivery_radius=False)
 
 
-    
+
 
     @swagger_auto_schema(
         operation_description="Get vendors by system category",
@@ -975,32 +938,34 @@ class GetDeliveryFeeView(generics.GenericAPIView):
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
 
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=resolve_validation_error_message(exc))
+
         # Get user address
-        
+
         location_latitude = None
-        location_longitude = None 
+        location_longitude = None
         is_in_marketplace = MarketPlace.objects.filter(vendors=vendor).exists()
 
-        
         if any([not query_location_latitude, not query_location_longitude]):
             user_address = Address.objects.filter(user=user, is_active=True).first()
             if not user_address:
                 return bad_request_response(
                     message="Please set your delivery address in settings before placing an order."
                 )
-            
+
             if any([not user_address.location_latitude, not user_address.location_longitude]):
                 return bad_request_response(
                     message="Please set your delivery address in settings."
                 )
-            
+
             location_latitude = user_address.location_latitude
-            location_longitude = user_address.location_longitude 
+            location_longitude = user_address.location_longitude
         else:
             location_latitude = query_location_latitude
             location_longitude = query_location_longitude
-        
-
 
         if not is_in_marketplace:
             try:
@@ -1016,7 +981,7 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                     message="Failed to calculate delivery fee."
                 )
 
-            if distance_in_km is None or distance_in_km > 5: # using 5km range
+            if distance_in_km is None or distance_in_km > float(vendor.delivery_radius_km):
                 return bad_request_response(
                     message=f"This vendor cannot deliver to your location (distance too far). Distance {round(distance_in_km or 0 ,2)} km"
                 )
@@ -1085,6 +1050,11 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
 
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=str(exc))
+
         # Get user address
         
 
@@ -1112,26 +1082,26 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             location_longitude = query_location_longitude
             address = query_address
         
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
+        is_in_marketplace_vendor = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace_vendor:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(
+                    message="Failed to calculate delivery fee."
+                )
 
-        except Exception as e:
-            print(e)
-            return bad_request_response(
-                message="Failed to calculate delivery fee."
-            )
+            if distance_in_km is None or distance_in_km > 5:
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location (distance too far)."
+                )
 
-
-        if distance_in_km is None or distance_in_km > 5:
-            return bad_request_response(
-                message="This vendor cannot deliver to your location (distance too far)."
-            )
-                
         product_ids = []
         for item in items_data:
             if item.get('variants') not in [[],'',False,None]:
@@ -1265,7 +1235,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 )
 
         except ValidationError as ve:
-            return bad_request_response(message=str(ve))
+            return bad_request_response(message=resolve_validation_error_message(ve))
 
         except Exception as e:
             traceback_str = traceback.format_exc()
@@ -1330,23 +1300,25 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
             location_longitude = query_location_longitude
             address = query_address
         
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
-        except Exception as e:
-            print(e)
-            return bad_request_response(
-                message="Failed to calculate delivery fee."
-            )
+        is_in_marketplace_mobile = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace_mobile:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(
+                    message="Failed to calculate delivery fee."
+                )
 
-        if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
-            return bad_request_response(
-                message="This vendor cannot deliver to your location (distance too far)."
-            )
+            if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location (distance too far)."
+                )
 
         product_ids = []
         for item in items_data:
@@ -1674,6 +1646,11 @@ class AddToFavoritesView(generics.GenericAPIView):
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found.")
 
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=resolve_validation_error_message(exc))
+
         # Check if the product is already in the user's favorites
         if UserFavoriteVendor.objects.filter(user=request.user, vendor=vendor).exists():
             return bad_request_response(message="Product is already in your favorites.")
@@ -1755,23 +1732,25 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
             location_longitude = query_location_longitude
             address = query_address
 
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
-        except Exception as e:
-            print(e)
-            return bad_request_response(
-                message="Failed to calculate delivery fee."
-            )
+        is_in_marketplace_update = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace_update:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(
+                    message="Failed to calculate delivery fee."
+                )
 
-        if distance_in_km is None or distance_in_km > 5:
-            return bad_request_response(
-                message="This vendor cannot deliver to your location (distance too far)."
-            )
+            if distance_in_km is None or distance_in_km > 5:
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location (distance too far)."
+                )
 
         product_ids = []
         for item in items_data:
@@ -1895,7 +1874,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                 )
 
         except ValidationError as ve:
-            return bad_request_response(message=str(ve))
+            return bad_request_response(message=resolve_validation_error_message(ve))
 
         except Exception as e:
             traceback_str = traceback.format_exc()

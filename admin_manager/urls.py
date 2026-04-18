@@ -36,6 +36,10 @@ urlpatterns = [
     path('product/<uuid:product_id>/', admin_product_view.AdminProductDetailView.as_view(), name='admin_product_view-product_detail'),
     path('product/<uuid:product_id>/ratings', admin_product_view.AdminProductRatingListView.as_view(), name='admin_product_view-product-rating-list'),
 
+    # marketplace settings
+    path('marketplaces/', admin_vendor_view.AdminMarketPlaceListView.as_view(), name='admin-marketplace-list'),
+    path('marketplaces/<uuid:marketplace_id>/', admin_vendor_view.AdminMarketPlaceDetailView.as_view(), name='admin-marketplace-detail'),
+
     # vendor
     path('marketplace-vendors', admin_vendor_view.AdminMarketPlaceVendorListView.as_view(), name='admin_product_view-AdminMarketPlaceVendorListView'),
     path('marketplace-vendors/<uuid:vendor_id>', admin_vendor_view.AdminVendorDetailView.as_view(), name='admin_product_view-AdminMarketPlaceVendorListView'),

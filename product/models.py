@@ -663,6 +663,7 @@ class Order(models.Model):
         ('delivered', 'Delivered'),
         ('canceled', 'Canceled'),
         ('rejected', 'Rejected'),
+        ('failed', 'Failed'),
         ('payment_failed', 'Payment Failed'),
     ]
     DELIVERY_STATUS_CHOICES = [

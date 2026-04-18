@@ -241,6 +241,8 @@ class DeliveryConfig:
     @classmethod
     def _parse_time_string(cls, time_str: str) -> time:
         """Parse time string in HH:MM format to time object."""
+        if isinstance(time_str, time):
+            return time_str
         try:
             hour, minute = map(int, time_str.split(':'))
             return time(hour, minute)
@@ -333,7 +335,20 @@ class DeliveryConfig:
 
     @property
     def PEAK_HOURS(self):
-        return self.get_config('peak_hours')
+        peak_hours = self.get_config('peak_hours', [])
+        normalized = []
+
+        for peak in peak_hours or []:
+            if not isinstance(peak, dict):
+                continue
+
+            normalized.append({
+                **peak,
+                "start": self._parse_time_string(peak.get("start", "00:00")),
+                "end": self._parse_time_string(peak.get("end", "00:00")),
+            })
+
+        return normalized
 
     @property
     def TRAFFIC_MULTIPLIERS(self):
@@ -388,6 +403,9 @@ DeliveryConfig = DeliveryConfig()
 # -------------------------
 
 
+_local_distance_cache: dict = {}
+
+
 def get_distance_between_two_location(lat1: float, lon1: float, lat2: float, lon2: float) -> Optional[float]:
     """
     Calculate distance between two GPS coordinates using Haversine formula.
@@ -400,13 +418,16 @@ def get_distance_between_two_location(lat1: float, lon1: float, lat2: float, lon
         Distance in kilometers or None if calculation fails
     """
     cache_key = f"distance_{lat1}_{lon1}_{lat2}_{lon2}"
+
+    # 1. Check process-local cache first (zero network overhead, survives Redis outages)
+    if cache_key in _local_distance_cache:
+        return _local_distance_cache[cache_key]
+
+    # 2. Check Redis/Django cache
     cached_distance = cache.get(cache_key)
     if cached_distance is not None:
+        _local_distance_cache[cache_key] = cached_distance
         return cached_distance
-
-    logger.info(
-        f"Calculating distance from ({lat1}, {lon1}) to ({lat2}, {lon2})")
-    print(f"Calculating distance from ({lat1}, {lon1}) to ({lat2}, {lon2})")
 
     try:
         # Validate input types and ranges
@@ -431,13 +452,13 @@ def get_distance_between_two_location(lat1: float, lon1: float, lat2: float, lon
         a = sin(dlat / 2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2)**2
         c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
-        distance = 6371 * c  # Earth's radius in km
+        distance = round(6371 * c, 2)  # Earth's radius in km
 
-        # Cache the result
+        # Store in both local and distributed cache
+        _local_distance_cache[cache_key] = distance
         cache.set(cache_key, distance, DeliveryConfig.ROUTE_CACHE_TIMEOUT)
 
-        logger.info(f"Calculated distance: {distance:.2f} km")
-        return round(distance, 2)
+        return distance
 
     except Exception as e:
         logger.error(f"Error calculating distance: {e}")
@@ -522,8 +543,8 @@ def get_peak_hour_info(current_time: Optional[datetime] = None) -> Dict[str, Any
                 "is_peak": True,
                 "period_name": peak["name"],
                 "multiplier": peak["multiplier"],
-                "start_time": peak["start"].strftime("%H:%M"),
-                "end_time": peak["end"].strftime("%H:%M")
+                "start_time": peak_start.strftime("%H:%M"),
+                "end_time": peak_end.strftime("%H:%M")
             }
 
     return {
@@ -644,14 +665,7 @@ def _simulate_traffic_conditions(origin: Tuple[float, float], destination: Tuple
         for peak in DeliveryConfig.PEAK_HOURS
     )
 
-    if is_peak:
-        levels = ["moderate", "heavy", "severe"]
-        weights = [0.4, 0.4, 0.2]
-    else:
-        levels = ["free_flow", "light", "moderate"]
-        weights = [0.5, 0.3, 0.2]
-
-    level = random.choices(levels, weights=weights)[0]
+    level = "moderate" if is_peak else "light"
 
     return {
         "level": level,
@@ -753,11 +767,8 @@ def _fetch_openweather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
 
 
 def _simulate_weather_conditions() -> Dict[str, Any]:
-    """Simulate weather conditions"""
-    conditions = ['clear', 'cloudy', 'light_rain', 'heavy_rain']
-    weights = [0.6, 0.2, 0.15, 0.05]  # Bias towards good weather
-
-    condition = random.choices(conditions, weights=weights)[0]
+    """Use a neutral weather fallback when live weather is unavailable."""
+    condition = 'clear'
 
     return {
         "condition": condition,
@@ -822,14 +833,7 @@ def _simulate_rider_availability() -> Dict[str, Any]:
         for peak in DeliveryConfig.PEAK_HOURS
     )
 
-    if is_peak:
-        levels = ["low", "critical", "normal"]
-        weights = [0.5, 0.3, 0.2]
-    else:
-        levels = ["high", "normal", "low"]
-        weights = [0.4, 0.5, 0.1]
-
-    level = random.choices(levels, weights=weights)[0]
+    level = "low" if is_peak else "normal"
 
     return {
         "level": level,
@@ -854,14 +858,22 @@ def calculate_vendor_specific_fee(vendor_id: str, base_fee: float) -> Dict[str, 
         Dictionary with vendor fee information
     """
     try:
-        # This would integrate with your vendor model
-        # from vendor.models import Vendor
-        # vendor = Vendor.objects.get(id=vendor_id)
+        from account.models import Vendor
 
-        # For now, simulate vendor-specific multipliers
-        vendor_types = ['electronics', 'restaurant', 'grocery']
-        vendor_type = random.choice(vendor_types)
-        multiplier = DeliveryConfig.VENDOR_TYPE_MULTIPLIERS[vendor_type]
+        vendor = Vendor.objects.filter(id=vendor_id).select_related('category').first()
+        vendor_type = "restaurant"
+        if vendor and vendor.category and vendor.category.name:
+            category_name = vendor.category.name.lower()
+            if "pharmacy" in category_name:
+                vendor_type = "pharmacy"
+            elif "grocery" in category_name or "market" in category_name:
+                vendor_type = "grocery"
+            elif "electronic" in category_name:
+                vendor_type = "electronics"
+            elif "fragile" in category_name:
+                vendor_type = "fragile_items"
+
+        multiplier = DeliveryConfig.VENDOR_TYPE_MULTIPLIERS.get(vendor_type, 1.0)
 
         adjusted_fee = base_fee * multiplier
 
@@ -896,18 +908,11 @@ def calculate_loyalty_discount(customer_id: str, base_fee: float) -> Dict[str, A
         Dictionary with loyalty discount information
     """
     try:
-        # This would integrate with your customer/loyalty system
-        # from customer.models import Customer, LoyaltyProgram
-        # customer = Customer.objects.get(id=customer_id)
-
-        # Simulate customer loyalty level
-        loyalty_levels = ['bronze', 'silver', 'gold', 'platinum']
-        weights = [0.4, 0.3, 0.2, 0.1]  # Most customers are bronze
-        loyalty_level = random.choices(loyalty_levels, weights=weights)[0]
-
-        discount_percentage = DeliveryConfig.LOYALTY_DISCOUNTS[loyalty_level]
-        discount_amount = base_fee * discount_percentage
-        discounted_fee = base_fee - discount_amount
+        # Keep the fallback deterministic until a real loyalty source exists.
+        loyalty_level = "none"
+        discount_percentage = 0.0
+        discount_amount = 0.0
+        discounted_fee = base_fee
 
         return {
             "loyalty_level": loyalty_level,
@@ -1071,8 +1076,15 @@ def apply_surge_pricing(base_fee: float, traffic_data: Dict[str, Any], weather_d
 # -------------------------
 
 
-def apply_promo_code(promo_code: str, user_obj: Any, order_value: float, distance_km: float, 
-                     vendor_obj: Any = None, delivery_fee: float = 0.0) -> Dict[str, Any]:
+def apply_promo_code(
+    promo_code: str,
+    user_obj: Any,
+    order_value: float,
+    distance_km: float,
+    vendor_obj: Any = None,
+    delivery_fee: float = 0.0,
+    current_fee: float = None,
+) -> Dict[str, Any]:
     """
     Standalone helper to apply a promo code and return the discount and metadata.
     """
@@ -1080,7 +1092,9 @@ def apply_promo_code(promo_code: str, user_obj: Any, order_value: float, distanc
     from django.utils import timezone
     from django.db.models import Q
 
-    if not delivery_fee:
+    effective_delivery_fee = current_fee if current_fee is not None else delivery_fee
+
+    if not effective_delivery_fee:
         raise ValueError("Delivery fee must be provided to apply promo code")
     
     promo_info = {
@@ -1128,10 +1142,10 @@ def apply_promo_code(promo_code: str, user_obj: Any, order_value: float, distanc
             
             discount_amount = 0.0
             if promo_obj.promo_type == 'free_delivery':
-                discount_amount = delivery_fee
+                discount_amount = effective_delivery_fee
                 promo_info["affects_delivery"] = True
             elif promo_obj.promo_type == 'discounted_delivery':
-                discount_amount = min(delivery_fee, float(promo_obj.value))
+                discount_amount = min(effective_delivery_fee, float(promo_obj.value))
                 promo_info["affects_delivery"] = True
             elif promo_obj.promo_type == 'fixed_amount':
                 discount_amount = float(promo_obj.value)
@@ -1198,8 +1212,8 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
                 # Try to get vendor's system category via vendor_id
                 from account.models import Vendor
                 vendor = Vendor.objects.filter(id=vendor_id).first()
-                if vendor and vendor.system_category and vendor.system_category.delivery_percentage_off is not None:
-                    delivery_discount_percentage = vendor.system_category.delivery_percentage_off
+                if vendor and vendor.category and vendor.category.delivery_percentage_off is not None:
+                    delivery_discount_percentage = vendor.category.delivery_percentage_off
             except Exception:
                 pass
         # 3. Platform/global

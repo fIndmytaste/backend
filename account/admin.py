@@ -190,33 +190,40 @@ class AddressAdmin(admin.ModelAdmin):
 @admin.register(Vendor)
 class VendorAdmin(admin.ModelAdmin):
     list_display = (
-        'name', 'user', 'email', 'phone_number',
-        'country', 'state', 'city', 'address', 'location_latitude', 'location_longitude',
-        'is_active', 'is_featured', 'rating', 'commission_percentage', 'approval_status'
+        'name', 'email', 'city', 'state',
+        'is_active', 'is_featured', 'is_marketplace', 'approval_status',
+        'rating', 'commission_percentage', 'marketplace_delivery_fee',
     )
-    list_filter = ('is_active', 'is_featured', 'country', 'category', 'approval_status')
+    list_filter = ('is_active', 'is_featured', 'is_marketplace', 'country', 'category', 'approval_status')
     search_fields = ('name', 'email', 'user__email', 'city', 'state')
     readonly_fields = ('created_at', 'updated_at')
-    # fieldsets = (
-    #     ('Vendor Info', {
-    #         'fields': ('user', 'name', 'email', 'phone_number', 'description', 'thumbnail', 'logo', 'category')
-    #     }),
-    #     ('Location', {
-    #         'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude')
-    #     }),
-    #     ('Bank Details', {
-    #         'fields': ('bank_account', 'bank_account_name', 'bank_name')
-    #     }),
-    #     ('Schedule', {
-    #         'fields': ('open_day', 'close_day', 'open_time', 'close_time')
-    #     }),
-    #     ('Status', {
-    #         'fields': ('is_active', 'is_featured', 'rating')
-    #     }),
-    #     ('Timestamps', {
-    #         'fields': ('created_at', 'updated_at')
-    #     }),
-    # )
+    fieldsets = (
+        ('Vendor Info', {
+            'fields': ('user', 'name', 'email', 'phone_number', 'description',
+                       'thumbnail_url', 'logo_url', 'category', 'is_marketplace'),
+        }),
+        ('Location', {
+            'fields': ('country', 'state', 'city', 'address',
+                       'location_latitude', 'location_longitude', 'delivery_radius_km'),
+        }),
+        ('Schedule', {
+            'fields': ('open_day', 'close_day', 'open_time', 'close_time',
+                       'estimated_delivery_time'),
+        }),
+        ('Financials', {
+            'description': 'marketplace_delivery_fee overrides the marketplace base fee for this vendor only.',
+            'fields': ('commission_percentage', 'marketplace_delivery_fee',
+                       'starting_delivery_price',
+                       'bank_account', 'bank_account_name', 'bank_name'),
+        }),
+        ('Status', {
+            'fields': ('is_active', 'is_featured', 'rating',
+                       'approval_status', 'approval_comment'),
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+        }),
+    )
 
 @admin.register(VendorRating)
 class VendorRatingAdmin(admin.ModelAdmin):

@@ -1,76 +1,86 @@
-# management/commands/populate_redis_geo.py
+"""
+Management command: populate_redis_geo
+
+Rebuilds the Redis geo index ("vendors:geo") from the database.
+Run this once on first deploy. After that, vendor saves keep it in sync
+automatically via the post_save signal in vendor/signals.py.
+
+Usage:
+    python manage.py populate_redis_geo
+"""
+
 from django.core.management.base import BaseCommand
-from account.models import User, Vendor
-import redis
 from django.conf import settings
 
+from account.models import Vendor
+
+
 class Command(BaseCommand):
-    help = 'Populate Redis with vendor geospatial data for location-based queries'
+    help = 'Rebuild the Redis geo index for vendor proximity queries.'
 
     def handle(self, *args, **kwargs):
         try:
-            # Get Redis connection
-            if 'LOCATION' in settings.CACHES['default']:
-                r = redis.Redis.from_url(settings.CACHES['default']['LOCATION'])
-            else:
-                self.stdout.write(self.style.ERROR('Redis not configured. Please check your settings.'))
-                return
+            import redis as redis_lib
+        except ImportError:
+            self.stderr.write(self.style.ERROR('redis-py is not installed. Run: pip install redis'))
+            return
 
-            # Test Redis connection
+        location = settings.CACHES.get('default', {}).get('LOCATION')
+        if not location:
+            self.stderr.write(self.style.ERROR('No Redis LOCATION found in CACHES["default"]. Check settings.'))
+            return
+
+        try:
+            r = redis_lib.Redis.from_url(location, socket_connect_timeout=5)
             r.ping()
-            self.stdout.write(self.style.SUCCESS('✅ Connected to Redis successfully'))
+            self.stdout.write(self.style.SUCCESS('Connected to Redis.'))
+        except Exception as exc:
+            self.stderr.write(self.style.ERROR(f'Cannot connect to Redis: {exc}'))
+            return
 
-            # Get all vendors with location data and approved status
-            vendors = Vendor.objects.filter(
-                location_latitude__isnull=False,
-                location_longitude__isnull=False,
-                approval_status='approved'
-            )
+        # Only index vendors that should be discoverable:
+        # approved, active, and with valid coordinates.
+        vendors = Vendor.objects.filter(
+            approval_status='approved',
+            is_active=True,
+            location_latitude__isnull=False,
+            location_longitude__isnull=False,
+        ).exclude(
+            location_latitude='',
+            location_longitude='',
+        )
 
-            if not vendors.exists():
-                self.stdout.write(self.style.WARNING('No approved vendors with location data found.'))
-                return
+        total = vendors.count()
+        if total == 0:
+            self.stdout.write(self.style.WARNING('No eligible vendors found. Index not changed.'))
+            return
 
-            # Clear existing vendor geo data
-            r.delete("vendors:geo")
-            self.stdout.write(self.style.SUCCESS('Cleared existing vendor geo data'))
+        self.stdout.write(f'Indexing {total} vendors...')
 
-            # Populate Redis with vendor locations
-            added_count = 0
-            for vendor in vendors:
-                try:
-                    longitude = float(vendor.location_longitude)
-                    latitude = float(vendor.location_latitude)
-                    
-                    # Add vendor to Redis geospatial index using execute_command
-                    # Format: GEOADD key longitude latitude member
-                    result = r.execute_command("GEOADD", "vendors:geo", longitude, latitude, str(vendor.id))
-                    
-                    if result:
-                        added_count += 1
-                        self.stdout.write(f'Added vendor {vendor.id}: {vendor.name} at ({longitude}, {latitude})')
-                    
-                except (ValueError, TypeError) as e:
-                    self.stdout.write(
-                        self.style.WARNING(f'Skipped vendor {vendor.id}: Invalid coordinates - {e}')
-                    )
-                    continue
+        # Rebuild atomically: delete old key, pipeline all GEOADDs, execute at once.
+        pipe = r.pipeline()
+        pipe.delete('vendors:geo')
 
-            self.stdout.write(
-                self.style.SUCCESS(f'✅ Successfully populated Redis with {added_count} vendors!')
-            )
+        added = 0
+        skipped = 0
+        for vendor in vendors.iterator():
+            try:
+                lon = float(vendor.location_longitude)
+                lat = float(vendor.location_latitude)
+            except (TypeError, ValueError):
+                self.stdout.write(
+                    self.style.WARNING(f'  Skipped {vendor.id} ({vendor.name}): invalid coordinates.')
+                )
+                skipped += 1
+                continue
 
-            # Verify the data
-            total_vendors = r.zcard("vendors:geo")
-            self.stdout.write(
-                self.style.SUCCESS(f'✅ Redis now contains {total_vendors} vendors in geospatial index')
-            )
+            pipe.execute_command('GEOADD', 'vendors:geo', lon, lat, str(vendor.id))
+            added += 1
 
-        except redis.ConnectionError:
-            self.stdout.write(
-                self.style.ERROR('❌ Failed to connect to Redis. Please check your Redis configuration.')
-            )
-        except Exception as e:
-            self.stdout.write(
-                self.style.ERROR(f'❌ Error populating Redis: {e}')
-            )
+        pipe.execute()
+
+        count = r.zcard('vendors:geo')
+        self.stdout.write(self.style.SUCCESS(
+            f'\nDone. {added} vendors indexed, {skipped} skipped. '
+            f'Redis "vendors:geo" now has {count} entries.'
+        ))

@@ -12,8 +12,17 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'track_id')
 
+    def _get_whole_price(self, instance: Order) -> float:
+        """items_total + delivery_fee - promo_discount.
+        Commission is baked into item prices — service_fee is not added separately.
+        """
+        from decimal import Decimal
+        items_total = float(instance.total_amount or Decimal('0.00'))
+        delivery_fee = float(instance.delivery_fee or Decimal('0.00'))
+        promo_discount = float(instance.promo_discount_amount or Decimal('0.00'))
+        return max(0.0, items_total + delivery_fee - promo_discount)
 
-    def to_representation(self, instance:Order):
+    def to_representation(self, instance: Order):
         addition_serializer_data = self.context.get('addition_serializer_data')
         
         # Call super to get default representation
@@ -54,6 +63,14 @@ class OrderSerializer(serializers.ModelSerializer):
                     
                 ) for item in OrderItem.objects.filter(order=instance)]
                 representation['items'] = items
+
+        # Overwrite total_amount with the customer-facing grand total
+        # (items + delivery - discount). Commission is already inside item prices.
+        representation['total_amount'] = self._get_whole_price(instance)
+        representation['items_total'] = float(instance.total_amount or 0)
+        representation['service_fee'] = 0
+        representation['delivery_fee'] = float(instance.delivery_fee or 0)
+        representation['discount_amount'] = float(instance.promo_discount_amount or 0)
 
         return representation
 

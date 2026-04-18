@@ -129,27 +129,35 @@ class ProductSerializer(serializers.ModelSerializer):
     def to_representation(self, instance: Product):
         data = super().to_representation(instance)
 
-        context = self.context        
+        context = self.context
         addition_data = context.get('addition_serializer_data') or {}
         is_vendor = context.get('is_vendor', False) or addition_data.get('is_vendor', False)
-        # --- Images ---
-        images = ProductImage.objects.filter(product=instance)
+
+        # --- Images: use prefetched cache if available ---
+        if hasattr(instance, '_prefetched_objects_cache') and 'productimage_set' in instance._prefetched_objects_cache:
+            images = instance.productimage_set.all()
+        else:
+            images = ProductImage.objects.filter(product=instance)
         data['images'] = ProductImageSerializer(images, many=True, context=self.context).data
 
         product_variant = []
 
-
         data['price'] = float(instance.get_price_with_commission()) if not is_vendor else float(instance.price)
 
-        # --- New Structure: Use ProductVariantCategory ---
-        variant_categories = ProductVariantCategory.objects.filter(parent_product=instance)
-        # print(variant_categories)
-        if variant_categories.exists():
+        # --- New Structure: Use ProductVariantCategory (prefetched via productvariantcategory_set) ---
+        if hasattr(instance, '_prefetched_objects_cache') and 'productvariantcategory_set' in instance._prefetched_objects_cache:
+            variant_categories = list(instance.productvariantcategory_set.all())
+        else:
+            variant_categories = list(ProductVariantCategory.objects.filter(parent_product=instance))
+
+        if variant_categories:
             for category in variant_categories:
-                child_products = ProductVariant.objects.filter(category=category, is_active=True)
-                # print(child_products)
-                # child_products = category.child_products.all()
-                if not child_products.exists():
+                if hasattr(category, '_prefetched_objects_cache') and 'variants' in category._prefetched_objects_cache:
+                    child_products = [v for v in category.variants.all() if v.is_active]
+                else:
+                    child_products = list(ProductVariant.objects.filter(category=category, is_active=True))
+
+                if not child_products:
                     continue
 
                 variants_list = [
@@ -173,21 +181,21 @@ class ProductSerializer(serializers.ModelSerializer):
 
         else:
             # --- Old Structure: Fallback to parent relationship + variant_category_name ---
-            variants_qs = Product.objects.filter(parent=instance)
+            if hasattr(instance, '_prefetched_objects_cache') and 'variants' in instance._prefetched_objects_cache:
+                variants_qs = list(instance.variants.all())
+            else:
+                variants_qs = list(Product.objects.filter(parent=instance))
 
             grouped_variants = defaultdict(list)
             for variant in variants_qs:
                 key = variant.variant_category_name.strip() if variant.variant_category_name else "Uncategorized"
-                
-                price = 0
-                if is_vendor:
-                    price = float(variant.price)
-                else:
-                    float(variant.get_price_with_commission()) if hasattr(variant, 'get_price_with_commission') else variant.price
+                price = float(variant.price) if is_vendor else (
+                    float(variant.get_price_with_commission()) if hasattr(variant, 'get_price_with_commission') else float(variant.price)
+                )
                 grouped_variants[key].append({
                     "id": variant.id,
                     "name": variant.name,
-                    "price":price,
+                    "price": price,
                 })
 
             product_variant = [
@@ -204,64 +212,68 @@ class ProductSerializer(serializers.ModelSerializer):
         # Clean up unused keys
         data.pop('variants', None)
 
-        # --- Vendor Category ---
+        # --- Vendor Category: use select_related cache ---
         try:
             data['product_vendor_category'] = {
                 'id': instance.vendor.category.id,
                 'name': instance.vendor.category.name,
             }
-        except Exception as e:
-            print(e)
+        except Exception:
             data['product_vendor_category'] = None
 
-        
         return data
 
 
     def get_discounted_price(self, obj):
         return obj.get_discounted_price()
-    
+
     def get_price_with_commission(self, obj):
         """Return the product price including commission"""
         return float(obj.get_price_with_commission())
-    
+
     def get_commission_amount(self, obj):
         """Return the commission amount for this product"""
         return float(obj.calculate_commission())
 
     def get_average_rating(self, obj):
-        """Calculate and return the average rating for the product"""
-        avg_rating = obj.ratings.aggregate(avg_rating=Avg('rating'))['avg_rating']
-        return round(float(avg_rating), 2) if avg_rating else 0.00
+        """Calculate average rating using prefetched ratings"""
+        ratings = obj.ratings.all()
+        if not ratings:
+            return 0.00
+        total = sum(r.rating for r in ratings)
+        return round(total / len(ratings), 2)
 
     def get_total_ratings(self, obj):
-        """Return total number of ratings for the product"""
-        return obj.ratings.count()
+        """Return total number of ratings using prefetched data"""
+        return len(obj.ratings.all())
 
     def get_rating_distribution(self, obj):
-        """Return rating distribution (1-5 stars count)"""
-        distribution = {}
-        for i in range(1, 6):
-            count = obj.ratings.filter(rating__gte=i, rating__lt=i+1).count()
-            distribution[f'{i}_star'] = count
+        """Return rating distribution using prefetched ratings"""
+        ratings = obj.ratings.all()
+        distribution = {f'{i}_star': 0 for i in range(1, 6)}
+        for r in ratings:
+            star = min(5, max(1, int(r.rating)))
+            distribution[f'{star}_star'] += 1
         return distribution
 
     def get_recent_reviews(self, obj):
-        """Return the 5 most recent reviews with comments"""
-        recent_ratings = obj.ratings.filter(
-            comment__isnull=False
-        ).exclude(comment='').order_by('-created_at')[:5]
-        return RatingSerializer(recent_ratings, many=True).data
+        """Return the 5 most recent reviews with comments using prefetched data"""
+        ratings = obj.ratings.all()
+        recent = sorted(
+            [r for r in ratings if r.comment],
+            key=lambda r: r.created_at,
+            reverse=True,
+        )[:5]
+        return RatingSerializer(recent, many=True).data
 
     def get_user_rating(self, obj):
-        """Return the current user's rating for this product if they have rated it"""
+        """Return the current user's rating using prefetched data"""
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            try:
-                user_rating = obj.ratings.get(user=request.user)
-                return RatingSerializer(user_rating).data
-            except Rating.DoesNotExist:
-                return None
+            ratings = obj.ratings.all()
+            for r in ratings:
+                if r.user_id == request.user.id:
+                    return RatingSerializer(r).data
         return None
 
     def get_has_purchased(self, obj):
@@ -270,6 +282,143 @@ class ProductSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             return False  # Placeholder - implement based on your order model
         return False
+
+
+class BuyerVendorProductSerializer(serializers.ModelSerializer):
+    discounted_price = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+    total_ratings = serializers.SerializerMethodField()
+    product_variant = serializers.SerializerMethodField()
+    product_vendor_category = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = [
+            'id',
+            'name',
+            'description',
+            'price',
+            'system_category',
+            'category',
+            'stock',
+            'is_active',
+            'is_delete',
+            'is_featured',
+            'views',
+            'discounted_price',
+            'images',
+            'average_rating',
+            'total_ratings',
+            'product_variant',
+            'product_vendor_category',
+        ]
+
+    def get_discounted_price(self, obj):
+        return obj.get_discounted_price()
+
+    def get_images(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'productimage_set' in obj._prefetched_objects_cache:
+            images = obj.productimage_set.all()
+        else:
+            images = ProductImage.objects.filter(product=obj, is_active=True)
+        return ProductImageSerializer(images, many=True, context=self.context).data
+
+    def get_average_rating(self, obj):
+        annotated = getattr(obj, 'average_rating_value', None)
+        if annotated is not None:
+            return round(float(annotated), 2)
+        ratings = obj.ratings.all()
+        if not ratings:
+            return 0.0
+        total = sum(r.rating for r in ratings)
+        return round(total / len(ratings), 2)
+
+    def get_total_ratings(self, obj):
+        annotated = getattr(obj, 'total_ratings_value', None)
+        if annotated is not None:
+            return int(annotated)
+        return len(obj.ratings.all())
+
+    def get_product_variant(self, instance: Product):
+        context = self.context
+        addition_data = context.get('addition_serializer_data') or {}
+        is_vendor = context.get('is_vendor', False) or addition_data.get('is_vendor', False)
+        product_variant = []
+
+        if hasattr(instance, '_prefetched_objects_cache') and 'productvariantcategory_set' in instance._prefetched_objects_cache:
+            variant_categories = list(instance.productvariantcategory_set.all())
+        else:
+            variant_categories = list(ProductVariantCategory.objects.filter(parent_product=instance))
+
+        if variant_categories:
+            for category in variant_categories:
+                if hasattr(category, '_prefetched_objects_cache') and 'variants' in category._prefetched_objects_cache:
+                    child_products = [v for v in category.variants.all() if v.is_active]
+                else:
+                    child_products = list(ProductVariant.objects.filter(category=category, is_active=True))
+
+                if not child_products:
+                    continue
+
+                product_variant.append({
+                    "id": category.id,
+                    "variant_category_name": category.category_name,
+                    "select_at_least_one": category.select_at_least_one_variant_enabled,
+                    "allow_multiple_quantity": category.allow_multiple_quantity,
+                    "allow_multiple_variant_selection": category.allow_multiple_variant_selection,
+                    "max_quantity_per_variant": category.max_quantity_per_variant,
+                    "variants": [
+                        {
+                            "id": prod.id,
+                            "name": prod.name,
+                            "price": float(prod.price) if is_vendor else float(prod.get_price_with_commission()),
+                        }
+                        for prod in child_products
+                    ]
+                })
+            return product_variant
+
+        if hasattr(instance, '_prefetched_objects_cache') and 'variants' in instance._prefetched_objects_cache:
+            variants_qs = list(instance.variants.all())
+        else:
+            variants_qs = list(Product.objects.filter(parent=instance, is_active=True))
+
+        grouped_variants = defaultdict(list)
+        for variant in variants_qs:
+            key = variant.variant_category_name.strip() if variant.variant_category_name else "Uncategorized"
+            price = float(variant.price) if is_vendor else float(variant.get_price_with_commission())
+            grouped_variants[key].append({
+                "id": variant.id,
+                "name": variant.name,
+                "price": price,
+            })
+
+        return [
+            {
+                "variant_category_name": category,
+                "select_at_least_one": instance.select_at_least_one_variant_enabled,
+                "variants": variants_list
+            }
+            for category, variants_list in grouped_variants.items()
+        ]
+
+    def get_product_vendor_category(self, instance):
+        try:
+            return {
+                'id': instance.vendor.category.id,
+                'name': instance.vendor.category.name,
+            }
+        except Exception:
+            return None
+
+    def to_representation(self, instance: Product):
+        data = super().to_representation(instance)
+        context = self.context
+        addition_data = context.get('addition_serializer_data') or {}
+        is_vendor = context.get('is_vendor', False) or addition_data.get('is_vendor', False)
+        data['price'] = float(instance.price) if is_vendor else float(instance.get_price_with_commission())
+        return data
 
 
     def create(self, validated_data):
@@ -581,7 +730,62 @@ class VendorSerializer(serializers.ModelSerializer):
             return False
         except:
             return False
-             
+
+    def to_representation(self, instance):
+        from product.models import Order
+        from django.db.models import Avg, F, ExpressionWrapper, DurationField
+        from django.utils import timezone
+        from datetime import timedelta
+
+        data = super().to_representation(instance)
+
+        if MarketPlace.objects.filter(vendors=instance).exists():
+            # Marketplace: fixed 24-48 hr window — use the vendor's stored value if
+            # admin has customised it, otherwise default to 48 h.
+            stored = instance.estimated_delivery_time
+            if stored and stored > timedelta(hours=1):
+                # Already customised by admin — keep it as-is.
+                pass
+            else:
+                data['estimated_delivery_time'] = '2 days, 0:00:00'
+            data['is_marketplace_vendor'] = True
+        else:
+            # Regular vendor: compute average actual delivery duration from the
+            # last 50 delivered orders that have both timestamps.
+            recent_orders = (
+                Order.objects
+                .filter(
+                    vendor=instance,
+                    status='delivered',
+                    actual_delivery_time__isnull=False,
+                    actual_pickup_time__isnull=False,
+                )
+                .order_by('-actual_delivery_time')[:50]
+            )
+
+            durations = []
+            for order in recent_orders:
+                try:
+                    duration = order.actual_delivery_time - order.actual_pickup_time
+                    if timedelta(minutes=5) <= duration <= timedelta(hours=6):
+                        durations.append(duration)
+                except Exception:
+                    pass
+
+            if durations:
+                avg_seconds = sum(d.total_seconds() for d in durations) / len(durations)
+                # Round up to nearest 5 minutes
+                rounded = timedelta(seconds=round(avg_seconds / 300) * 300)
+                # Format as Django DurationField string HH:MM:SS
+                total_secs = int(rounded.total_seconds())
+                hours, rem = divmod(total_secs, 3600)
+                minutes, secs = divmod(rem, 60)
+                data['estimated_delivery_time'] = f'{hours}:{minutes:02d}:{secs:02d}'
+            # else: keep the stored value from the model (admin can set it manually)
+
+            data['is_marketplace_vendor'] = False
+
+        return data
 
 
 class VendorRatingCreateSerializer(serializers.ModelSerializer):

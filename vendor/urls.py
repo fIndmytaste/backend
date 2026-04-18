@@ -29,14 +29,14 @@ from .views import (
 
 urlpatterns = [
     # Vendor Endpoints
-    path('', AllVendorsView.as_view(), name='vendor_register_business'),
-    path('all', AllVendorsView.as_view(), name='AllVendorsNewView'),
-    path('cached', AllVendorsNewCachedView.as_view(), name='AllVendorsNewViewCached'),
-    path('internal-all', InternalAllVendorsNewView.as_view(), name='InternalAllVendorsNewView'),
+    path('', AllVendorsView.as_view(), name='vendor_list'),
+    path('all/', AllVendorsView.as_view(), name='AllVendorsNewView'),
+    path('cached/', AllVendorsNewCachedView.as_view(), name='AllVendorsNewViewCached'),
+    path('internal-all/', InternalAllVendorsNewView.as_view(), name='InternalAllVendorsNewView'),
     path('register-business/', VendorRegisterBusinessView.as_view(), name='vendor_register_business'),
-    path('category/', VendorCategoryView.as_view(), name='add_vendor_category'), 
-    path('hot-picks', HotPickVendorsView.as_view(), name='HotPickVendorsView'),
-    path('featured', FeaturedVendorsView.as_view(), name='FeaturedVendorsView'),
+    path('category/', VendorCategoryView.as_view(), name='add_vendor_category'),
+    path('hot-picks/', HotPickVendorsView.as_view(), name='HotPickVendorsView'),
+    path('featured/', FeaturedVendorsView.as_view(), name='FeaturedVendorsView'),
     path('product/', ProductsListCreateView.as_view(), name='list_add_product'),
     path('product/<uuid:product_id>/', ProductGetUpdateDeleteView.as_view(), name='edit_delete_product'),
     path('orders', VendorOrderListView.as_view(), name='order_list'),
@@ -52,8 +52,8 @@ urlpatterns = [
     path('user/favorites/', UserFavoriteListView.as_view(), name='user_favorites_list'),
     path('user/favorites/add/', AddToFavoritesView.as_view(), name='add_to_favorites'),
 
-    path('<vendor_id>', GetVendorDetailView.as_view(), name='GetVendorDetailView'),
-    path('<vendor_id>/products', BuyerVendorProductListView.as_view(), name='order_list'),
+    path('<vendor_id>/', GetVendorDetailView.as_view(), name='GetVendorDetailView'),
+    path('<vendor_id>/products/', BuyerVendorProductListView.as_view(), name='BuyerVendorProductListView'),
     path('<uuid:vendor_id>/rate', VendorRatingCreateView.as_view(), name='vendor-rate'),
     path('<uuid:vendor_id>/rate/', VendorRatingCreateView.as_view(), name='vendor-rate'),
     path('<uuid:vendor_id>/ratings', VendorRatingListView.as_view(), name='vendor-ratings'),

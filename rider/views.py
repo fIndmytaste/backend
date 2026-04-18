@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
-from account.models import Guarantor, Rider, RiderRating, User, MODE_OF_TRANSPORTATION
+from account.models import Guarantor, Notification, Rider, RiderRating, User, MODE_OF_TRANSPORTATION
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import DeliveryTracking, Order, DeclinedOrder
@@ -216,55 +216,181 @@ class MakeOrderPayment(generics.GenericAPIView):
 class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
     permission_classes = []
 
+    def _mark_order_payment_failed(self, transaction, response_payload=None, reference=None):
+        if not transaction:
+            return None
+
+        order = transaction.order
+        if order:
+            should_notify = order.status != 'failed' or order.payment_status != Order.FAILED
+            order.payment_status = Order.FAILED
+            order.status = 'failed'
+            order.save(update_fields=['payment_status', 'status', 'updated_at'])
+
+            if should_notify:
+                Notification.objects.create(
+                    user=order.user,
+                    title="Payment Verification Failed",
+                    content=f"Payment for order #{order.track_id} could not be verified. The order has been moved to your history as failed.",
+                )
+
+                try:
+                    notification_helper.send_to_user_async(
+                        user=order.user,
+                        title="Payment Verification Failed",
+                        body=f"Payment for order #{order.track_id} could not be verified.",
+                        data={
+                            "type": "order_status_update",
+                            "order_id": str(order.id),
+                            "status": "failed",
+                            "order_status": order.status,
+                            "track_id": str(order.track_id),
+                        },
+                    )
+                except Exception as exc:
+                    print(f"Customer payment failure notification error: {exc}")
+
+        transaction.status = 'failed'
+        transaction.response_data = response_payload
+        if reference:
+            transaction.external_reference = reference
+        transaction.description = 'Order Payment Failed'
+        transaction.save()
+        return order
+
+    def _find_transaction(self, reference):
+        if not reference:
+            return None
+
+        return WalletTransaction.objects.filter(
+            external_reference=reference
+        ).select_related('order').first()
+
+    def _find_transaction_from_metadata(self, metadata):
+        transaction_ref = metadata.get('reference')
+        if transaction_ref:
+            transaction = WalletTransaction.objects.filter(
+                id=transaction_ref
+            ).select_related('order').first()
+            if transaction:
+                return transaction
+
+        order_ref = (
+            metadata.get('order_id')
+            or metadata.get('order_reference')
+            or metadata.get('reference_code')
+        )
+        if order_ref:
+            transaction = WalletTransaction.objects.filter(
+                order_id=order_ref
+            ).select_related('order').first()
+            if transaction:
+                return transaction
+
+        custom_fields = metadata.get('custom_fields') or []
+        for field in custom_fields:
+            variable_name = field.get('variable_name')
+            value = field.get('value')
+            if variable_name in {'order_id', 'order_reference'} and value:
+                transaction = WalletTransaction.objects.filter(
+                    order_id=value
+                ).select_related('order').first()
+                if transaction:
+                    return transaction
+
+        return None
+
     def post(self, request):
         data = request.data
         try:
             reference = data.get('reference')
+            transaction_reference = data.get('transaction_reference')
+            trx_extist = self._find_transaction(reference)
+            if not trx_extist and transaction_reference:
+                trx_extist = WalletTransaction.objects.filter(
+                    id=transaction_reference
+                ).select_related('order').first()
+            if not trx_extist and reference:
+                trx_extist = WalletTransaction.objects.filter(
+                    order_id=reference
+                ).select_related('order').first()
 
             # verify transaction with paytsack
             klass = PaystackManager()
             success, response = klass.verify_transaction(reference)
             if not success:
-                # print(response)
+                failed_order = self._mark_order_payment_failed(
+                    trx_extist,
+                    response_payload=response,
+                    reference=reference,
+                )
                 return bad_request_response(
-                    message="Transaction not doest exist"
+                    message="Payment verification failed",
+                    data=OrderSerializer(failed_order).data if failed_order else None,
                 )
 
             metadata = response.get('data', {}).get('metadata', {})
             # print(json.dumps(response.get('data',{})))
             print(response.get('data', {}).get('metadata', {}))
+            trx_extist = trx_extist or self._find_transaction_from_metadata(metadata)
             if not metadata:
+                failed_order = self._mark_order_payment_failed(
+                    trx_extist,
+                    response_payload=response,
+                    reference=reference,
+                )
                 return bad_request_response(
-                    message="Transaction doest not exist"
+                    message="Transaction does not exist",
+                    data=OrderSerializer(failed_order).data if failed_order else None,
                 )
 
             transaction_ref = metadata.get('reference')
+            if transaction_ref:
+                try:
+                    trx_extist = WalletTransaction.objects.get(id=transaction_ref)
+                except:
+                    trx_extist = trx_extist or self._find_transaction_from_metadata(metadata)
 
-            try:
-
-                trx_extist = WalletTransaction.objects.get(id=transaction_ref)
-            except:
+            if not trx_extist:
+                failed_order = self._mark_order_payment_failed(
+                    trx_extist,
+                    response_payload=response,
+                    reference=reference,
+                )
                 return bad_request_response(
-                    message="Transaction doest not exist"
+                    message="Transaction does not exist",
+                    data=OrderSerializer(failed_order).data if failed_order else None,
                 )
 
             if trx_extist.external_reference:
                 if trx_extist.external_reference != reference:
+                    failed_order = self._mark_order_payment_failed(
+                        trx_extist,
+                        response_payload=response,
+                        reference=reference,
+                    )
                     return bad_request_response(
-                        message="Transaction doest not exist"
+                        message="Transaction does not exist",
+                        data=OrderSerializer(failed_order).data if failed_order else None,
                     )
 
 
             if response['data'].get('status') == 'success':
                 #  confirm the amount paid
+                order = trx_extist.order
                 amount_paid = (response['data']['amount']) / 100
                 if float(amount_paid) != float(trx_extist.amount):
+                    failed_order = self._mark_order_payment_failed(
+                        trx_extist,
+                        response_payload=response,
+                        reference=reference,
+                    )
                     return bad_request_response(
-                        message="Transaction not doest exist. Amount paid does not match"
+                        message="Transaction does not exist. Amount paid does not match",
+                        data=OrderSerializer(failed_order).data if failed_order else None,
                     )
 
                 if trx_extist.status != 'completed':
-                    order = trx_extist.order
                     order.payment_status = Order.PAID
                     order.save()
 
@@ -347,6 +473,15 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     message="Transaction processed successfully",
                     data=OrderSerializer(order).data
                 )
+            failed_order = self._mark_order_payment_failed(
+                trx_extist,
+                response_payload=response,
+                reference=reference,
+            )
+            return bad_request_response(
+                message="Payment failed",
+                data=OrderSerializer(failed_order).data if failed_order else None,
+            )
 
         except:
             return bad_request_response(
@@ -800,6 +935,9 @@ class RiderViewSet(viewsets.ModelViewSet):
                     "event": "order_accepted",
                     "order_id": str(order.id),
                     "order_status": order.status,
+                    "rider_id": str(rider.id),
+                    "rider_name": rider.user.full_name or '',
+                    "rider_phone": rider.user.phone_number or '',
                 }
             )
             print(f"Customer order acceptance notification result: {result}")
@@ -908,7 +1046,12 @@ class RiderViewSet(viewsets.ModelViewSet):
                     'data': {
                         'order_id': str(order.id),
                         'status': 'rider_assigned',
-                        'message': 'Order status updated!'
+                        'message': f'A rider has been assigned to your order #{order.track_id}!',
+                        'rider': {
+                            'id': str(rider.id),
+                            'name': rider.user.full_name,
+                            'phone': rider.user.phone_number,
+                        },
                     }
                 }
             )

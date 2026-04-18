@@ -289,9 +289,85 @@ class Vendor(models.Model):
         blank=True,
         help_text="Custom commission rate for this vendor. Leave blank to use category or platform default."
     )
+    marketplace_delivery_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Override base delivery fee for this vendor when in a marketplace. Leave blank to use marketplace default."
+    )
 
     def __str__(self):
         return f"{self.name} ({self.user.email})"
+
+    def is_currently_open(self):
+        if not self.is_active or self.approval_status != 'approved':
+            return False
+
+        if not self.open_time or not self.close_time:
+            return True
+
+        day_names = [
+            'Monday',
+            'Tuesday',
+            'Wednesday',
+            'Thursday',
+            'Friday',
+            'Saturday',
+            'Sunday',
+        ]
+
+        now = timezone.localtime()
+        current_day_index = now.weekday()
+        current_time = now.time()
+
+        try:
+            open_day_index = day_names.index(self.open_day)
+            close_day_index = day_names.index(self.close_day)
+        except ValueError:
+            return True
+
+        def day_in_range(day_index):
+            if open_day_index <= close_day_index:
+                return open_day_index <= day_index <= close_day_index
+            return day_index >= open_day_index or day_index <= close_day_index
+
+        today_ok = day_in_range(current_day_index)
+
+        open_minutes = self.open_time.hour * 60 + self.open_time.minute
+        close_minutes = self.close_time.hour * 60 + self.close_time.minute
+        now_minutes = current_time.hour * 60 + current_time.minute
+
+        if open_minutes == close_minutes:
+            return today_ok
+
+        # Overnight window, e.g. 20:00 -> 03:00
+        if close_minutes < open_minutes:
+            if today_ok and now_minutes >= open_minutes:
+                return True
+
+            yesterday_index = (current_day_index - 1) % 7
+            yesterday_ok = day_in_range(yesterday_index)
+            return yesterday_ok and now_minutes < close_minutes
+
+        return today_ok and open_minutes <= now_minutes < close_minutes
+
+    def get_closed_message(self):
+        if not self.is_active:
+            return "This vendor is currently unavailable."
+
+        if self.approval_status != 'approved':
+            return "This vendor is currently unavailable."
+
+        if self.is_currently_open():
+            return ""
+
+        if self.open_time and self.close_time:
+            open_label = self.open_time.strftime('%I:%M %p')
+            close_label = self.close_time.strftime('%I:%M %p')
+            return f"{self.name} is currently closed. Opens {self.open_day} {open_label} - {self.close_day} {close_label}."
+
+        return f"{self.name} is currently closed."
 
     def get_commission_rate(self):
         """
@@ -319,10 +395,19 @@ class Vendor(models.Model):
         """
         Calculate delivery fee based on marketplace settings and category type, applying delivery_percentage_off logic.
         """
+        import logging
         from decimal import Decimal
         from product.models import PlatformSettings
+        from helpers.order_utils import apply_promo_code, get_distance_between_two_location
+        logger = logging.getLogger(__name__)
         delivery_fee = None
+        promo_info = {"is_applied": False, "discount_amount": 0, "affects_delivery": False}
+        service_fee = Decimal('0.00')
         is_in_marketplace = MarketPlace.objects.filter(vendors=self).first()
+        logger.info(
+            "[delivery_fee] vendor=%s is_in_marketplace=%s item_count=%s",
+            self.id, bool(is_in_marketplace), item_count,
+        )
         if not is_in_marketplace:
             # Non-marketplace vendors use their own pricing
             delivery_fee_info = calculate_delivery_fee(
@@ -341,7 +426,11 @@ class Vendor(models.Model):
                 'promo_info', {"is_applied": False, "discount_amount": 0})
         else:
             if item_count <= 0:
-                return Decimal('0.00')
+                return {
+                    "total_fee": Decimal('0.00'),
+                    "original_fee": Decimal('0.00'),
+                    "promo_info": promo_info,
+                }
             # Access marketplace via reverse relationship
             # marketplace = self.marketplace_set.first()
             marketplace = MarketPlace.objects.filter(vendors=self).first()
@@ -362,15 +451,28 @@ class Vendor(models.Model):
                 promo_info = delivery_fee_info.get(
                     'promo_info', {"is_applied": False, "discount_amount": 0})
             else:
-                # Check if vendor category has special pricing (Fine Bites, Oyibo, etc.)
+                # Marketplace follows fixed admin-configured item-count pricing.
+                # Per-vendor override takes priority over marketplace default base fee.
+                vendor_base_fee = (
+                    self.marketplace_delivery_fee
+                    if self.marketplace_delivery_fee is not None
+                    else marketplace.delivery_fee
+                )
                 is_special_category = (
                     self.category and
                     hasattr(self.category, 'is_special_pricing') and
                     self.category.is_special_pricing
                 )
+                logger.info(
+                    "[delivery_fee] marketplace=%s base_fee=%s (vendor_override=%s) "
+                    "second_item_fee=%s additional_item_fee=%s special_discount=%s is_special_category=%s",
+                    marketplace.id, vendor_base_fee, self.marketplace_delivery_fee,
+                    marketplace.second_item_fee, marketplace.additional_item_fee,
+                    marketplace.special_category_discount_percentage, is_special_category,
+                )
                 if is_special_category:
                     # SPECIAL PRICING: First item full price, additional items discounted
-                    base_fee = marketplace.delivery_fee
+                    base_fee = vendor_base_fee
                     discount = marketplace.special_category_discount_percentage / \
                         Decimal('100')
                     if item_count == 1:
@@ -384,17 +486,19 @@ class Vendor(models.Model):
                 else:
                     # STANDARD PRICING: Progressive pricing structure
                     if item_count == 1:
-                        delivery_fee = marketplace.delivery_fee
+                        delivery_fee = vendor_base_fee
                     elif item_count == 2:
-                        total = marketplace.delivery_fee + marketplace.second_item_fee
+                        total = vendor_base_fee + marketplace.second_item_fee
                         delivery_fee = total.quantize(Decimal('0.01'))
                     else:
                         # Base (first 2 items) + additional items
-                        base_for_two = marketplace.delivery_fee + marketplace.second_item_fee
+                        base_for_two = vendor_base_fee + marketplace.second_item_fee
                         additional_items = item_count - 2
                         total = base_for_two + \
                             (marketplace.additional_item_fee * additional_items)
                         delivery_fee = total.quantize(Decimal('0.01'))
+                service_fee = Decimal('0.00')
+                logger.info("[delivery_fee] calculated delivery_fee=%s", delivery_fee)
 
         # --- DELIVERY PERCENTAGE OFF LOGIC ---
         delivery_discount_percentage = None
@@ -419,46 +523,57 @@ class Vendor(models.Model):
                 Decimal(delivery_discount_percentage) / Decimal('100')) * Decimal(delivery_fee)
             delivery_fee = Decimal(delivery_fee) - discount_amount
 
-        # --- NEW PROMO CODE SYSTEM INTEGRATION (MARKETPLACE) ---
-        # If it's a marketplace vendor and we didn't use calculate_delivery_fee above,
-        # we need to apply the promo code logic manually.
+        # Manual promo handling for the marketplace path.
+        if is_in_marketplace:
+            # delivery_fee may be None if marketplace lookup failed
+            if delivery_fee is None:
+                delivery_fee = Decimal('0.00')
 
-        print("Applying promo code for marketplace vendor. Promo code:", promo_code)
-        if (promo_code or True):  # True because of automatic promos
-            # if self.is_marketplace and (promo_code or True): # True because of automatic promos
-            from helpers.order_utils import apply_promo_code, get_distance_between_two_location
+            if promo_code and delivery_fee > 0:
+                distance_km = 0.0
+                if dest_lat and dest_lon:
+                    try:
+                        distance_km = get_distance_between_two_location(
+                            lat1=float(self.location_latitude),
+                            lon1=float(self.location_longitude),
+                            lat2=float(dest_lat),
+                            lon2=float(dest_lon),
+                        )
+                    except Exception:
+                        pass
 
-            distance_km = 0.0
-            if dest_lat and dest_lon:
                 try:
-                    distance_km = get_distance_between_two_location(
-                        lat1=float(self.location_latitude),
-                        lon1=float(self.location_longitude),
-                        lat2=float(dest_lat),
-                        lon2=float(dest_lon),
+                    promo_info = apply_promo_code(
+                        promo_code=promo_code,
+                        user_obj=user,
+                        order_value=float(order_value),
+                        distance_km=distance_km,
+                        vendor_obj=self,
+                        current_fee=float(delivery_fee),
                     )
-                except:
-                    pass
-
-            promo_info = apply_promo_code(
-                promo_code=promo_code,
-                user_obj=user,
-                order_value=float(order_value),
-                distance_km=distance_km,
-                vendor_obj=self,
-                current_fee=float(delivery_fee)
-            )
+                except Exception:
+                    promo_info = {"is_applied": False, "affects_delivery": False, "discount_amount": 0}
 
             if promo_info["is_applied"] and promo_info["affects_delivery"]:
                 delivery_fee = Decimal(delivery_fee) - \
                     Decimal(str(promo_info["discount_amount"]))
                 delivery_fee = max(Decimal('0.00'), delivery_fee)
 
-        return {
-            "total_fee": Decimal(delivery_fee).quantize(Decimal('0.01')) if delivery_fee is not None else Decimal('0.00'),
+            total_fee = delivery_fee + service_fee
+            if promo_info["is_applied"] and not promo_info["affects_delivery"]:
+                total_fee -= Decimal(str(promo_info["discount_amount"]))
+            total_fee = max(Decimal('0.00'), total_fee)
+        else:
+            total_fee = Decimal(str(delivery_fee))
+
+        result = {
+            "total_fee": Decimal(total_fee).quantize(Decimal('0.01')) if delivery_fee is not None else Decimal('0.00'),
             "original_fee": Decimal(original_delivery_fee).quantize(Decimal('0.01')) if original_delivery_fee is not None else Decimal('0.00'),
-            "promo_info": promo_info
+            "promo_info": promo_info,
+            "service_fee": service_fee.quantize(Decimal('0.01')) if isinstance(service_fee, Decimal) else Decimal('0.00'),
         }
+        logger.info("[delivery_fee] returning total_fee=%s original_fee=%s", result["total_fee"], result["original_fee"])
+        return result
 
 
 class VendorRating(models.Model):

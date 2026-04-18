@@ -7,9 +7,10 @@ from django.db.models import Sum
 from account.serializers import VendorRatingSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
-from drf_yasg import openapi 
+from drf_yasg import openapi
 
 from product.models import Order, Product
+from vendor.models import MarketPlace
 from vendor.serializers import ProductSerializer, VendorSerializer
 
 
@@ -380,4 +381,96 @@ class AdminVendorRatingListView(generics.ListAPIView):
             self.serializer_class,
             self.get_queryset(),
             page_size=int(request.GET.get('page_size',10)),
+        )
+
+
+class AdminMarketPlaceListView(generics.GenericAPIView):
+    """List all marketplaces and their delivery fee / time settings."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        marketplaces = MarketPlace.objects.all()
+        data = []
+        for mp in marketplaces:
+            data.append({
+                'id': str(mp.id),
+                'name': mp.name,
+                'description': mp.description,
+                'is_active': mp.is_active,
+                'delivery_fee': str(mp.delivery_fee),
+                'second_item_fee': str(mp.second_item_fee),
+                'additional_item_fee': str(mp.additional_item_fee),
+                'special_category_discount_percentage': str(mp.special_category_discount_percentage),
+                'has_perishables': mp.has_perishables,
+                'vendor_count': mp.vendors.count(),
+            })
+        return success_response(data=data)
+
+
+class AdminMarketPlaceDetailView(generics.GenericAPIView):
+    """
+    GET  — retrieve a marketplace's settings.
+    PATCH — update delivery fees, name, description, is_active, has_perishables.
+
+    Also supports updating estimated_delivery_time on all vendors in this
+    marketplace by passing delivery_time_hours (integer, e.g. 48).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, marketplace_id):
+        try:
+            mp = MarketPlace.objects.get(id=marketplace_id)
+        except MarketPlace.DoesNotExist:
+            return bad_request_response(message="Marketplace not found")
+
+        return success_response(data={
+            'id': str(mp.id),
+            'name': mp.name,
+            'description': mp.description,
+            'is_active': mp.is_active,
+            'delivery_fee': str(mp.delivery_fee),
+            'second_item_fee': str(mp.second_item_fee),
+            'additional_item_fee': str(mp.additional_item_fee),
+            'special_category_discount_percentage': str(mp.special_category_discount_percentage),
+            'has_perishables': mp.has_perishables,
+            'vendor_count': mp.vendors.count(),
+        })
+
+    def patch(self, request, marketplace_id):
+        try:
+            mp = MarketPlace.objects.get(id=marketplace_id)
+        except MarketPlace.DoesNotExist:
+            return bad_request_response(message="Marketplace not found")
+
+        updatable_fields = [
+            'name', 'description', 'is_active', 'has_perishables',
+            'delivery_fee', 'second_item_fee', 'additional_item_fee',
+            'special_category_discount_percentage',
+        ]
+        for field in updatable_fields:
+            if field in request.data:
+                setattr(mp, field, request.data[field])
+        mp.save()
+
+        # Optionally update estimated_delivery_time on all vendors in this marketplace.
+        # Pass delivery_time_hours=48 to set all vendors' estimated_delivery_time to 48h.
+        delivery_time_hours = request.data.get('delivery_time_hours')
+        if delivery_time_hours is not None:
+            try:
+                hours = int(delivery_time_hours)
+                new_duration = timedelta(hours=hours)
+                mp.vendors.all().update(estimated_delivery_time=new_duration)
+            except (ValueError, TypeError):
+                return bad_request_response(message="delivery_time_hours must be an integer")
+
+        return success_response(
+            message="Marketplace updated successfully",
+            data={
+                'id': str(mp.id),
+                'name': mp.name,
+                'delivery_fee': str(mp.delivery_fee),
+                'second_item_fee': str(mp.second_item_fee),
+                'additional_item_fee': str(mp.additional_item_fee),
+                'delivery_time_hours_updated': delivery_time_hours,
+            }
         )

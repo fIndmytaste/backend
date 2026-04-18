@@ -36,7 +36,11 @@ def send_order_status_update_notification(order: Order, status: str, message: Op
             user=order.user,
             title=f"Order {status.capitalize()}!",
             body=message,
-            data={"event": "order_status_update", "order_id": order.id, "status": status}
+            data={
+                "type": "order_status_update",
+                "order_id": str(order.id),
+                "status": status,
+            }
         )
     except Exception as e:
         print(f"Push notification error: {e}")
@@ -151,9 +155,13 @@ def send_order_accepted_notification_customer(order:Order):
         try:
             thread = notification_helper.send_to_user_async(
                 user=order.user,
-                title="Order Accepted! 🎉",
+                title="Order Accepted!",
                 body=f"Your order has been accepted by the vendor. Preparing your order now!",
-                data={"event": "order_accepted", "order_id": order.id}
+                data={
+                    "type": "order_status_update",
+                    "order_id": str(order.id),
+                    "status": "confirmed",
+                }
             )
         except Exception as e:
             print(f"Push notification error: {e}")

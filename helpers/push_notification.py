@@ -455,13 +455,18 @@ def send_welcome_notification(user: Union[User, int, str], callback: Optional[Ca
         callback=callback
     )
 
-def send_order_notification(user: Union[User, int, str], order_id: str, callback: Optional[Callable] = None) -> threading.Thread:
+def send_order_notification(user: Union[User, int, str], order_id: str, status: str = "confirmed", callback: Optional[Callable] = None) -> threading.Thread:
     """Send order confirmation notification"""
     return notification_helper.send_to_user_async(
         user=user,
         title="Order Confirmed",
         body=f"Your order #{order_id} has been confirmed!",
-        data={"screen": "order_details", "order_id": order_id, "type": "order_confirmation"},
+        data={
+            "screen": "order_details",
+            "order_id": str(order_id),
+            "type": "order_status_update",
+            "status": status,
+        },
         callback=callback
     )
 

@@ -344,6 +344,20 @@ class CustomerNotificationConsumer(AsyncWebsocketConsumer):
             )
         logging.warning(f"[CustomerNotificationConsumer] Disconnect finished for {getattr(self, 'customer_group_name', None)} ({self.channel_name})")
 
+    async def receive(self, text_data):
+        try:
+            payload = json.loads(text_data)
+        except Exception:
+            return
+
+        if payload.get('type') == 'ping':
+            await self.send(text_data=json.dumps({
+                'type': 'pong',
+                'data': {
+                    'timestamp': payload.get('timestamp'),
+                }
+            }))
+
     async def order_accepted_notification(self, event):
         """Handle order accepted notification"""
         await self.send(text_data=json.dumps({

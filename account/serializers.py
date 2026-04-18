@@ -449,19 +449,39 @@ class FCMTokenSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = self.context['request'].user
+        token_str = validated_data['token']
         device_id = validated_data.get('device_id')
+        platform = validated_data.get('platform', 'android')
 
-        # Update existing token or create new one
-        token, created = FCMToken.objects.update_or_create(
-            user=user,
-            device_id=device_id,
-            defaults={
-                'token': validated_data['token'],
-                'platform': validated_data.get('platform', 'android'),
-                'is_active': True
-            }
-        )
-        return token
+        # A device token belongs to exactly one device. If this token was
+        # previously registered under a different user (e.g. someone logged
+        # out and a new user logged in on the same phone), remove the stale
+        # entry so the old user stops receiving this device's notifications.
+        FCMToken.objects.filter(token=token_str).exclude(user=user).delete()
+
+        # Upsert: one record per (user, device_id). If the device_id is None
+        # fall back to matching on the token itself to avoid creating duplicates.
+        if device_id:
+            token_obj, _ = FCMToken.objects.update_or_create(
+                user=user,
+                device_id=device_id,
+                defaults={
+                    'token': token_str,
+                    'platform': platform,
+                    'is_active': True,
+                },
+            )
+        else:
+            token_obj, _ = FCMToken.objects.update_or_create(
+                user=user,
+                token=token_str,
+                defaults={
+                    'platform': platform,
+                    'is_active': True,
+                },
+            )
+
+        return token_obj
 
 
 class SendNotificationSerializer(serializers.Serializer):

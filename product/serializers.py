@@ -44,6 +44,7 @@ class OrderSerializer(serializers.ModelSerializer):
     total_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_commission = serializers.SerializerMethodField()
     whole_price = serializers.SerializerMethodField()
+    promo_discount_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     payment_status = serializers.ChoiceField(choices=Order.PAYMENT_STATUS_CHOICES)
     
     def get_total_commission(self, obj):
@@ -51,12 +52,15 @@ class OrderSerializer(serializers.ModelSerializer):
         return float(obj.calculate_total_commission())
     
     def get_whole_price(self, obj):
-        """Get the complete price: total_amount + total_commission + delivery_fee."""
+        """Get the final payable price shown to the customer.
+        total_amount already includes commission (stored as price_with_commission at purchase).
+        service_fee is not added here — commission IS the service fee baked into product prices.
+        """
         from decimal import Decimal
         total_amount = float(obj.total_amount or Decimal('0.00'))
-        total_commission = float(obj.calculate_total_commission())
         delivery_fee = float(obj.delivery_fee or Decimal('0.00'))
-        return float(total_amount + total_commission + delivery_fee) 
+        promo_discount_amount = float(obj.promo_discount_amount or Decimal('0.00'))
+        return float(max(0.0, total_amount + delivery_fee - promo_discount_amount))
 
     class Meta:
         model = Order
@@ -67,6 +71,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'total_amount',
             'total_commission',
             'whole_price', 
+            'promo_discount_amount',
             'payment_status', 
             'payment_method',
             'items',  
@@ -214,6 +219,7 @@ class OrderSerializer(serializers.ModelSerializer):
                 'first_name': instance.rider.user.first_name,
                 'last_name': instance.rider.user.last_name,
                 'email': instance.rider.user.email,
+                'phone_number': instance.rider.user.phone_number,
             } if instance.rider else None
 
             rep['vendor'] = {
@@ -229,8 +235,13 @@ class OrderSerializer(serializers.ModelSerializer):
                 'phone_number': instance.vendor.phone_number,
             } if instance.vendor else None
 
-        # Remove DB updates from serialization for speed
-        rep['total_amount'] = float(instance.total_amount) + float(instance.calculate_total_commission()) + float(instance.delivery_fee or 0)
+        # items_total = sum of items with commission (no delivery, no discount)
+        # total_amount = items_total + delivery_fee - promo_discount (what customer paid)
+        rep['items_total'] = float(instance.total_amount or 0)
+        rep['service_fee'] = 0  # commission is baked into product prices, not a separate fee
+        rep['promo_discount_amount'] = float(instance.promo_discount_amount or 0)
+        rep['delivery_fee'] = float(instance.delivery_fee or 0)
+        rep['total_amount'] = self.get_whole_price(instance)
         return rep
 
 

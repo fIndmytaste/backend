@@ -112,7 +112,7 @@ class CustomerOrdersListView(generics.GenericAPIView):
                 queryset = queryset.filter(status__in=in_progress)
             else:
 
-                done = ['delivered','canceled','rejected']
+                done = ['delivered','canceled','rejected', 'failed', 'payment_failed']
                 if status == 'done':
                     queryset = queryset.filter(status__in=done)
                 else:
@@ -157,5 +157,3 @@ class CustomerInProgressOrdersListView(generics.GenericAPIView):
             queryset,
             page_size=int(request.GET.get('page_size',20))
         )
-
-
