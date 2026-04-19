@@ -377,6 +377,13 @@ class CustomerNotificationConsumer(AsyncWebsocketConsumer):
         # add log
         logging.info(f"[CustomerNotificationConsumer] Sent status_update notification: {event['data']}")
 
+    async def order_delivered_notification(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'order_delivered',
+            'data': event['data']
+        }))
+        logging.info(f"[CustomerNotificationConsumer] Sent order_delivered notification: {event['data']}")
+
 
 
 # class RiderConsumer(AsyncJsonWebsocketConsumer):
@@ -459,3 +466,11 @@ class RiderConsumer(AsyncJsonWebsocketConsumer):
     async def order_accepted_notification(self, event):
         await self.send_json(event)
         logging.info(f"[RiderConsumer] Sent order_accepted_notification: {event['data']}")
+
+    async def order_assigned_notification(self, event):
+        await self.send_json(event)
+        logging.info(f"[RiderConsumer] Sent order_assigned_notification: {event['data']}")
+
+    async def order_delivered_notification(self, event):
+        await self.send_json(event)
+        logging.info(f"[RiderConsumer] Sent order_delivered_notification: {event['data']}")

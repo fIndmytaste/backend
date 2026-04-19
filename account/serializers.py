@@ -443,9 +443,19 @@ class DeliveryLocationCreatSerializer(serializers.Serializer):
 
 
 class FCMTokenSerializer(serializers.ModelSerializer):
+    # Disable model-level uniqueness validation here so repeated app launches
+    # can upsert the latest token instead of failing with a 400 response.
+    token = serializers.CharField(validators=[])
+    device_id = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+
     class Meta:
         model = FCMToken
         fields = ['token', 'device_id', 'platform']
+        validators = []
 
     def create(self, validated_data):
         user = self.context['request'].user
@@ -453,24 +463,30 @@ class FCMTokenSerializer(serializers.ModelSerializer):
         device_id = validated_data.get('device_id')
         platform = validated_data.get('platform', 'android')
 
-        # A device token belongs to exactly one device. If this token was
-        # previously registered under a different user (e.g. someone logged
-        # out and a new user logged in on the same phone), remove the stale
-        # entry so the old user stops receiving this device's notifications.
-        FCMToken.objects.filter(token=token_str).exclude(user=user).delete()
+        # A token should point to the latest active device/user mapping only.
+        # Remove any stale rows that still own this token before we upsert.
+        existing_for_token = FCMToken.objects.filter(token=token_str).first()
+        if existing_for_token and (
+            existing_for_token.user_id != user.id
+            or (device_id and existing_for_token.device_id != device_id)
+        ):
+            existing_for_token.delete()
 
-        # Upsert: one record per (user, device_id). If the device_id is None
-        # fall back to matching on the token itself to avoid creating duplicates.
         if device_id:
-            token_obj, _ = FCMToken.objects.update_or_create(
-                user=user,
-                device_id=device_id,
-                defaults={
-                    'token': token_str,
-                    'platform': platform,
-                    'is_active': True,
-                },
-            )
+            token_obj = FCMToken.objects.filter(user=user, device_id=device_id).first()
+            if token_obj:
+                token_obj.token = token_str
+                token_obj.platform = platform
+                token_obj.is_active = True
+                token_obj.save(update_fields=['token', 'platform', 'is_active', 'updated_at'])
+            else:
+                token_obj = FCMToken.objects.create(
+                    user=user,
+                    token=token_str,
+                    device_id=device_id,
+                    platform=platform,
+                    is_active=True,
+                )
         else:
             token_obj, _ = FCMToken.objects.update_or_create(
                 user=user,
@@ -480,6 +496,11 @@ class FCMTokenSerializer(serializers.ModelSerializer):
                     'is_active': True,
                 },
             )
+
+        # Keep one active row for the user/device and one owner for the token.
+        if device_id:
+            FCMToken.objects.filter(user=user, device_id=device_id).exclude(pk=token_obj.pk).delete()
+        FCMToken.objects.filter(token=token_str).exclude(pk=token_obj.pk).delete()
 
         return token_obj
 

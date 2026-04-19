@@ -459,7 +459,7 @@ def send_order_notification(user: Union[User, int, str], order_id: str, status: 
     """Send order confirmation notification"""
     return notification_helper.send_to_user_async(
         user=user,
-        title="Order Confirmed",
+        title="Order Confirmed! ✅",
         body=f"Your order #{order_id} has been confirmed!",
         data={
             "screen": "order_details",
@@ -484,7 +484,13 @@ def send_promotional_notification(topic: str, title: str, body: str, promo_code:
         callback=callback
     )
 
-def send_order_payment_success_notification(user: Union[User, int, str], order_id: str, amount: str = None, callback: Optional[Callable] = None) -> threading.Thread:
+def send_order_payment_success_notification(
+    user: Union[User, int, str],
+    order_id: str,
+    amount: str = None,
+    delivery_code: str = None,
+    callback: Optional[Callable] = None,
+) -> threading.Thread:
     """
     Send payment success notification to user when their order payment is successful
     
@@ -503,15 +509,18 @@ def send_order_payment_success_notification(user: Union[User, int, str], order_i
     body = f"Payment for order #{order_id} was successful!"
     if amount:
         body = f"Payment of {amount} for order #{order_id} was successful!"
+    if delivery_code:
+        body = f"{body} Your delivery code is {delivery_code}."
         
     return notification_helper.send_to_user_async(
         user=user,
-        title="Payment Successful",
+        title="Payment Successful! 💳",
         body=body,
         data={
             "screen": "order_details", 
             "order_id": order_id, 
-            "type": "payment_success"
+            "type": "payment_success",
+            "delivery_code": delivery_code or "",
         },
         callback=callback
     )
@@ -576,6 +585,4 @@ def send_login_notification(user: Union[User, int, str], callback: Optional[Call
     except Exception as e:
         logger.error(f"Error in send_login_notification: {str(e)}")
         return None
-
-
 

@@ -3,7 +3,7 @@ from multiprocessing import context
 from rest_framework import serializers
 from django.db.models import Q, Avg
 from account.models import User, Vendor, VendorRating
-from product.models import ProductVariant, UserFavoriteVendor, Product, ProductImage, Rating, SystemCategory, VendorCategory,ProductVariantCategory
+from product.models import Order, ProductVariant, UserFavoriteVendor, Product, ProductImage, Rating, SystemCategory, VendorCategory, ProductVariantCategory
 from collections import defaultdict
 
 from vendor.models import MarketPlace
@@ -847,3 +847,125 @@ class VendorOrderActionSerializer(serializers.Serializer):
     ]
 
     action = serializers.ChoiceField(choices=ACTION_CHOICES)
+
+
+class VendorOrderSerializer(serializers.ModelSerializer):
+    """
+    Order serializer for vendor-facing views.
+
+    Prices shown here are the vendor's original prices — commission is NOT
+    included. The customer pays product.price + commission; the vendor should
+    only see what they actually earn per item.
+    """
+
+    class Meta:
+        model = Order
+        fields = [
+            'id', 'user', 'status', 'total_amount', 'promo_discount_amount',
+            'payment_status', 'payment_method', 'items', 'note', 'address',
+            'actual_delivery_time', 'actual_pickup_time', 'track_id',
+            'delivery_fee', 'delivery_otp', 'location_latitude',
+            'location_longitude', 'delivery_status', 'delivered_at',
+            'created_at', 'updated_at',
+        ]
+
+    def to_representation(self, instance):
+
+        rep = {}
+        # Populate simple scalar fields manually (avoids inheriting
+        # the commission-inflated whole_price from OrderSerializer).
+        for field in [
+            'id', 'status', 'payment_status', 'payment_method', 'note',
+            'address', 'actual_delivery_time', 'actual_pickup_time',
+            'track_id', 'delivery_otp', 'location_latitude',
+            'location_longitude', 'delivery_status', 'created_at',
+            'updated_at', 'delivered_at',
+        ]:
+            value = getattr(instance, field, None)
+            rep[field] = str(value) if value is not None else None
+
+        rep['delivery_fee'] = float(instance.delivery_fee or 0)
+        rep['promo_discount_amount'] = float(instance.promo_discount_amount or 0)
+
+        # User info
+        if instance.user:
+            rep['user'] = {
+                'id': str(instance.user.id),
+                'full_name': instance.user.full_name,
+                'email': instance.user.email,
+                'phone_number': instance.user.phone_number,
+            }
+        else:
+            rep['user'] = None
+
+        # Build items using vendor prices (product.price, not price_with_commission)
+        grouped_items = {}
+        items = list(instance.items.all())
+
+        for item in items:
+            product = item.product
+            product_images = list(product.productimage_set.all()) if hasattr(product, 'productimage_set') else []
+            variant_selections = list(item.variant_selections.all()) if hasattr(item, 'variant_selections') else []
+
+            product_id = str(product.id)
+            if product_id not in grouped_items:
+                grouped_items[product_id] = {
+                    'product': {
+                        'id': str(product.id),
+                        'name': product.name,
+                        # vendor's own price — no commission
+                        'price': float(product.price),
+                        'images': ProductImageSerializer(product_images, many=True).data,
+                    },
+                    # unit_price = vendor's price at order time (product.price)
+                    'price': float(product.price),
+                    'unit_price': float(product.price),
+                    'quantity': item.quantity,
+                    'variants': [],
+                }
+                for vs in variant_selections:
+                    variant_obj = vs.variant
+                    grouped_items[product_id]['variants'].append({
+                        'id': str(variant_obj.id),
+                        'variant_category_name': getattr(
+                            getattr(variant_obj, 'category', None),
+                            'category_name', None
+                        ),
+                        'name': variant_obj.name,
+                        # vendor's own price for this variant — no commission
+                        'price': float(variant_obj.price),
+                        'quantity': vs.quantity,
+                    })
+            else:
+                grouped_items[product_id]['quantity'] += item.quantity
+
+        rep['items'] = list(grouped_items.values())
+
+        # Compute totals using vendor prices (no commission)
+        vendor_items_total = sum(
+            float(item.product.price) * item.quantity +
+            sum(
+                float(vs.variant.price) * vs.quantity
+                for vs in item.variant_selections.all()
+            )
+            for item in items
+        )
+
+        delivery_fee = float(instance.delivery_fee or 0)
+        discount = float(instance.promo_discount_amount or 0)
+
+        rep['items_total'] = round(vendor_items_total, 2)
+        rep['total_amount'] = round(max(0.0, vendor_items_total + delivery_fee - discount), 2)
+        rep['service_fee'] = 0  # commission not shown to vendor
+
+        # Rider info (shown in track delivery screen)
+        if instance.rider:
+            rep['rider'] = {
+                'id': str(instance.rider.id),
+                'name': instance.rider.user.full_name or '',
+                'phone': instance.rider.user.phone_number or '',
+            }
+        else:
+            rep['rider'] = None
+
+        return rep

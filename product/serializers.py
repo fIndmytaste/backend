@@ -168,7 +168,7 @@ class OrderSerializer(serializers.ModelSerializer):
                         variant_categories[0].category_name if variant_categories else None
                     ),
                     'name': product.name,
-                    'price': float(product.price),
+                    'price': float(item.price),  # price at purchase, not current product price
                     'quantity': item.quantity,
                     'images': ProductImageSerializerClass(product_images, many=True).data,
                 })
@@ -182,6 +182,9 @@ class OrderSerializer(serializers.ModelSerializer):
                             'price': float(product.price),
                             'images': ProductImageSerializerClass(product_images, many=True).data,
                         },
+                        # price / unit_price = actual price paid at order time (not current product price)
+                        'price': float(item.price),
+                        'unit_price': float(item.price),
                         'quantity': item.quantity,
                         'variants': []
                     }
@@ -242,6 +245,25 @@ class OrderSerializer(serializers.ModelSerializer):
         rep['promo_discount_amount'] = float(instance.promo_discount_amount or 0)
         rep['delivery_fee'] = float(instance.delivery_fee or 0)
         rep['total_amount'] = self.get_whole_price(instance)
+
+        # Estimated pickup and dropoff times for riders
+        from django.utils import timezone as tz
+        now = tz.now()
+        estimated_pickup_time = None
+        estimated_dropoff_time = None
+        if instance.actual_pickup_time:
+            estimated_pickup_time = instance.actual_pickup_time.isoformat()
+        elif instance.new_estimated_delivery_time:
+            # Estimate pickup = now + half of total estimated duration
+            half_duration = instance.new_estimated_delivery_time / 2
+            estimated_pickup_time = (now + half_duration).isoformat()
+        if instance.actual_delivery_time:
+            estimated_dropoff_time = instance.actual_delivery_time.isoformat()
+        elif instance.new_estimated_delivery_time:
+            estimated_dropoff_time = (now + instance.new_estimated_delivery_time).isoformat()
+        rep['estimated_pickup_time'] = estimated_pickup_time
+        rep['estimated_dropoff_time'] = estimated_dropoff_time
+
         return rep
 
 

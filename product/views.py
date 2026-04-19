@@ -300,11 +300,16 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         lon2=float(location_longitude),
                     )
                 except: pass
-                order.rider_earning = calculate_rider_fare(dist)
+                order.rider_earning = max(
+                    Decimal(str(calculate_rider_fare(dist))),
+                    Decimal(str(delivery_fee or 0)),
+                    Decimal(str(original_delivery_fee or 0)),
+                )
                 
                 order.payment_method = request.data.get('payment_method','wallet')
                 order.note = request.data.get('note',request.data.get('notes'))
                 order.save()
+                order.save_vendor_and_commision()
 
                 if order.promo_code:
                     from product.promo_models import PromoUsage
@@ -372,8 +377,9 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
 
                         send_order_payment_success_notification(
                             user=order.user,
-                            order_id=str(order.id),
+                            order_id=str(order.track_id),
                             amount=str(order_total_price),
+                            delivery_code=order.delivery_otp,
                         )
                     except Exception as e:
                         print(e)
@@ -1214,7 +1220,11 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.original_delivery_fee = original_delivery_fee
                 from helpers.order_utils import calculate_rider_fare
-                order.rider_earning = calculate_rider_fare(dist)
+                order.rider_earning = max(
+                    Decimal(str(calculate_rider_fare(dist))),
+                    Decimal(str(delivery_fee or 0)),
+                    Decimal(str(original_delivery_fee or 0)),
+                )
                 order.save()
 
                 if order.promo_code:
@@ -1435,8 +1445,13 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.original_delivery_fee = original_delivery_fee
                 from helpers.order_utils import calculate_rider_fare
-                order.rider_earning = calculate_rider_fare(distance_in_km)
+                order.rider_earning = max(
+                    Decimal(str(calculate_rider_fare(distance_in_km))),
+                    Decimal(str(delivery_fee or 0)),
+                    Decimal(str(original_delivery_fee or 0)),
+                )
                 order.save()
+                order.save_vendor_and_commision()
 
 
                 order_total_price = float(order.get_total_price()) + order.delivery_fee 
@@ -1506,8 +1521,9 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
                         send_order_payment_success_notification(
                             user=order.user,
-                            order_id=str(order.id),
+                            order_id=str(order.track_id),
                             amount=str(order.total_price),
+                            delivery_code=order.delivery_otp,
                         )
                     except Exception as e:
                         print(e)

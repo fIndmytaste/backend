@@ -691,22 +691,20 @@ class Rider(models.Model):
         return f"Rider: "
 
     def update_location(self, latitude, longitude):
-        from product.models import DeliveryTracking
+        from helpers.redis_rider_geo import geo_add_rider
         """Update the rider's current location and propagate to active deliveries."""
         self.current_latitude = latitude
         self.current_longitude = longitude
         self.location_updated_at = timezone.now()
         self.save()
         self.refresh_from_db()  # Ensure we have the latest data after save()
+        if self.is_online:
+            geo_add_rider(self)
 
         print(
             "Rider updated location :: ", self.current_latitude, self.current_longitude, self.location_updated_at
         )
         # Update all active delivery trackings for this rider
-        active_orders = self.orders.filter(
-            status__in=['picked_up', 'in_transit', 'near_delivery']
-        )
-
         # for order in active_orders:
         #     try:
         #         tracking = order.delivery_tracking.latest('updated_at')
@@ -726,12 +724,15 @@ class Rider(models.Model):
 
     def go_online(self):
         """Set the rider as online and available for deliveries."""
+        from helpers.redis_rider_geo import geo_add_rider
         self.is_online = True
         self.save()
+        geo_add_rider(self)
 
     def go_offline(self):
         """Set the rider as offline and unavailable for deliveries."""
         from product.models import Order
+        from helpers.redis_rider_geo import geo_remove_rider
         active_orders = Order.objects.filter(
             rider=self,
             status__in=['rider_assigned', 'picked_up',
@@ -742,6 +743,7 @@ class Rider(models.Model):
                 "Cannot go offline while you have active deliveries")
         self.is_online = False
         self.save()
+        geo_remove_rider(self.id)
 
     def update_performance_metrics(self):
         """Calculate and update rider performance metrics."""
@@ -781,7 +783,7 @@ class Rider(models.Model):
     def active_orders_count(self):
         """Return the count of active orders assigned to this rider."""
         return self.orders.filter(
-            status__in=['confirmed', 'ready_for_pickup',
+            status__in=['rider_assigned', 'confirmed', 'ready_for_pickup',
                         'picked_up', 'in_transit', 'near_delivery']
         ).count()
 

@@ -15,6 +15,7 @@ from datetime import timedelta, datetime
 from decimal import Decimal
 
 from product.serializers import OrderSerializer
+from helpers.websocket_notification import notify_rider_order_assignment
 from rider.serializers import RiderRatingCreateSerializer
 
 
@@ -470,6 +471,7 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
         order.status = 'rider_assigned'
         order.delivery_status = 'rider_assigned'
         order.save()
+        notify_rider_order_assignment(order, rider)
         return success_response(message="Order assigned to rider successfully.", data={"order_id": str(order.id), "rider_id": str(rider.id)})
 
 
@@ -532,6 +534,7 @@ class AdminMarketplaceAssignOrderView(generics.GenericAPIView):
         order.rider = rider
         order.status = 'rider_assigned'
         order.save()
+        notify_rider_order_assignment(order, rider)
 
         return success_response(message="Marketplace order assigned manually.", data={"order_id": str(order.id), "rider_id": str(rider.id)})
 

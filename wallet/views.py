@@ -2,6 +2,7 @@ from account.models import User, Vendor
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
+from django.utils.dateparse import parse_date
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer
 from wallet.models import Wallet, WalletTransaction
@@ -28,10 +29,10 @@ class WalletBalanceView(generics.RetrieveAPIView):
         - 200: Successfully retrieved wallet balance.
         - 401: Unauthorized access.
         """
-        query_set = self.get_queryset()
+        wallet, _ = Wallet.objects.get_or_create(user=request.user)
 
         return success_response(
-            data=self.serializer_class(query_set.first()).data,
+            data=self.serializer_class(wallet).data,
         )
 
     def get_queryset(self):
@@ -57,11 +58,23 @@ class WalletTransactionsView(generics.ListAPIView):
         - 401: Unauthorized access.
         """
         transaction_type = request.GET.get('type')
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
 
         query_set = self.get_queryset()
 
         if transaction_type:
             query_set = query_set.filter(transaction_type=transaction_type)
+
+        if date_from:
+            parsed_from = parse_date(date_from)
+            if parsed_from:
+                query_set = query_set.filter(created_at__date__gte=parsed_from)
+
+        if date_to:
+            parsed_to = parse_date(date_to)
+            if parsed_to:
+                query_set = query_set.filter(created_at__date__lte=parsed_to)
 
         return paginate_success_response_with_serializer(
             request,
@@ -102,13 +115,7 @@ class WithdrawalView(generics.GenericAPIView):
         bank_code = None
         account_number = None
 
-        if (not user.bank_account or not user.bank_account or user.bank_name):
-            if vendor_account and (not vendor_account.bank_account or not vendor_account.bank_account or vendor_account.bank_name):
-                return bad_request_response(
-                    message='You have not provided your bank account details. Please update your bank account details to proceed'
-                )
-            
-        account_number = user.bank_account or vendor_account.bank_account if vendor_account else None
+        account_number = user.bank_account or (vendor_account.bank_account if vendor_account else None)
 
         if not account_number:
             return bad_request_response(

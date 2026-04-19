@@ -963,32 +963,46 @@ class Order(models.Model):
         order_items = OrderItem.objects.filter(order=self)
         return sum(item.total_price() for item in order_items)
 
+    def calculate_vendor_settlement_amount(self):
+        """Calculate the vendor's actual take-home amount for the order."""
+        from decimal import Decimal
+
+        settlement_total = Decimal('0.00')
+        for item in self.items.all():
+            settlement_total += item.product.get_vendor_earnings(item.quantity)
+            for variant_selection in item.variant_selections.all():
+                settlement_total += (
+                    variant_selection.variant.price * variant_selection.quantity
+                )
+
+        return settlement_total.quantize(Decimal('0.01'))
+
+    def calculate_rider_earning_amount(self):
+        """Calculate what should be credited to the rider for this order."""
+        from decimal import Decimal
+
+        candidate_amounts = [
+            Decimal(str(self.rider_earning or 0)),
+            Decimal(str(self.delivery_fee or 0)),
+            Decimal(str(self.original_delivery_fee or 0)),
+        ]
+        return max(candidate_amounts).quantize(Decimal('0.01'))
+
 
     def save_vendor_and_commision(self):
-        """Calculate and save the vendor amount and platform commission for this order."""
+        """Persist the vendor settlement amount for this order."""
+        from decimal import Decimal
         try:
-            total_vendor_amount = 0
-            total_platform_amount = 0
-
-            for item in self.items.all():
-                # Calculate base product amounts
-                vendor_earning = item.product.price 
-                platform_earning = item.product.get_price_with_commission() - item.product.price
-
-                total_vendor_amount += vendor_earning
-                total_platform_amount += platform_earning
-
-                # Calculate variant amounts
-                for variant_selection in item.variant_selections.all():
-                    variant_product: Product = variant_selection.variant.product
-                    variant_vendor_earning = variant_product.price
-                    variant_platform_earning = variant_product.get_price_with_commission() - variant_product.price
-
-                    total_vendor_amount += variant_vendor_earning
-                    total_platform_amount += variant_platform_earning
+            total_vendor_amount = self.calculate_vendor_settlement_amount()
+            gross_order_amount = Decimal(str(self.get_total_price() or 0)).quantize(
+                Decimal('0.01')
+            )
 
             self.vendor_amount = total_vendor_amount
-            self.platform_amount = total_platform_amount
+            self.platform_amount = max(
+                Decimal('0.00'),
+                (gross_order_amount - total_vendor_amount).quantize(Decimal('0.01')),
+            )
             self.save()
         except Exception as e:
             # Log the error or handle it as needed

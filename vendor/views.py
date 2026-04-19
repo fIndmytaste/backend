@@ -13,7 +13,10 @@ from helpers.vendor_discovery import (
     resolve_request_coordinates,
 )
 from helpers.push_notification import notification_helper
-from helpers.websocket_notification import send_order_accepted_notification_customer
+from helpers.websocket_notification import (
+    get_candidate_riders_for_order,
+    send_order_accepted_notification_customer,
+)
 from helpers.permissions import IsVendor
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -22,25 +25,46 @@ from product.serializers import OrderSerializer
 from vendor.models import MarketPlace
 from wallet.models import Wallet, WalletTransaction
 from .serializers import (
-    MarketPlaceSerializer, 
-    VendorCategorySerializer, 
+    MarketPlaceSerializer,
+    VendorCategorySerializer,
     BuyerVendorProductSerializer,
-    ProductSerializer, 
+    ProductSerializer,
     VendorRatingCreateSerializer,
-    VendorRegisterBusinessSerializer, 
+    VendorRegisterBusinessSerializer,
     VendorSerializer,
     VendorOrderActionSerializer,
-    VendorImageUploadSerializer
+    VendorImageUploadSerializer,
+    VendorOrderSerializer,
 )
 from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer, validation_error_response
 from helpers.backblaze import upload_to_backblaze
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi 
 from datetime import timedelta
+from django.utils.dateparse import parse_date
 from rest_framework.decorators import api_view
 from math import radians, cos
 import logging
 # Vendor Views
+
+
+def _apply_date_range_filter(queryset, start_date, end_date, field_name='created_at'):
+    parsed_start = parse_date(start_date) if start_date else None
+    parsed_end = parse_date(end_date) if end_date else None
+
+    if parsed_start:
+        queryset = queryset.filter(**{f'{field_name}__date__gte': parsed_start})
+    if parsed_end:
+        queryset = queryset.filter(**{f'{field_name}__date__lte': parsed_end})
+
+    return queryset
+
+
+def _calculate_vendor_earnings_total(orders):
+    total = 0.0
+    for order in orders:
+        total += float(order.calculate_vendor_settlement_amount())
+    return total
 
 
 class VendorRegisterBusinessView(generics.GenericAPIView):
@@ -477,7 +501,7 @@ class VendorOrderListView(generics.ListAPIView):
     - The vendor can filter the orders based on order status, payment status, and date range.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
     
     def get_queryset(self):
@@ -501,8 +525,12 @@ class VendorOrderListView(generics.ListAPIView):
         # Filter by date range (created_at)
         start_date = self.request.GET.get('start_date', None)
         end_date = self.request.GET.get('end_date', None)
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='created_at',
+        )
         
         # Allow for searching by order ID (or other fields if desired)
         order_id = self.request.GET.get('order_id', None)
@@ -536,7 +564,7 @@ class VendorPendingOrderListView(generics.ListAPIView):
     View to list all pending orders for a specific vendor.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
 
     def get_queryset(self):
@@ -560,8 +588,12 @@ class VendorPendingOrderListView(generics.ListAPIView):
 
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='updated_at',
+        )
 
         order_id = self.request.GET.get('order_id')
         if order_id:
@@ -593,7 +625,7 @@ class VendorDeliveredOrderListView(generics.ListAPIView):
     View to list all pending orders for a specific vendor.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
     def get_queryset(self):
         vendor = Vendor.objects.only('id').get(user=self.request.user)
@@ -616,8 +648,12 @@ class VendorDeliveredOrderListView(generics.ListAPIView):
 
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='delivered_at',
+        )
 
         order_id = self.request.GET.get('order_id')
         if order_id:
@@ -651,7 +687,7 @@ class VendorInProgressOrderListView(generics.ListAPIView):
     View to list all pending orders for a specific vendor.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
     def get_queryset(self):
         vendor = Vendor.objects.only('id').get(user=self.request.user)
@@ -683,8 +719,12 @@ class VendorInProgressOrderListView(generics.ListAPIView):
 
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='updated_at',
+        )
 
         order_id = self.request.GET.get('order_id')
         if order_id:
@@ -1369,7 +1409,6 @@ class VendorOverviewView(generics.GenericAPIView):
         }
     )
     def get(self, request):
-        from django.utils import timezone
         user = request.user
         try:
             vendor = Vendor.objects.get(user=user)
@@ -1377,38 +1416,50 @@ class VendorOverviewView(generics.GenericAPIView):
             return bad_request_response(message="Vendor Not Found",status_code=404)
         try:
             time_frame = request.GET.get('time_frame', 'weekly')
-            
-            # Get date range based on time_frame
-            # end_date = timezone.now()
-            # if time_frame == 'daily':
-            #     start_date = end_date - timedelta(days=1)
-            # elif time_frame == 'weekly':
-            #     start_date = end_date - timedelta(days=7)
-            # elif time_frame == 'monthly':
-            #     start_date = end_date - timedelta(days=30)
-            # elif time_frame == 'yearly':
-            #     start_date = end_date - timedelta(days=365)
-            # else:
-            #     start_date = end_date - timedelta(days=7)  # Default to weekly
-            
-            # Get orders for this vendor
+            date_from_str = request.GET.get('date_from')
+            date_to_str = request.GET.get('date_to')
+
             vendor_orders = Order.objects.filter(vendor=vendor)
+            created_period_orders = _apply_date_range_filter(
+                vendor_orders,
+                date_from_str,
+                date_to_str,
+                field_name='created_at',
+            )
+            delivered_period_orders = _apply_date_range_filter(
+                vendor_orders.filter(status='delivered'),
+                date_from_str,
+                date_to_str,
+                field_name='delivered_at',
+            )
             
             # Calculate order statistics
-            total_orders = vendor_orders.count()
-            active_orders = vendor_orders.filter(status='pending').count()
-            completed_orders = vendor_orders.filter(status='delivered').count()
-            canceled_orders = vendor_orders.filter(status='canceled').count()
+            total_orders = created_period_orders.count()
+            active_orders = created_period_orders.filter(
+                status__in=[
+                    'pending',
+                    'confirmed',
+                    'preparing',
+                    'looking_for_rider',
+                    'rider_assigned',
+                    'picked_up',
+                    'in_transit',
+                    'near_delivery',
+                ]
+            ).count()
+            completed_orders = delivered_period_orders.count()
+            canceled_orders = created_period_orders.filter(
+                status__in=['canceled', 'cancelled', 'rejected']
+            ).count()
             
             # Calculate financial metrics
-            total_earnings = vendor_orders.filter(payment_status='paid').aggregate(
-                total=Sum('total_amount')
-            )['total'] or 0
+            paid_delivered_orders = delivered_period_orders.filter(
+                payment_status='paid',
+            )
+            total_earnings = _calculate_vendor_earnings_total(paid_delivered_orders)
             
-            # Calculate payouts (assuming you have a Payout model or similar)
-            # This is a placeholder; adjust according to your actual payment tracking system
-            total_payouts = float(total_earnings) * 0.9  # Example: 90% of earnings go to vendor
-            pending_payouts = 0  # Placeholder - replace with actual calculation
+            total_payouts = float(total_earnings)
+            pending_payouts = 0
             
             # Get recent reports or issues (placeholder)
             reports_count = 0  # Replace with actual report count if you have such a feature
@@ -1462,7 +1513,7 @@ class VendorOverviewView(generics.GenericAPIView):
 
 
 class VendorOrderDetailAPIView(generics.RetrieveAPIView):
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
     queryset = Order.objects.all()
@@ -1736,7 +1787,7 @@ def vendor_rating_stats(request, vendor_id):
             'total_ratings': ratings.count(),
             'rating_distribution': rating_distribution,
             'recent_reviews': VendorRatingSerializer(
-                ratings.filter(comment__isnull=False).exclude(comment='').order_by('-created_at')[:10], 
+                ratings.order_by('-created_at')[:10],
                 many=True
             ).data
         }
@@ -1930,15 +1981,22 @@ def send_new_order_push_notification_riders(order):
         order (Order): The order instance to notify riders about.
     """
     try:
-        riders = Rider.objects.filter(active='active')
+        riders = get_candidate_riders_for_order(order)
 
         def send_notification(rider):
             try:
                 notification_helper.send_to_user_async(
                     user=rider.user,
                     title="New order! 🎉",
-                    body=f"A new order is available for pickup at {order.vendor.name}.",
-                    data={"event": "new_order_event", "order_id": str(order.id)}
+                    body=f"Order #{order.track_id} is available for pickup at {order.vendor.name}.",
+                    data={
+                        "event": "new_order_event",
+                        "type": "new_order_event",
+                        "order_id": str(order.id),
+                        "track_id": str(order.track_id),
+                        "vendor_name": order.vendor.name,
+                        "message": f"Order #{order.track_id} is ready for pickup.",
+                    }
                 )
             except Exception as e:
                 print(f"Push notification error for rider {rider.id}: {e}")

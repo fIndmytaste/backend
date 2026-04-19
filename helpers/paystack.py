@@ -30,29 +30,56 @@ class PaystackManager:
         return header
 
     
+    def resolve_bank_identifier(self, bank_value):
+        if not bank_value:
+            return None
+        bank_value = str(bank_value).strip()
+        is_valid, banks_response = self.banks()
+        if not is_valid:
+            return None
+        for bank in banks_response:
+            if str(bank.get('code', '')).strip() == bank_value:
+                return bank.get('code')
+            if str(bank.get('name', '')).strip().lower() == bank_value.lower():
+                return bank.get('code')
+        return None
+
     def make_withdrawal(self, request, vendor: Vendor, amount, transaction_obj):
         account_bank = None
         account_number = None
-        if vendor and vendor.bank_name and vendor.bank_account_name:
+        account_name = None
+        if vendor and vendor.bank_name and vendor.bank_account and vendor.bank_account_name:
             account_bank = vendor.bank_name
-            account_number = vendor.bank_account_name
+            account_number = vendor.bank_account
+            account_name = vendor.bank_account_name
         else:
-            if not (request.data.get('bank_code') and request.data.get('account_number')):
-                return bad_request_response(message='You did not have an account attached to your profile, kindly add.')
-            account_bank = request.data['bank_code']
-            account_number = request.data['account_number']
+            user = request.user
+            if user.bank_name and user.bank_account and user.bank_account_name:
+                account_bank = user.bank_name
+                account_number = user.bank_account
+                account_name = user.bank_account_name
+            else:
+                if not (request.data.get('bank_code') and request.data.get('account_number')):
+                    return bad_request_response(message='You did not have an account attached to your profile, kindly add.')
+                account_bank = request.data['bank_code']
+                account_number = request.data['account_number']
+                account_name = request.data.get('account_name') or user.full_name or "Withdrawal Recipient"
+
+        bank_code = self.resolve_bank_identifier(account_bank)
+        if not bank_code:
+            return bad_request_response(message='Unable to resolve the selected bank. Please update your bank details and try again.')
 
         # Resolve bank account to get recipient code
-        is_valid, resolve_result = self.resolve_bank_account(account_number, account_bank)
+        is_valid, resolve_result = self.resolve_bank_account(account_number, bank_code)
         if not is_valid:
             return bad_request_response(message=resolve_result)
 
         # Create transfer recipient
         recipient_data = {
             "type": "nuban",
-            "name": vendor.bank_account_name if vendor else "Withdrawal Recipient",
-            "account_number": account_number,
-            "bank_code": account_bank,
+            "name": account_name or resolve_result.get('account_name') or "Withdrawal Recipient",
+            "account_number": resolve_result.get('account_number', account_number),
+            "bank_code": bank_code,
             "currency": "NGN"
         }
         recipient_response = requests.post(
@@ -309,4 +336,3 @@ class PaystackManager:
         except Exception as e:
             print(e)
             return internal_server_error_response()
-
