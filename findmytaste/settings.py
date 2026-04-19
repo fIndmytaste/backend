@@ -301,133 +301,35 @@ EMAIL_USE_TLS = True
 # }
 
 
-# Redis configuration
-# Redis Cloud credentials
-REDIS_CLOUD_HOST = os.environ.get("REDIS_CLOUD_HOST", "redis-11618.c52.us-east-1-4.ec2.redns.redis-cloud.com")
-REDIS_CLOUD_PORT = int(os.environ.get("REDIS_CLOUD_PORT", "11618"))
-REDIS_CLOUD_USERNAME = os.environ.get("REDIS_CLOUD_USERNAME", "default")
-REDIS_CLOUD_PASSWORD = os.environ.get("REDIS_CLOUD_PASSWORD", "dtgDOXoVkbbBgdSk3PJvZI3ngb52vDdA")
+# Redis, Cache & Channels Configuration
+REDIS_URL = config('REDIS_URL', default='redis://redis:6379/1')
 
-# Fallback to local Redis for development
-REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
-REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
-REDIS_URL = os.environ.get("REDIS_URL")
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_URL,
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
 
-# Configure Redis based on available environment variables
-if REDIS_URL:
-    # Parse REDIS_URL for connection details
-    import urllib.parse
-    parsed = urllib.parse.urlparse(REDIS_URL)
-    redis_host = parsed.hostname
-    redis_port = parsed.port or 6379
-    redis_db = parsed.path.lstrip('/') or '0'
-    
-    CHANNEL_LAYERS = {
-        "default": {
-            "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {
-                "hosts": [(redis_host, redis_port)],
-            },
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
         },
-    }
-    
-    CACHES = {
-        "default": {
-            "BACKEND": "django_redis.cache.RedisCache",
-            "LOCATION": REDIS_URL,
-            "OPTIONS": {
-                "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            }
-        }
-    }
-else:
-    # Try to connect to Redis Cloud first, then fallback to local Redis
-    try:
-        # Test Redis Cloud connection
-        import redis
-        r = redis.Redis(
-            host=REDIS_CLOUD_HOST,
-            port=REDIS_CLOUD_PORT,
-            decode_responses=True,
-            username=REDIS_CLOUD_USERNAME,
-            password=REDIS_CLOUD_PASSWORD,
-            socket_connect_timeout=5
-        )
-        r.ping()
-        print("✅ Connected to Redis Cloud successfully")
-        
-        # Redis Cloud is available, configure it
-        CHANNEL_LAYERS = {
-            "default": {
-                "BACKEND": "channels_redis.core.RedisChannelLayer",
-                "CONFIG": {
-                    "hosts": [f"redis://{REDIS_CLOUD_USERNAME}:{REDIS_CLOUD_PASSWORD}@{REDIS_CLOUD_HOST}:{REDIS_CLOUD_PORT}/0"],
-                },
-            },
-        }
-        
-        CACHES = {
-            "default": {
-                "BACKEND": "django_redis.cache.RedisCache",
-                "LOCATION": f"redis://{REDIS_CLOUD_USERNAME}:{REDIS_CLOUD_PASSWORD}@{REDIS_CLOUD_HOST}:{REDIS_CLOUD_PORT}/0",
-                "OPTIONS": {
-                    "CLIENT_CLASS": "django_redis.client.DefaultClient",
-                }
-            }
-        }
-    except:
-        # Try local Redis as fallback
-        try:
-            import redis
-            r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, socket_connect_timeout=1)
-            r.ping()
-            print("✅ Connected to local Redis successfully")
-            
-            # Local Redis is available, configure it
-            CHANNEL_LAYERS = {
-                "default": {
-                    "BACKEND": "channels_redis.core.RedisChannelLayer",
-                    "CONFIG": {
-                        "hosts": [(REDIS_HOST, REDIS_PORT)],
-                    },
-                },
-            }
-            
-            CACHES = {
-                "default": {
-                    "BACKEND": "django_redis.cache.RedisCache",
-                    "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/1",
-                    "OPTIONS": {
-                        "CLIENT_CLASS": "django_redis.client.DefaultClient",
-                    }
-                }
-            }
-        except:
-            # No Redis available, use fallback configurations
-            print("Warning: Redis not available, using fallback configurations")
-            
-            # Use in-memory channel layer for WebSocket connections
-            CHANNEL_LAYERS = {
-                "default": {
-                    "BACKEND": "channels.layers.InMemoryChannelLayer",
-                },
-            }
-            
-            # Use dummy cache backend
-            CACHES = {
-                "default": {
-                    "BACKEND": "django.core.cache.backends.dummy.DummyCache",
-                }
-            }
-# CACHES = {
-#     "default": {
-#         "BACKEND": "django_redis.cache.RedisCache",
-#         "LOCATION": "redis://127.0.0.1:6379",  # Local Redis
-#         "OPTIONS": {
-#             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-#         }
-#     }
-# }
+    },
+}
+
+# Celery Configuration
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
 
 
 """Basic connection example.

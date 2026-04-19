@@ -26,7 +26,8 @@ schema_view = get_schema_view(
 
 def test_redis(request):
     try:
-        r = redis.Redis(host="redis", port=6379, decode_responses=True)
+        from django.conf import settings
+        r = redis.from_url(settings.REDIS_URL, decode_responses=True)
         r.set("test_key", "Hello, Redis!")
         value = r.get("test_key")
         return HttpResponse(f"Redis test: {value}")
