@@ -361,7 +361,7 @@ class ProductsListCreateView(generics.GenericAPIView):
                 message="You must be verified to create a product."
             )
 
-        serializer = self.serializer_class(data=request.data,context={'request': request, 'is_vendor': True})
+        serializer = self.serializer_class(data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
         product = serializer.save()
 
@@ -405,7 +405,10 @@ class ProductsListCreateView(generics.GenericAPIView):
                         is_active=False  # Mark as inactive since upload failed
                     )
 
-        return success_response(serializer.data, status_code=status.HTTP_201_CREATED)
+        # Re-fetch from DB so product_variant reflects the saved variants
+        product.refresh_from_db()
+        response_serializer = self.serializer_class(product, context={'request': request, 'is_vendor': True})
+        return success_response(response_serializer.data, status_code=status.HTTP_201_CREATED)
 
 
 class ProductGetUpdateDeleteView(generics.GenericAPIView):
@@ -456,7 +459,8 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         serializer = ProductSerializer(product, data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return success_response(serializer.data)
+        product.refresh_from_db()
+        return success_response(ProductSerializer(product, context={'request': request, 'is_vendor': True}).data)
 
     @swagger_auto_schema(
         operation_summary="Partially update a product's details.",
@@ -469,8 +473,8 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         serializer = ProductSerializer(product, data=request.data, partial=True, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        product_serializer = ProductSerializer(product, context={'request': request, 'is_vendor': True})
-        return success_response(product_serializer.data)
+        product.refresh_from_db()
+        return success_response(ProductSerializer(product, context={'request': request, 'is_vendor': True}).data)
 
     @swagger_auto_schema(
         operation_summary="Delete a product by its ID.",

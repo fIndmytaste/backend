@@ -113,7 +113,7 @@ class ProductSerializer(serializers.ModelSerializer):
     recent_reviews = serializers.SerializerMethodField()
     user_rating = serializers.SerializerMethodField()
     has_purchased = serializers.SerializerMethodField()
-    variants = ProductVariantSerializer(many=True, required=False)
+    variants = ProductVariantSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
@@ -282,6 +282,192 @@ class ProductSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             return False  # Placeholder - implement based on your order model
         return False
+
+    def create(self, validated_data):
+        request = self.context['request']
+        vendor = Vendor.objects.get(user=request.user)
+
+        validated_data.pop('product_variant', [])
+        validated_data.pop('select_at_least_one_variant', None)
+
+        product = Product.objects.create(vendor=vendor, **validated_data)
+
+        raw_variants = request.data.get("product_variant", "")
+        self._save_variants_for_product(product, raw_variants)
+
+        return product
+
+    def _save_variants_for_product(self, product, raw_variants):
+        """Parse and save ProductVariantCategory + ProductVariant rows for a product."""
+        if not raw_variants:
+            return
+
+        if isinstance(raw_variants, str):
+            try:
+                variants_data_request = json.loads(raw_variants)
+            except (json.JSONDecodeError, ValueError):
+                return
+        elif isinstance(raw_variants, list):
+            variants_data_request = raw_variants
+        else:
+            return
+
+        for variant_data in variants_data_request:
+            if isinstance(variant_data, str):
+                try:
+                    variant_data = json.loads(variant_data)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+            category_name = variant_data.get('variant_category_name', '').strip()
+            variants_list = variant_data.get('variants', [])
+
+            if not category_name:
+                continue
+
+            category = ProductVariantCategory.objects.create(
+                category_name=category_name,
+                parent_product=product,
+                select_at_least_one_variant_enabled=variant_data.get('select_at_least_one_variant', False),
+                allow_multiple_quantity=variant_data.get('allow_multiple_quantity', False),
+                allow_multiple_variant_selection=variant_data.get('allow_multiple_variant_selection', False),
+                max_quantity_per_variant=variant_data.get('max_quantity_per_variant') or None,
+            )
+
+            for v in variants_list:
+                if isinstance(v, str):
+                    try:
+                        v = json.loads(v)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                vname = v.get('name', '').strip()
+                vprice = v.get('price', 0)
+                if not vname:
+                    continue
+                ProductVariant.objects.create(
+                    product=product,
+                    category=category,
+                    name=vname,
+                    price=vprice,
+                )
+
+    def update(self, instance, validated_data):
+        request = self.context.get('request')
+
+        validated_data.pop('product_variant', None)
+        validated_data.pop('variants', None)
+        validated_data.pop('select_at_least_one_variant', None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if not request:
+            return instance
+
+        raw_variants = request.data.get("product_variant", "")
+        if not raw_variants:
+            return instance
+
+        if isinstance(raw_variants, str):
+            try:
+                variants_data_request = json.loads(raw_variants)
+            except (json.JSONDecodeError, ValueError):
+                return instance
+        elif isinstance(raw_variants, list):
+            variants_data_request = raw_variants
+        else:
+            return instance
+
+        if not isinstance(variants_data_request, list):
+            return instance
+
+        processed_variant_ids = []
+
+        for variant_data in variants_data_request:
+            if isinstance(variant_data, str):
+                try:
+                    variant_data = json.loads(variant_data)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+            category_name = (variant_data.get('variant_category_name') or '').strip()
+            category_id = variant_data.get('id', '')
+            variants_list = variant_data.get('variants', [])
+
+            if not category_name:
+                continue
+
+            # Try to find existing category by id, fall back to name match
+            category = None
+            if category_id:
+                try:
+                    category = ProductVariantCategory.objects.get(id=category_id, parent_product=instance)
+                    category.category_name = category_name
+                except (ProductVariantCategory.DoesNotExist, Exception):
+                    pass
+
+            if not category:
+                category, _ = ProductVariantCategory.objects.get_or_create(
+                    category_name=category_name,
+                    parent_product=instance,
+                )
+
+            category.select_at_least_one_variant_enabled = bool(variant_data.get('select_at_least_one_variant', False))
+            category.allow_multiple_quantity = bool(variant_data.get('allow_multiple_quantity', False))
+            category.allow_multiple_variant_selection = bool(variant_data.get('allow_multiple_variant_selection', False))
+            max_qty = variant_data.get('max_quantity_per_variant')
+            category.max_quantity_per_variant = int(max_qty) if max_qty and str(max_qty).isdigit() else None
+            category.save()
+
+            for v in variants_list:
+                if isinstance(v, str):
+                    try:
+                        v = json.loads(v)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+
+                variant_name = (v.get('name') or '').strip()
+                variant_price = v.get('price', 0)
+                variant_id = v.get('id', '')
+
+                if not variant_name:
+                    continue
+
+                variant = None
+                if variant_id:
+                    try:
+                        variant = ProductVariant.objects.get(id=variant_id, product=instance)
+                    except ProductVariant.DoesNotExist:
+                        pass
+
+                if not variant:
+                    variant = ProductVariant.objects.filter(
+                        name=variant_name, product=instance, category=category
+                    ).first()
+
+                if variant:
+                    variant.name = variant_name
+                    variant.price = variant_price
+                    variant.category = category
+                    variant.is_active = True
+                    variant.save()
+                else:
+                    variant = ProductVariant.objects.create(
+                        product=instance,
+                        category=category,
+                        name=variant_name,
+                        price=variant_price,
+                    )
+
+                processed_variant_ids.append(variant.id)
+
+        # Soft-delete variants not in this update
+        ProductVariant.objects.filter(product=instance).exclude(
+            id__in=processed_variant_ids
+        ).update(is_active=False)
+
+        return instance
 
 
 class BuyerVendorProductSerializer(serializers.ModelSerializer):

@@ -55,6 +55,7 @@ from vendor.models import MarketPlace
 from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
 from wallet.models import WalletTransaction
 from .models import DeliveryFee, UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
+from account.models import Notification
 from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 from helpers.push_notification import notification_helper,send_order_payment_success_notification
@@ -374,6 +375,15 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         print(e)
 
                     try:
+                        Notification.objects.create(
+                            user=vendor.user,
+                            title="New Order Received!",
+                            content=f"You have a new order #{order.track_id} from {order.user.full_name}. Tap to review and accept."
+                        )
+                    except Exception as e:
+                        print(f"Failed to create vendor in-app notification: {e}")
+
+                    try:
 
                         send_order_payment_success_notification(
                             user=order.user,
@@ -389,7 +399,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         thread = notification_helper.send_to_user_async(
                             user=order.user,
                             title="Order Confirmed!",
-                            body="Your order has been successfully placed. We’ll notify you when it’s on the way 🚚",
+                            body="Your order has been successfully placed. We'll notify you when it's on the way 🚚",
                             data={"event": "order_created", "order_id": order.id}
                         )
                     except Exception as e:
@@ -1518,6 +1528,15 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         print(e)
 
                     try:
+                        Notification.objects.create(
+                            user=vendor.user,
+                            title="New Order Received!",
+                            content=f"You have a new order #{order.track_id} from {order.user.full_name}. Tap to review and accept."
+                        )
+                    except Exception as e:
+                        print(f"Failed to create vendor in-app notification: {e}")
+
+                    try:
 
                         send_order_payment_success_notification(
                             user=order.user,
@@ -1533,7 +1552,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         thread = notification_helper.send_to_user_async(
                             user=order.user,
                             title="Order Confirmed!",
-                            body="Your order has been successfully placed. We’ll notify you when it’s on the way 🚚",
+                            body="Your order has been successfully placed. We'll notify you when it's on the way 🚚",
                             data={"event": "order_created", "order_id": order.id}
                         )
                     except Exception as e:
