@@ -1084,8 +1084,10 @@ class VendorOrderSerializer(serializers.ModelSerializer):
         else:
             rep['user'] = None
 
-        # Build items using vendor prices (product.price, not price_with_commission)
-        grouped_items = {}
+        # Build items using vendor prices (product.price, not price_with_commission).
+        # Each unique (product + variant combination) becomes its own line item so
+        # that orders with the same product but different variants are shown separately.
+        items_list = []
         items = list(instance.items.all())
 
         for item in items:
@@ -1093,39 +1095,34 @@ class VendorOrderSerializer(serializers.ModelSerializer):
             product_images = list(product.productimage_set.all()) if hasattr(product, 'productimage_set') else []
             variant_selections = list(item.variant_selections.all()) if hasattr(item, 'variant_selections') else []
 
-            product_id = str(product.id)
-            if product_id not in grouped_items:
-                grouped_items[product_id] = {
-                    'product': {
-                        'id': str(product.id),
-                        'name': product.name,
-                        # vendor's own price — no commission
-                        'price': float(product.price),
-                        'images': ProductImageSerializer(product_images, many=True).data,
-                    },
-                    # unit_price = vendor's price at order time (product.price)
-                    'price': float(product.price),
-                    'unit_price': float(product.price),
-                    'quantity': item.quantity,
-                    'variants': [],
-                }
-                for vs in variant_selections:
-                    variant_obj = vs.variant
-                    grouped_items[product_id]['variants'].append({
-                        'id': str(variant_obj.id),
-                        'variant_category_name': getattr(
-                            getattr(variant_obj, 'category', None),
-                            'category_name', None
-                        ),
-                        'name': variant_obj.name,
-                        # vendor's own price for this variant — no commission
-                        'price': float(variant_obj.price),
-                        'quantity': vs.quantity,
-                    })
-            else:
-                grouped_items[product_id]['quantity'] += item.quantity
+            variants_data = []
+            for vs in variant_selections:
+                variant_obj = vs.variant
+                variants_data.append({
+                    'id': str(variant_obj.id),
+                    'variant_category_name': getattr(
+                        getattr(variant_obj, 'category', None),
+                        'category_name', None
+                    ),
+                    'name': variant_obj.name,
+                    'price': float(variant_obj.price),
+                    'quantity': vs.quantity,
+                })
 
-        rep['items'] = list(grouped_items.values())
+            items_list.append({
+                'product': {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'price': float(product.price),
+                    'images': ProductImageSerializer(product_images, many=True).data,
+                },
+                'price': float(product.price),
+                'unit_price': float(product.price),
+                'quantity': item.quantity,
+                'variants': variants_data,
+            })
+
+        rep['items'] = items_list
 
         # Compute totals using vendor prices (no commission)
         vendor_items_total = sum(

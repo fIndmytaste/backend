@@ -40,6 +40,16 @@ class PlatformSettings(models.Model):
         default=True,
         help_text="Enable/disable commission calculation platform-wide"
     )
+    rider_commission_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.00,
+        help_text=(
+            "Platform commission deducted from rider delivery fee before crediting "
+            "the rider. E.g. 10.00 means rider keeps 90% of the delivery fee. "
+            "Set to 0 to disable."
+        )
+    )
 
     # Rider Fare Configuration
     base_fare = models.DecimalField(
@@ -987,6 +997,23 @@ class Order(models.Model):
             Decimal(str(self.original_delivery_fee or 0)),
         ]
         return max(candidate_amounts).quantize(Decimal('0.01'))
+
+    def calculate_net_rider_earning(self, gross_earning=None):
+        """
+        Apply the platform's rider commission to the gross delivery earning.
+
+        The admin sets PlatformSettings.rider_commission_percentage (e.g. 10 for 10%).
+        Rider receives: gross_earning * (1 - commission / 100).
+        If commission is 0 or disabled the full gross amount is returned.
+        """
+        from decimal import Decimal
+        gross = Decimal(str(gross_earning)) if gross_earning is not None else self.calculate_rider_earning_amount()
+        settings = PlatformSettings.get_settings()
+        commission_pct = Decimal(str(settings.rider_commission_percentage or 0))
+        if commission_pct <= 0:
+            return gross.quantize(Decimal('0.01'))
+        net = gross * (1 - commission_pct / Decimal('100'))
+        return max(Decimal('0.00'), net).quantize(Decimal('0.01'))
 
 
     def save_vendor_and_commision(self):

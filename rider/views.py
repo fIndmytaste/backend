@@ -1282,7 +1282,7 @@ class RiderViewSet(viewsets.ModelViewSet):
             order=order
         )
 
-        rider_earning_amount = order.calculate_rider_earning_amount()
+        gross_earning_amount = order.calculate_rider_earning_amount()
         try:
             dist = 0.5
             vendor_lat = getattr(order.vendor, 'location_latitude', None)
@@ -1295,13 +1295,15 @@ class RiderViewSet(viewsets.ModelViewSet):
                     float(user_address.latitude),
                     float(user_address.longitude)
                 ) or 0.5
-            rider_earning_amount = max(
+            gross_earning_amount = max(
                 order.calculate_rider_earning_amount(),
                 Decimal(str(calculate_rider_fare(dist))),
             )
         except Exception as earning_error:
             print(f"Error calculating rider earning for {order.track_id}: {earning_error}")
 
+        # Apply platform commission to get net amount credited to rider
+        rider_earning_amount = order.calculate_net_rider_earning(gross_earning_amount)
         order.rider_earning = rider_earning_amount
 
         try:

@@ -72,6 +72,12 @@ class OrderSerializer(serializers.ModelSerializer):
         representation['delivery_fee'] = float(instance.delivery_fee or 0)
         representation['discount_amount'] = float(instance.promo_discount_amount or 0)
 
+        # rider_display_earning = delivery fee after platform commission is deducted.
+        # This is what the rider sees as their earning for the order.
+        representation['rider_display_earning'] = float(
+            instance.calculate_net_rider_earning()
+        )
+
         return representation
 
 
