@@ -151,9 +151,57 @@ class CustomerInProgressOrdersListView(generics.GenericAPIView):
         """
         queryset = self.get_queryset().filter(user=request.user)
 
+            
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             queryset,
             page_size=int(request.GET.get('page_size',20))
         )
+
+
+class RedisHealthCheckView(generics.GenericAPIView):
+    """
+    API endpoint to test Redis connection (Cache, Channels, Celery).
+    """
+    permission_classes = [] 
+
+    def get(self, request):
+        from django.core.cache import cache
+        results = {
+            "cache": "failed",
+            "channels": "failed",
+            "celery": "failed"
+        }
+        
+        # 1. Test Cache
+        try:
+            cache.set('health_check', 'ok', timeout=10)
+            if cache.get('health_check') == 'ok':
+                results["cache"] = "success"
+        except Exception as e:
+            results["cache"] = f"error: {str(e)}"
+            
+        # 2. Test Channels (Actual connection test)
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                # Perform a dummy send to verify Redis is reachable
+                async_to_sync(channel_layer.send)('health_check_channel', {'type': 'test.message'})
+                results["channels"] = f"success ({channel_layer.__class__.__name__})"
+            else:
+                results["channels"] = "error: no channel layer configured"
+        except Exception as e:
+            results["channels"] = f"error: {str(e)}"
+            
+        # 3. Test Celery
+        try:
+            from findmytaste.celery import app as celery_app
+            # Just check broker connection
+            with celery_app.connection() as connection:
+                connection.connect()
+                results["celery"] = "success (broker reachable)"
+        except Exception as e:
+            results["celery"] = f"error: {str(e)}"
+            
+        return success_response(data=results)

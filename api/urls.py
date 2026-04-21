@@ -13,7 +13,15 @@ from admin_manager.views.popup_announcements import (
 from django.urls import path, include
 from account.views.account import send_notification
 from rest_framework.routers import DefaultRouter
-from api.views import CustomerInProgressOrdersListView, CustomerOrdersListView, GetAllBanksView, TestPushNotificationView, TestingWebsocketView, ValidateBankAccountNumber
+from api.views import (
+    CustomerInProgressOrdersListView, 
+    CustomerOrdersListView, 
+    GetAllBanksView, 
+    TestPushNotificationView, 
+    TestingWebsocketView, 
+    ValidateBankAccountNumber,
+    RedisHealthCheckView
+)
 from rider.views import ConfirmOrderPaymentAPIView, EnhancedRiderViewSet, MakeOrderPayment, NearbyRidersView, OrderPaymentWebhookView, OrderTrackingDetailView, OrderViewSet, RiderGuarantorUpdateView, RiderOrderDetailView, RiderViewSet, UploadRiderDocumentView, WebSocketSimulationView
 from vendor.views import AllMarketPlaceCategoriesView,SingleMarketPlaceCategoryVendorsView, SingleMarketPlaceCategoryView
 
@@ -64,6 +72,7 @@ urlpatterns = [
     path('websocket/test', TestingWebsocketView.as_view(), name='TestingWebsocketView'),
     path('websocket/simulate', WebSocketSimulationView.as_view(), name='websocket_simulation'),
     path('push-notification/test', TestPushNotificationView.as_view(), name='test_push_notification'),
+    path('redis/test', RedisHealthCheckView.as_view(), name='redis_health_check'),
     
     # Backblaze test endpoints
     path('test/backblaze/', include('helpers.test_urls')),
