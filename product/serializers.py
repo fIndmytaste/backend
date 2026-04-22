@@ -134,73 +134,63 @@ class OrderSerializer(serializers.ModelSerializer):
 
         # Prefetch all related objects in queryset for performance
         # items, product, productimage_set, variant_categories, variant_selections, variant, variant__category
-        grouped_items = {}
-        # Use the prefetched items (should be prefetched in queryset)
+        items_list = []
         items = list(getattr(instance, 'items').all() if hasattr(instance, 'items') else [])
-        # if context.get("full_items"):
         for item in items:
             product = item.product
-            # Prefetch images and variant categories
             product_images = list(getattr(product, 'productimage_set', []).all()) if hasattr(product, 'productimage_set') else []
-            variant_categories = list(getattr(product, 'variant_categories', []).all()) if hasattr(product, 'variant_categories') else []
-            # Prefetch variant selections
             variant_selections = list(getattr(item, 'variant_selections', []).all()) if hasattr(item, 'variant_selections') else []
 
             if product.parent:
                 parent = product.parent
-                parent_id = str(parent.id)
                 parent_images = list(getattr(parent, 'productimage_set', []).all()) if hasattr(parent, 'productimage_set') else []
-                if parent_id not in grouped_items:
-                    grouped_items[parent_id] = {
-                        'product': {
-                            'id': parent.id,
-                            'name': parent.name,
-                            'price': float(parent.price),
-                            'quantity': 0,
-                            'images': ProductImageSerializerClass(parent_images, many=True).data,
-                        },
-                        'quantity': 0,
-                        'variants': []
-                    }
-                grouped_items[parent_id]['variants'].append({
-                    'id': product.id,
-                    'variant_category_name': (
-                        variant_categories[0].category_name if variant_categories else None
-                    ),
-                    'name': product.name,
-                    'price': float(item.price),  # price at purchase, not current product price
+                variant_categories = list(getattr(product, 'variant_categories', []).all()) if hasattr(product, 'variant_categories') else []
+                items_list.append({
+                    'product': {
+                        'id': parent.id,
+                        'name': parent.name,
+                        'price': float(parent.price),
+                        'images': ProductImageSerializerClass(parent_images, many=True).data,
+                    },
+                    'price': float(item.price),
+                    'unit_price': float(item.price),
                     'quantity': item.quantity,
-                    'images': ProductImageSerializerClass(product_images, many=True).data,
+                    'variants': [{
+                        'id': product.id,
+                        'variant_category_name': (
+                            variant_categories[0].category_name if variant_categories else None
+                        ),
+                        'name': product.name,
+                        'price': float(item.price),
+                        'quantity': item.quantity,
+                        'images': ProductImageSerializerClass(product_images, many=True).data,
+                    }],
                 })
             else:
-                product_id = str(product.id)
-                if product_id not in grouped_items:
-                    grouped_items[product_id] = {
-                        'product': {
-                            'id': product.id,
-                            'name': product.name,
-                            'price': float(product.price),
-                            'images': ProductImageSerializerClass(product_images, many=True).data,
-                        },
-                        # price / unit_price = actual price paid at order time (not current product price)
-                        'price': float(item.price),
-                        'unit_price': float(item.price),
-                        'quantity': item.quantity,
-                        'variants': []
-                    }
-                    for variant_selection in variant_selections:
-                        variant_obj = variant_selection.variant
-                        grouped_items[product_id]['variants'].append({
-                            'id': str(variant_obj.id),
-                            'variant_category_name': getattr(variant_obj.category, 'category_name', None),
-                            'name': variant_obj.name,
-                            'price': float(variant_selection.price_at_purchase),
-                            'quantity': variant_selection.quantity,
-                        })
-                else:
-                    grouped_items[product_id]['quantity'] += item.quantity
+                variants_data = []
+                for variant_selection in variant_selections:
+                    variant_obj = variant_selection.variant
+                    variants_data.append({
+                        'id': str(variant_obj.id),
+                        'variant_category_name': getattr(variant_obj.category, 'category_name', None),
+                        'name': variant_obj.name,
+                        'price': float(variant_selection.price_at_purchase),
+                        'quantity': variant_selection.quantity,
+                    })
+                items_list.append({
+                    'product': {
+                        'id': product.id,
+                        'name': product.name,
+                        'price': float(product.price),
+                        'images': ProductImageSerializerClass(product_images, many=True).data,
+                    },
+                    'price': float(item.price),
+                    'unit_price': float(item.price),
+                    'quantity': item.quantity,
+                    'variants': variants_data,
+                })
 
-        rep['items'] = list(grouped_items.values())
+        rep['items'] = items_list
         # else:
         #     # Default detailed items representation
         #     rep['items'] = [str(item.id) for item in items]

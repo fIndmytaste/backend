@@ -12,6 +12,19 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'track_id')
 
+    # Cached at the serializer instance level so many() lists only hit the DB once.
+    _rider_commission_pct = None
+
+    def _get_rider_commission_pct(self):
+        if self._rider_commission_pct is None:
+            from product.models import PlatformSettings
+            from decimal import Decimal
+            settings = PlatformSettings.get_settings()
+            OrderSerializer._rider_commission_pct = Decimal(
+                str(settings.rider_commission_percentage or 0)
+            )
+        return self._rider_commission_pct
+
     def _get_whole_price(self, instance: Order) -> float:
         """items_total + delivery_fee - promo_discount.
         Commission is baked into item prices — service_fee is not added separately.
@@ -22,9 +35,22 @@ class OrderSerializer(serializers.ModelSerializer):
         promo_discount = float(instance.promo_discount_amount or Decimal('0.00'))
         return max(0.0, items_total + delivery_fee - promo_discount)
 
+    def _compute_rider_display_earning(self, instance: Order) -> float:
+        from decimal import Decimal
+        gross = max(
+            Decimal(str(instance.rider_earning or 0)),
+            Decimal(str(instance.delivery_fee or 0)),
+            Decimal(str(instance.original_delivery_fee or 0)),
+        )
+        commission_pct = self._get_rider_commission_pct()
+        if commission_pct <= 0:
+            return float(gross)
+        net = gross * (1 - commission_pct / Decimal('100'))
+        return float(max(Decimal('0.00'), net))
+
     def to_representation(self, instance: Order):
         addition_serializer_data = self.context.get('addition_serializer_data')
-        
+
         # Call super to get default representation
         representation = super().to_representation(instance)
 
@@ -60,7 +86,7 @@ class OrderSerializer(serializers.ModelSerializer):
                     product_images = item.product.all_images(),
                     quantity=item.quantity,
                     price=item.price,
-                    
+
                 ) for item in OrderItem.objects.filter(order=instance)]
                 representation['items'] = items
 
@@ -73,10 +99,8 @@ class OrderSerializer(serializers.ModelSerializer):
         representation['discount_amount'] = float(instance.promo_discount_amount or 0)
 
         # rider_display_earning = delivery fee after platform commission is deducted.
-        # This is what the rider sees as their earning for the order.
-        representation['rider_display_earning'] = float(
-            instance.calculate_net_rider_earning()
-        )
+        # PlatformSettings is fetched once per serializer instance, not per order.
+        representation['rider_display_earning'] = self._compute_rider_display_earning(instance)
 
         return representation
 

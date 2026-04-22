@@ -115,12 +115,17 @@ class DeliveryTrackingAdmin(admin.ModelAdmin):
 # PlatformSettings Admin
 @admin.register(PlatformSettings)
 class PlatformSettingsAdmin(admin.ModelAdmin):
-    list_display = ('default_commission_percentage', 'is_commission_active', 'delivery_percentage_off', 'updated_at', 'updated_by')
+    list_display = ('default_commission_percentage', 'rider_commission_percentage', 'is_commission_active', 'delivery_percentage_off', 'updated_at', 'updated_by')
     readonly_fields = ('updated_at',)
     
     fieldsets = (
         ('Commission & Discount Settings', {
-            'fields': ('default_commission_percentage', 'is_commission_active', 'delivery_percentage_off')
+            'fields': (
+                'default_commission_percentage',
+                'is_commission_active',
+                'delivery_percentage_off',
+                'rider_commission_percentage',
+            )
         }),
         ('Metadata', {
             'fields': ('updated_at', 'updated_by'),
