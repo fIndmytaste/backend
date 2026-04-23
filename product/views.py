@@ -62,12 +62,26 @@ from helpers.push_notification import notification_helper,send_order_payment_suc
 from wallet.models import Wallet
 from rest_framework.exceptions import NotFound
 
+_PRODUCT_SELECT_RELATED = ['vendor__category', 'system_category', 'parent']
+_PRODUCT_PREFETCH_RELATED = [
+    'productimage_set',
+    'parent__productimage_set',
+    'productvariantcategory_set__variants',
+    'variants',
+    'ratings',
+]
+
+
 class InternalProductListView(generics.GenericAPIView):
     # permission_classes = [IsAuthenticated]
     serializer_class = ProductSerializer
     def get(self, request):
-        categories = Product.objects.all()
-        serializer = self.serializer_class(categories, many=True)
+        categories = (
+            Product.objects
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )
+        serializer = self.serializer_class(categories, many=True, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -454,8 +468,12 @@ class AllProductsView(generics.GenericAPIView):
     serializer_class = ProductSerializer
     
     def get(self, request):
-        products = Product.objects.all()[:5]
-        serializer = self.serializer_class(products, many=True,context={'request': request})
+        products = (
+            Product.objects
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )[:5]
+        serializer = self.serializer_class(products, many=True, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -485,8 +503,13 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, system_category_id):
-        products = Product.objects.filter(parent=None,system_category__id=system_category_id)
-        serializer = self.serializer_class(products, many=True)
+        products = (
+            Product.objects
+            .filter(parent=None, system_category__id=system_category_id)
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )
+        serializer = self.serializer_class(products, many=True, context={'request': request})
         return success_response(serializer.data)
     
 
@@ -682,7 +705,12 @@ class ProductDetailView(generics.GenericAPIView):
         }
     )
     def get(self, request, product_id):
-        product = Product.objects.get(id=product_id)
+        product = (
+            Product.objects
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+            .get(id=product_id)
+        )
         serializer = self.serializer_class(product, context={'request': request, "is_vendor": request.user.is_authenticated and hasattr(request.user, 'vendor')})
         return success_response(serializer.data)
 
@@ -773,8 +801,13 @@ class VendorDetailView(generics.GenericAPIView):
         }
     )
     def get(self, request, vendor_id):
-        vendor = Vendor.objects.get(id=vendor_id)
-        serializer = self.serializer_class(vendor)
+        vendor = (
+            Vendor.objects
+            .select_related('user', 'category')
+            .prefetch_related('ratings')
+            .get(id=vendor_id)
+        )
+        serializer = self.serializer_class(vendor, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -832,8 +865,13 @@ class ProductByVendorCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, vendor_category_id):
-        products = Product.objects.filter(parent=None,category_id=vendor_category_id)
-        serializer = self.serializer_class(products, many=True)
+        products = (
+            Product.objects
+            .filter(parent=None, category_id=vendor_category_id)
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )
+        serializer = self.serializer_class(products, many=True, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -1623,7 +1661,20 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def get_queryset(self):
         """Only return orders belonging to the authenticated user."""
-        return Order.objects.all()
+        return Order.objects.select_related(
+            'user', 'rider', 'rider__user', 'vendor', 'vendor__user',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+            'items__product__parent',
+            'items__product__parent__productimage_set',
+            'items__product__variant_categories',
+            'items__variant_selections',
+            'items__variant_selections__variant',
+            'items__variant_selections__variant__category',
+            'items__variant_selections__variant__product',
+        )
 
 
 class UserFavoriteListView(generics.ListAPIView):

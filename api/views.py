@@ -91,10 +91,24 @@ class ValidateBankAccountNumber(generics.GenericAPIView):
 
 
 
+_ORDER_SELECT_RELATED = ['vendor__user', 'rider__user', 'user']
+_ORDER_PREFETCH_RELATED = [
+    'items__product__productimage_set',
+    'items__product__parent__productimage_set',
+    'items__product__variant_categories',
+    'items__variant_selections__variant__category',
+]
+
+
 class CustomerOrdersListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = OrderSerializer
-    queryset = Order.objects.all().order_by('-created_at')
+    queryset = (
+        Order.objects
+        .select_related(*_ORDER_SELECT_RELATED)
+        .prefetch_related(*_ORDER_PREFETCH_RELATED)
+        .order_by('-created_at')
+    )
 
     def get(self,request):
         """
@@ -131,19 +145,25 @@ class CustomerOrdersListView(generics.GenericAPIView):
 class CustomerInProgressOrdersListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = OrderSerializer
-    queryset = Order.objects.filter(
-        status__in=[
-            'confirmed', 
-            'pending', 
-            'preparing', 
-            'looking_for_rider',
-            'rider_assigned',
-            'picked_up',
-            'in_transit',
-            'near_delivery'
-        ],
-        payment_status="paid"
-    ).order_by('-created_at')
+    queryset = (
+        Order.objects
+        .filter(
+            status__in=[
+                'confirmed',
+                'pending',
+                'preparing',
+                'looking_for_rider',
+                'rider_assigned',
+                'picked_up',
+                'in_transit',
+                'near_delivery',
+            ],
+            payment_status="paid",
+        )
+        .select_related(*_ORDER_SELECT_RELATED)
+        .prefetch_related(*_ORDER_PREFETCH_RELATED)
+        .order_by('-created_at')
+    )
 
     def get(self,request):
         """

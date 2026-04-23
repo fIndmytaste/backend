@@ -795,19 +795,20 @@ class Order(models.Model):
     def __str__(self):
         return f"Order #{self.id}"
 
-    def calculate_total_commission(self):
-        """Calculate total commission for all items in the order."""
+    def calculate_total_commission(self, prefetched_items=None):
+        """Calculate total commission for all items in the order.
+
+        Pass prefetched_items (already-evaluated list) to avoid re-querying the DB.
+        """
         from decimal import Decimal
         total_commission = Decimal('0.00')
 
-        for item in self.items.all():
-            # Commission on base product
+        items = prefetched_items if prefetched_items is not None else self.items.all()
+        for item in items:
             product_commission = item.product.calculate_commission(item.price)
             total_commission += product_commission * item.quantity
 
-            # Commission on variants
             for variant_selection in item.variant_selections.all():
-                # Get the variant's parent product to access commission calculation
                 variant_product = variant_selection.variant.product
                 variant_commission = variant_product.calculate_commission(
                     variant_selection.price_at_purchase)
@@ -1049,6 +1050,16 @@ class Order(models.Model):
 
     #     return total_earning
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='order_user_created_idx'),
+            models.Index(fields=['vendor', '-created_at'], name='order_vendor_created_idx'),
+            models.Index(fields=['rider', '-created_at'], name='order_rider_created_idx'),
+            models.Index(fields=['status'], name='order_status_idx'),
+            models.Index(fields=['payment_status'], name='order_payment_status_idx'),
+            models.Index(fields=['vendor', 'status'], name='order_vendor_status_idx'),
+        ]
+
 
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1077,6 +1088,12 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.product.name} (x{self.quantity})"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['order'], name='orderitem_order_idx'),
+            models.Index(fields=['product'], name='orderitem_product_idx'),
+        ]
 
 
 class DeclinedOrder(models.Model):

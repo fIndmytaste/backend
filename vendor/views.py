@@ -512,9 +512,18 @@ class VendorOrderListView(generics.ListAPIView):
         """
         Optionally filter orders for the vendor by status, payment status, or date range.
         """
-        vendor = Vendor.objects.get(user=self.request.user) 
-        
-        queryset = Order.objects.filter(vendor=vendor).order_by('-created_at')
+        vendor = Vendor.objects.only('id').get(user=self.request.user)
+
+        queryset = (
+            Order.objects
+            .filter(vendor=vendor)
+            .select_related('vendor__user', 'rider__user', 'user')
+            .prefetch_related(
+                'items__product__productimage_set',
+                'items__variant_selections__variant__category',
+            )
+            .order_by('-created_at')
+        )
         
         # Filter by order status
         status = self.request.GET.get('status', None)
@@ -1520,7 +1529,14 @@ class VendorOrderDetailAPIView(generics.RetrieveAPIView):
     serializer_class = VendorOrderSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.all()
+    queryset = (
+        Order.objects
+        .select_related('vendor__user', 'rider__user', 'user')
+        .prefetch_related(
+            'items__product__productimage_set',
+            'items__variant_selections__variant__category',
+        )
+    )
 
     @swagger_auto_schema(
         operation_description="Retrieve detailed information of a specific order by ID.",

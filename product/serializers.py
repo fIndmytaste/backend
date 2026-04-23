@@ -128,23 +128,25 @@ class OrderSerializer(serializers.ModelSerializer):
         return order
 
 
+    def _compute_rider_display_earning(self, instance):
+        return float(instance.calculate_net_rider_earning())
+
     def to_representation(self, instance: Order):
         rep = super().to_representation(instance)
         context = self.context or {}
 
-        # Prefetch all related objects in queryset for performance
-        # items, product, productimage_set, variant_categories, variant_selections, variant, variant__category
+        # Use prefetched relations — no extra DB hits when queryset has prefetch_related
         items_list = []
-        items = list(getattr(instance, 'items').all() if hasattr(instance, 'items') else [])
+        items = list(instance.items.all())
         for item in items:
             product = item.product
-            product_images = list(getattr(product, 'productimage_set', []).all()) if hasattr(product, 'productimage_set') else []
-            variant_selections = list(getattr(item, 'variant_selections', []).all()) if hasattr(item, 'variant_selections') else []
+            product_images = list(product.productimage_set.all())
+            variant_selections = list(item.variant_selections.all())
 
             if product.parent:
                 parent = product.parent
-                parent_images = list(getattr(parent, 'productimage_set', []).all()) if hasattr(parent, 'productimage_set') else []
-                variant_categories = list(getattr(product, 'variant_categories', []).all()) if hasattr(product, 'variant_categories') else []
+                parent_images = list(parent.productimage_set.all())
+                variant_categories = list(product.variant_categories.all())
                 items_list.append({
                     'product': {
                         'id': parent.id,
@@ -191,19 +193,15 @@ class OrderSerializer(serializers.ModelSerializer):
                 })
 
         rep['items'] = items_list
-        # else:
-        #     # Default detailed items representation
-        #     rep['items'] = [str(item.id) for item in items]
 
-        # Optional: Include delivery/user/vendor info
-        if context.get('include_delivery_info'): 
+        if context.get('include_delivery_info'):
             rep['user'] = {
                 'id': instance.user.id,
                 'full_name': instance.user.full_name,
                 'first_name': instance.user.first_name,
                 'last_name': instance.user.last_name,
                 'email': instance.user.email,
-               'phone_number': instance.user.phone_number,
+                'phone_number': instance.user.phone_number,
             } if instance.user else None
 
             rep['rider'] = {
@@ -228,15 +226,13 @@ class OrderSerializer(serializers.ModelSerializer):
                 'phone_number': instance.vendor.phone_number,
             } if instance.vendor else None
 
-        # items_total = sum of items with commission (no delivery, no discount)
-        # total_amount = items_total + delivery_fee - promo_discount (what customer paid)
         rep['items_total'] = float(instance.total_amount or 0)
-        rep['service_fee'] = 0  # commission is baked into product prices, not a separate fee
+        rep['service_fee'] = 0
         rep['promo_discount_amount'] = float(instance.promo_discount_amount or 0)
         rep['delivery_fee'] = float(instance.delivery_fee or 0)
         rep['total_amount'] = self.get_whole_price(instance)
+        rep['rider_display_earning'] = self._compute_rider_display_earning(instance)
 
-        # Estimated pickup and dropoff times for riders
         from django.utils import timezone as tz
         now = tz.now()
         estimated_pickup_time = None
@@ -244,7 +240,6 @@ class OrderSerializer(serializers.ModelSerializer):
         if instance.actual_pickup_time:
             estimated_pickup_time = instance.actual_pickup_time.isoformat()
         elif instance.new_estimated_delivery_time:
-            # Estimate pickup = now + half of total estimated duration
             half_duration = instance.new_estimated_delivery_time / 2
             estimated_pickup_time = (now + half_duration).isoformat()
         if instance.actual_delivery_time:

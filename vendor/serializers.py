@@ -235,30 +235,30 @@ class ProductSerializer(serializers.ModelSerializer):
         """Return the commission amount for this product"""
         return float(obj.calculate_commission())
 
+    def _get_ratings_cached(self, obj):
+        """Evaluate ratings once and cache on the instance to avoid repeat DB hits."""
+        if not hasattr(obj, '_ratings_cache'):
+            obj._ratings_cache = list(obj.ratings.all())
+        return obj._ratings_cache
+
     def get_average_rating(self, obj):
-        """Calculate average rating using prefetched ratings"""
-        ratings = obj.ratings.all()
+        ratings = self._get_ratings_cached(obj)
         if not ratings:
             return 0.00
-        total = sum(r.rating for r in ratings)
-        return round(total / len(ratings), 2)
+        return round(sum(r.rating for r in ratings) / len(ratings), 2)
 
     def get_total_ratings(self, obj):
-        """Return total number of ratings using prefetched data"""
-        return len(obj.ratings.all())
+        return len(self._get_ratings_cached(obj))
 
     def get_rating_distribution(self, obj):
-        """Return rating distribution using prefetched ratings"""
-        ratings = obj.ratings.all()
         distribution = {f'{i}_star': 0 for i in range(1, 6)}
-        for r in ratings:
+        for r in self._get_ratings_cached(obj):
             star = min(5, max(1, int(r.rating)))
             distribution[f'{star}_star'] += 1
         return distribution
 
     def get_recent_reviews(self, obj):
-        """Return the 5 most recent reviews with comments using prefetched data"""
-        ratings = obj.ratings.all()
+        ratings = self._get_ratings_cached(obj)
         recent = sorted(
             [r for r in ratings if r.comment],
             key=lambda r: r.created_at,
@@ -267,11 +267,9 @@ class ProductSerializer(serializers.ModelSerializer):
         return RatingSerializer(recent, many=True).data
 
     def get_user_rating(self, obj):
-        """Return the current user's rating using prefetched data"""
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            ratings = obj.ratings.all()
-            for r in ratings:
+            for r in self._get_ratings_cached(obj):
                 if r.user_id == request.user.id:
                     return RatingSerializer(r).data
         return None
@@ -925,49 +923,65 @@ class VendorSerializer(serializers.ModelSerializer):
 
         data = super().to_representation(instance)
 
-        if MarketPlace.objects.filter(vendors=instance).exists():
+        from django.core.cache import cache as django_cache
+
+        # Check marketplace membership via prefetched cache when available.
+        is_marketplace = False
+        if hasattr(instance, '_prefetched_objects_cache') and 'marketplace_set' in instance._prefetched_objects_cache:
+            is_marketplace = bool(list(instance.marketplace_set.all()))
+        else:
+            is_marketplace = MarketPlace.objects.filter(vendors=instance).exists()
+
+        if is_marketplace:
             # Marketplace: fixed 24-48 hr window — use the vendor's stored value if
             # admin has customised it, otherwise default to 48 h.
             stored = instance.estimated_delivery_time
-            if stored and stored > timedelta(hours=1):
-                # Already customised by admin — keep it as-is.
-                pass
-            else:
+            if not (stored and stored > timedelta(hours=1)):
                 data['estimated_delivery_time'] = '2 days, 0:00:00'
             data['is_marketplace_vendor'] = True
         else:
             # Regular vendor: compute average actual delivery duration from the
-            # last 50 delivered orders that have both timestamps.
-            recent_orders = (
-                Order.objects
-                .filter(
-                    vendor=instance,
-                    status='delivered',
-                    actual_delivery_time__isnull=False,
-                    actual_pickup_time__isnull=False,
+            # last 50 delivered orders. Cache per-vendor for 30 minutes so list
+            # responses don't fire 50 * N queries.
+            cache_key = f'vendor_avg_delivery_{instance.id}'
+            cached_time = django_cache.get(cache_key)
+            if cached_time is not None:
+                if cached_time:
+                    data['estimated_delivery_time'] = cached_time
+            else:
+                recent_orders = (
+                    Order.objects
+                    .filter(
+                        vendor=instance,
+                        status='delivered',
+                        actual_delivery_time__isnull=False,
+                        actual_pickup_time__isnull=False,
+                    )
+                    .only('actual_delivery_time', 'actual_pickup_time')
+                    .order_by('-actual_delivery_time')[:50]
                 )
-                .order_by('-actual_delivery_time')[:50]
-            )
 
-            durations = []
-            for order in recent_orders:
-                try:
-                    duration = order.actual_delivery_time - order.actual_pickup_time
-                    if timedelta(minutes=5) <= duration <= timedelta(hours=6):
-                        durations.append(duration)
-                except Exception:
-                    pass
+                durations = []
+                for order in recent_orders:
+                    try:
+                        duration = order.actual_delivery_time - order.actual_pickup_time
+                        if timedelta(minutes=5) <= duration <= timedelta(hours=6):
+                            durations.append(duration)
+                    except Exception:
+                        pass
 
-            if durations:
-                avg_seconds = sum(d.total_seconds() for d in durations) / len(durations)
-                # Round up to nearest 5 minutes
-                rounded = timedelta(seconds=round(avg_seconds / 300) * 300)
-                # Format as Django DurationField string HH:MM:SS
-                total_secs = int(rounded.total_seconds())
-                hours, rem = divmod(total_secs, 3600)
-                minutes, secs = divmod(rem, 60)
-                data['estimated_delivery_time'] = f'{hours}:{minutes:02d}:{secs:02d}'
-            # else: keep the stored value from the model (admin can set it manually)
+                delivery_time_str = ''
+                if durations:
+                    avg_seconds = sum(d.total_seconds() for d in durations) / len(durations)
+                    rounded = timedelta(seconds=round(avg_seconds / 300) * 300)
+                    total_secs = int(rounded.total_seconds())
+                    hours, rem = divmod(total_secs, 3600)
+                    minutes, secs = divmod(rem, 60)
+                    delivery_time_str = f'{hours}:{minutes:02d}:{secs:02d}'
+                    data['estimated_delivery_time'] = delivery_time_str
+
+                # Cache result (empty string means "no data — use model default")
+                django_cache.set(cache_key, delivery_time_str, timeout=1800)
 
             data['is_marketplace_vendor'] = False
 
@@ -1090,14 +1104,18 @@ class VendorOrderSerializer(serializers.ModelSerializer):
         items_list = []
         items = list(instance.items.all())
 
+        vendor_items_total = 0.0
         for item in items:
             product = item.product
             product_images = list(product.productimage_set.all()) if hasattr(product, 'productimage_set') else []
             variant_selections = list(item.variant_selections.all()) if hasattr(item, 'variant_selections') else []
 
             variants_data = []
+            variant_total = 0.0
             for vs in variant_selections:
                 variant_obj = vs.variant
+                variant_price = float(variant_obj.price)
+                variant_total += variant_price * vs.quantity
                 variants_data.append({
                     'id': str(variant_obj.id),
                     'variant_category_name': getattr(
@@ -1105,34 +1123,27 @@ class VendorOrderSerializer(serializers.ModelSerializer):
                         'category_name', None
                     ),
                     'name': variant_obj.name,
-                    'price': float(variant_obj.price),
+                    'price': variant_price,
                     'quantity': vs.quantity,
                 })
+
+            item_price = float(product.price)
+            vendor_items_total += item_price * item.quantity + variant_total
 
             items_list.append({
                 'product': {
                     'id': str(product.id),
                     'name': product.name,
-                    'price': float(product.price),
+                    'price': item_price,
                     'images': ProductImageSerializer(product_images, many=True).data,
                 },
-                'price': float(product.price),
-                'unit_price': float(product.price),
+                'price': item_price,
+                'unit_price': item_price,
                 'quantity': item.quantity,
                 'variants': variants_data,
             })
 
         rep['items'] = items_list
-
-        # Compute totals using vendor prices (no commission)
-        vendor_items_total = sum(
-            float(item.product.price) * item.quantity +
-            sum(
-                float(vs.variant.price) * vs.quantity
-                for vs in item.variant_selections.all()
-            )
-            for item in items
-        )
 
         delivery_fee = float(instance.delivery_fee or 0)
         discount = float(instance.promo_discount_amount or 0)

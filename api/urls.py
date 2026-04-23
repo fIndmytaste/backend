@@ -56,7 +56,7 @@ urlpatterns = [
     path('marketplace/categories/<category_id>/vendors', SingleMarketPlaceCategoryVendorsView.as_view(), name='SingleMarketPlaceCategoryDetailsView'),
     path('riders/<id>/upload_documents/',UploadRiderDocumentView.as_view()),
     path('riders/<id>/guarantors/',RiderGuarantorUpdateView.as_view()),
-    path('riders/orders/<order_id>',RiderOrderDetailView.as_view()),
+    path('riders/orders/<order_id>/', RiderOrderDetailView.as_view()),
     path('api/orders/<uuid:order_id>/tracking/', OrderTrackingDetailView.as_view(), name='order-tracking'),
     path('api/nearby-riders/', NearbyRidersView.as_view(), name='nearby-riders'),
     path('order/<id>/make-payment',MakeOrderPayment.as_view()),

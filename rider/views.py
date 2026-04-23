@@ -50,16 +50,20 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # Filter orders based on user role
+        base_qs = (
+            Order.objects
+            .select_related('vendor__user', 'rider__user', 'user')
+            .prefetch_related(
+                'items__product__productimage_set',
+                'items__variant_selections__variant__category',
+            )
+        )
         if hasattr(user, 'rider'):
-            # If user is a rider, show assigned orders
-            return Order.objects.filter(rider=user.rider)
+            return base_qs.filter(rider=user.rider)
         elif hasattr(user, 'vendor'):
-            # If user is a vendor, show their orders
-            return Order.objects.filter(vendor=user.vendor)
+            return base_qs.filter(vendor=user.vendor)
         else:
-            # Regular customer sees their own orders
-            return Order.objects.filter(user=user)
+            return base_qs.filter(user=user)
 
     @action(detail=True, methods=['post'])
     def assign_rider(self, request, pk=None):
@@ -929,17 +933,21 @@ class RiderViewSet(viewsets.ModelViewSet):
         declined_order_ids = rider.declined_orders.values_list(
             'order_id', flat=True)
 
-        # Get all available orders
-        queryset = Order.objects.filter(
+        # Fetch candidate orders with all relations needed by is_order_visible_to_rider
+        # and by the serializer — one DB round-trip for the loop, no N+1 after.
+        candidate_qs = Order.objects.filter(
             rider=None,
             status__in=['looking_for_rider', 'awaiting_rider'],
-        ).exclude(id__in=declined_order_ids)
-        # print(queryset)
+        ).exclude(id__in=declined_order_ids).select_related(
+            'vendor', 'vendor__user',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+        )
 
-        # Show orders to all riders inside the current dispatch radius using
-        # the same shared eligibility logic as websocket fanout.
         nearby_orders = []
-        for order in queryset:
+        for order in candidate_qs:
             if is_order_visible_to_rider(
                 order,
                 rider,
@@ -948,9 +956,6 @@ class RiderViewSet(viewsets.ModelViewSet):
             ):
                 nearby_orders.append(order)
 
-        # # Convert to queryset for pagination
-        # order_ids = [order.id for order in nearby_orders]
-        # queryset = Order.objects.filter(id__in=order_ids)
         from django.db.models import Case, When
 
         order_ids = [order.id for order in nearby_orders]
@@ -959,8 +964,13 @@ class RiderViewSet(viewsets.ModelViewSet):
             *[When(id=pk, then=pos) for pos, pk in enumerate(order_ids)]
         )
 
-        queryset = Order.objects.filter(id__in=order_ids).order_by(
-            preserved_order).order_by('-created_at')
+        queryset = Order.objects.filter(id__in=order_ids).select_related(
+            'vendor', 'vendor__user',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+        ).order_by(preserved_order).order_by('-created_at')
 
         return paginate_success_response_with_serializer(
             self.request,
@@ -1862,31 +1872,24 @@ class WebSocketSimulationView(generics.GenericAPIView):
 
 
 class RiderOrderDetailView(generics.GenericAPIView):
-    # permission_classes = [IsAuthenticated]
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, order_id):
-        # user = request.user
-
-        # if not hasattr(user, 'rider'):
-        #     return bad_request_response(message="You are not a rider.")
-
-        # rider = user.rider
-
         try:
-            order = Order.objects.get(id=order_id)
+            order = (
+                Order.objects
+                .select_related('vendor__user', 'user')
+                .prefetch_related(
+                    'items__product__productimage_set',
+                    'items__variant_selections',
+                )
+                .get(id=order_id)
+            )
         except Order.DoesNotExist:
-            return bad_request_response(message="Order not found or not assigned to you.", status_code=404)
+            return bad_request_response(message="Order not found.", status_code=404)
 
-        serializer = OrderSerializer(
-            order,
-            context={
-                'request': request,
-                'addition_serializer_data': {
-                    'rider_order_details': True
-                }
-            }
-        )
+        from .serializers import RiderOrderDetailSerializer
+        serializer = RiderOrderDetailSerializer(order)
         return success_response(data=serializer.data)
 
 
