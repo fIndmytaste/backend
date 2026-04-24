@@ -146,7 +146,7 @@ class OrderSerializer(serializers.ModelSerializer):
             if product.parent:
                 parent = product.parent
                 parent_images = list(parent.productimage_set.all())
-                variant_categories = list(product.variant_categories.all())
+                variant_categories = list(product.productvariantcategory_set.all())
                 items_list.append({
                     'product': {
                         'id': parent.id,

@@ -1669,7 +1669,7 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
             'items__product__productimage_set',
             'items__product__parent',
             'items__product__parent__productimage_set',
-            'items__product__variant_categories',
+            'items__product__productvariantcategory_set',
             'items__variant_selections',
             'items__variant_selections__variant',
             'items__variant_selections__variant__category',

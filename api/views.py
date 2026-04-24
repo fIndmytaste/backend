@@ -95,7 +95,7 @@ _ORDER_SELECT_RELATED = ['vendor__user', 'rider__user', 'user']
 _ORDER_PREFETCH_RELATED = [
     'items__product__productimage_set',
     'items__product__parent__productimage_set',
-    'items__product__variant_categories',
+    'items__product__productvariantcategory_set',
     'items__variant_selections__variant__category',
 ]
 
