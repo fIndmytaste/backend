@@ -1,6 +1,6 @@
 # --- New View: CustomerCreateOrderWithVariantsView ---
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import traceback
 
 
@@ -211,21 +211,24 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             with transaction.atomic():
                 order = Order.objects.create(user=user, vendor=vendor)
 
+                # Validate all items/variants first, then bulk-insert to avoid per-row round-trips
+                order_items_to_create = []
+                variants_by_item = []  # list of (item_index, list of OrderItemVariant kwargs)
+
                 for item in items_data:
                     main_product = product_map.get(item['product'])
                     if not main_product:
                         raise ValidationError(f"Product with ID {item['product']} not found.")
 
-                    # Create OrderItem for the main product
-                    order_item = OrderItem.objects.create(
-                        order=order,
-                        product=main_product,
-                        quantity=item.get('quantity', 1),
-                        price=main_product.get_price_with_commission()
+                    item_qty = item.get('quantity', 1)
+                    item_count += item_qty
+                    # Use the same price the customer sees: float→Decimal round-trip matches serializer output
+                    item_price = Decimal(str(float(main_product.get_price_with_commission())))
+                    order_items_to_create.append(
+                        OrderItem(order=order, product=main_product, quantity=item_qty, price=item_price)
                     )
-                    item_count += item.get('quantity', 1)
 
-                    # For each variant selection, create OrderItemVariant
+                    item_variants = []
                     for variant in item.get('variants', []):
                         variant_obj = variant_map.get(variant['variant'])
                         if not variant_obj:
@@ -234,30 +237,40 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                             raise ValidationError(f"Variant {variant_obj.name} does not belong to product {main_product.name}.")
                         if not variant_obj.is_active:
                             raise ValidationError(f"Variant {variant_obj.name} is not active.")
-                        # if variant_obj.stock < variant['quantity']:
-                        #     raise ValidationError(f"Not enough stock for variant {variant_obj.name}. Available: {variant_obj.stock}, Requested: {variant['quantity']}")
-             
-                        OrderItemVariant.objects.create(
-                            order_item=order_item,
+                        variant_price = Decimal(str(float(variant_obj.get_price_with_commission())))
+                        item_variants.append(dict(
                             variant=variant_obj,
                             quantity=variant['quantity'],
-                            price_at_purchase=variant_obj.get_price_with_commission()
-                        )
-                        # Decrement stock
-                        # variant_obj.stock -= variant['quantity']
-                        variant_obj.save()
+                            price_at_purchase=variant_price,
+                        ))
                         item_count += variant['quantity']
+                    variants_by_item.append(item_variants)
+
+                created_items = OrderItem.objects.bulk_create(order_items_to_create)
+
+                all_item_variants = []
+                for order_item, item_variants in zip(created_items, variants_by_item):
+                    for kw in item_variants:
+                        all_item_variants.append(OrderItemVariant(order_item=order_item, **kw))
+                if all_item_variants:
+                    OrderItemVariant.objects.bulk_create(all_item_variants)
 
                 promo_code = request.data.get('promo_code')
-                
+
                 # Delivery fee calculation (reuse logic)
                 original_delivery_fee = Decimal('0.00')
                 promo_info = {"is_applied": False, "discount_amount": 0}
 
-                # order_total_price = order.get_total_price()  # Calculate total price based on OrderItems and OrderItemVariants
-                
-                order_total_price_without_delivery_fee = float(order.get_total_price()) + order.service_fee
-                order_total_price = float(order.get_total_price()) + (delivery_fee or order.delivery_fee) + order.service_fee
+                # Compute subtotal from in-memory data — no extra DB query needed
+                # Variant add-ons apply once per unit ordered, so scale by the parent item's quantity.
+                order_item_qty = {oi.id: oi.quantity for oi in created_items}
+                items_subtotal = sum(Decimal(str(oi.price)) * oi.quantity for oi in created_items)
+                items_subtotal += sum(
+                    Decimal(str(iv.price_at_purchase)) * iv.quantity * order_item_qty.get(iv.order_item_id, 1)
+                    for iv in all_item_variants
+                )
+                order_total_price_without_delivery_fee = float(items_subtotal) + float(order.service_fee)
+                order_total_price = float(items_subtotal) + float(delivery_fee or order.delivery_fee) + float(order.service_fee)
 
                 print(
                     f"Initial order total price (before promo): {order_total_price}, item_count: {item_count}, delivery_fee: {delivery_fee}, promo_code: {promo_code}"
@@ -298,7 +311,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                     order.promo_discount_amount = promo_info["discount_amount"]
                     print(f"Applied promo code: {promo_obj.code}, discount amount: {promo_info['discount_amount']}")
 
-                order.update_total_amount()
+                order.total_amount = items_subtotal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 order.address = address
                 order.location_latitude = location_latitude
                 order.location_longitude = location_longitude
@@ -324,7 +337,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 order.payment_method = request.data.get('payment_method','wallet')
                 order.note = request.data.get('note',request.data.get('notes'))
                 order.save()
-                order.save_vendor_and_commision()
+                order.save_vendor_and_commision(gross_order_amount=items_subtotal)
 
                 if order.promo_code:
                     from product.promo_models import PromoUsage

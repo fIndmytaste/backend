@@ -318,9 +318,12 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
     def post(self, request):
         data = request.data
         try:
-            reference = data.get('reference')
+            reference = data.get('reference')          # order UUID (used to find WalletTransaction)
+            trxref = data.get('trxref') or reference   # Paystack tx reference (used to verify with Paystack)
             transaction_reference = data.get('transaction_reference')
-            trx_extist = self._find_transaction(reference)
+            trx_extist = self._find_transaction(trxref)
+            if not trx_extist:
+                trx_extist = self._find_transaction(reference)
             if not trx_extist and transaction_reference:
                 trx_extist = WalletTransaction.objects.filter(
                     id=transaction_reference
@@ -330,9 +333,9 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     order_id=reference
                 ).select_related('order').first()
 
-            # verify transaction with paytsack
+            # verify transaction with paystack using the Paystack-issued reference (trxref)
             klass = PaystackManager()
-            success, response = klass.verify_transaction(reference)
+            success, response = klass.verify_transaction(trxref)
             if not success:
                 failed_order = self._mark_order_payment_failed(
                     trx_extist,
@@ -378,7 +381,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 )
 
             if trx_extist.external_reference:
-                if trx_extist.external_reference != reference:
+                if trx_extist.external_reference != trxref:
                     failed_order = self._mark_order_payment_failed(
                         trx_extist,
                         response_payload=response,

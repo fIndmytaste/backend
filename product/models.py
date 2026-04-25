@@ -2,6 +2,7 @@ from datetime import timedelta
 import uuid
 import string
 import random
+from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
 from django.db import models
 from django.contrib.auth import get_user_model
@@ -428,7 +429,7 @@ class Product(models.Model):
             base_price = self.get_discounted_price()
 
         rate = self.get_commission_rate() / Decimal('100')
-        return (base_price * rate).quantize(Decimal('0.01'))
+        return (base_price * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def get_price_with_commission(self):
         """
@@ -438,8 +439,7 @@ class Product(models.Model):
         Returns:
             Decimal: Price + Commission
         """
-        from decimal import Decimal
-        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'))
+        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def get_discounted_price_with_commission(self):
         """
@@ -448,9 +448,8 @@ class Product(models.Model):
         Returns:
             Decimal: Discounted Price + Commission
         """
-        from decimal import Decimal
         discounted = self.get_discounted_price()
-        return (discounted + self.calculate_commission(discounted)).quantize(Decimal('0.01'))
+        return (discounted + self.calculate_commission(discounted)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def get_display_price(self):
         """
@@ -600,7 +599,7 @@ class ProductVariant(models.Model):
             base_price = self.price
 
         rate = self.get_commission_rate() / Decimal('100')
-        return (Decimal(str(base_price)) * rate).quantize(Decimal('0.01'))
+        return (Decimal(str(base_price)) * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def get_price_with_commission(self):
         """
@@ -610,8 +609,7 @@ class ProductVariant(models.Model):
         Returns:
             Decimal: Price + Commission
         """
-        from decimal import Decimal
-        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'))
+        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 # --- OrderItemVariant for tracking variant selections in orders ---
@@ -812,13 +810,14 @@ class Order(models.Model):
                 variant_product = variant_selection.variant.product
                 variant_commission = variant_product.calculate_commission(
                     variant_selection.price_at_purchase)
-                total_commission += variant_commission * variant_selection.quantity
+                total_commission += variant_commission * variant_selection.quantity * item.quantity
 
         return total_commission
 
     def update_total_amount(self):
         """Recalculates the total order amount based on order items."""
-        total = sum(item.total_price() for item in self.items.all())
+        items = self.items.prefetch_related('variant_selections').all()
+        total = sum(item.total_price() for item in items)
         self.total_amount = total
         self.save()
 
@@ -971,7 +970,7 @@ class Order(models.Model):
 
     def get_total_price(self):
         """Get the total price of the order."""
-        order_items = OrderItem.objects.filter(order=self)
+        order_items = OrderItem.objects.filter(order=self).prefetch_related('variant_selections')
         return sum(item.total_price() for item in order_items)
 
     def calculate_vendor_settlement_amount(self):
@@ -979,11 +978,11 @@ class Order(models.Model):
         from decimal import Decimal
 
         settlement_total = Decimal('0.00')
-        for item in self.items.all():
+        for item in self.items.prefetch_related('variant_selections__variant').all():
             settlement_total += item.product.get_vendor_earnings(item.quantity)
             for variant_selection in item.variant_selections.all():
                 settlement_total += (
-                    variant_selection.variant.price * variant_selection.quantity
+                    variant_selection.variant.price * variant_selection.quantity * item.quantity
                 )
 
         return settlement_total.quantize(Decimal('0.01'))
@@ -1017,14 +1016,14 @@ class Order(models.Model):
         return max(Decimal('0.00'), net).quantize(Decimal('0.01'))
 
 
-    def save_vendor_and_commision(self):
+    def save_vendor_and_commision(self, gross_order_amount=None):
         """Persist the vendor settlement amount for this order."""
-        from decimal import Decimal
         try:
             total_vendor_amount = self.calculate_vendor_settlement_amount()
-            gross_order_amount = Decimal(str(self.get_total_price() or 0)).quantize(
-                Decimal('0.01')
-            )
+            if gross_order_amount is None:
+                gross_order_amount = Decimal(str(self.get_total_price() or 0)).quantize(Decimal('0.01'))
+            else:
+                gross_order_amount = Decimal(str(gross_order_amount)).quantize(Decimal('0.01'))
 
             self.vendor_amount = total_vendor_amount
             self.platform_amount = max(
@@ -1033,7 +1032,6 @@ class Order(models.Model):
             )
             self.save()
         except Exception as e:
-            # Log the error or handle it as needed
             print(f"Error calculating vendor and platform amounts: {e}")    
 
     # def get_vendor_earning(self):
@@ -1076,14 +1074,10 @@ class OrderItem(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def total_price(self):
-        """Returns the total price for this item (price * quantity + variant prices)."""
-        # Base product price
+        """Returns the total price for this item (price * quantity + variant prices * quantity)."""
         total = self.price * self.quantity
-
-        # Add variant prices
         for variant_selection in self.variant_selections.all():
-            total += variant_selection.price_at_purchase * variant_selection.quantity
-
+            total += variant_selection.price_at_purchase * variant_selection.quantity * self.quantity
         return total
 
     def __str__(self):

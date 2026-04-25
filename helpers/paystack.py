@@ -307,6 +307,12 @@ class PaystackManager:
                 metadata['payment_mode'] =  'mobile-payment'
                 response_data = dict(
                     metadata=metadata,
+                    total_amount=float(amount),  # naira value, not kobo
+                    id=str(order.id),
+                    user=str(order.user.id),
+                    status=str(order.status),
+                    payment_status=str(order.payment_status),
+                    payment_method='link',
                     promo_info=promo_info
                 )
                 return success_response(data=response_data)
