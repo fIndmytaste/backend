@@ -54,10 +54,8 @@ urlpatterns = [
 
     path('<vendor_id>/', GetVendorDetailView.as_view(), name='GetVendorDetailView'),
     path('<vendor_id>/products/', BuyerVendorProductListView.as_view(), name='BuyerVendorProductListView'),
-    path('<uuid:vendor_id>/rate', VendorRatingCreateView.as_view(), name='vendor-rate'),
     path('<uuid:vendor_id>/rate/', VendorRatingCreateView.as_view(), name='vendor-rate'),
-    path('<uuid:vendor_id>/ratings', VendorRatingListView.as_view(), name='vendor-ratings'),
     path('<uuid:vendor_id>/ratings/', VendorRatingListView.as_view(), name='vendor-ratings'),
     path('<uuid:vendor_id>/rating-stats/', vendor_rating_stats, name='vendor-rating-stats'),
-    path('<uuid:vendor_id>/issue-report', VendorIssueReportView.as_view(), name='vendor-issue-report'),
+    path('<uuid:vendor_id>/issue-report/', VendorIssueReportView.as_view(), name='vendor-issue-report'),
 ]
