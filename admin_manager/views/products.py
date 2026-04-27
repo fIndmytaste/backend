@@ -1,6 +1,6 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum
+from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from datetime import timedelta
 
@@ -8,7 +8,7 @@ from account.models import Rider, User
 from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
-from product.models import Order, Product, Rating, SystemCategory
+from product.models import DeliveryZone, Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
@@ -32,6 +32,21 @@ class AdminSystemCategoryListView(generics.GenericAPIView):
         categories = SystemCategory.objects.all()
         serializer = self.serializer_class(categories, many=True)
         return success_response(serializer.data)
+
+
+class AdminDeliveryZoneListView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        zones = DeliveryZone.objects.filter(is_active=True).order_by('name')
+        return success_response([
+            {
+                "id": str(zone.id),
+                "name": zone.name,
+                "fixed_fee": float(zone.fixed_fee),
+            }
+            for zone in zones
+        ])
 
 
 
@@ -128,7 +143,14 @@ class AdminProductRatingListView(generics.ListAPIView):
 
 class AdminDashboardOverviewAPIView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
-    
+
+    # Statuses that mean an order is actively being processed (not yet done, not cancelled)
+    ACTIVE_ORDER_STATUSES = [
+        'pending', 'confirmed', 'preparing',
+        'looking_for_rider', 'rider_assigned',
+        'picked_up', 'in_transit', 'near_delivery',
+    ]
+
     @swagger_auto_schema(
         operation_summary="Admin Dashboard Overview",
         operation_description="Get dashboard metrics (orders, users, earnings, payouts) for a specific time range.",
@@ -142,181 +164,141 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                 required=False
             )
         ],
-        responses={
-            200: openapi.Response(
-                description="Dashboard metrics successfully retrieved.",
-                examples={
-                    "application/json": {
-                        "success": True,
-                        "data": {
-                            "order_overview": {
-                                "total_orders": {"value": 120, "growth": True},
-                                "active_orders": {"value": 25},
-                                "completed_orders": {"value": 80},
-                                "canceled_orders": {"value": 15}
-                            },
-                            "revenue_summary": {
-                                "total_earnings": {"value": 25400.00, "growth": True},
-                                "vendor_payouts": {"value": 22860.00}
-                            },
-                            "user_metrics": {
-                                "active_users": {"value": 140, "growth": True},
-                                "new_users": {"value": 30},
-                                "vendors": {"value": 12},
-                                "riders": {"value": 5}
-                            }
-                        }
-                    }
-                }
-            ),
-            401: "Unauthorized"
-        }
+        responses={200: "Dashboard metrics", 401: "Unauthorized"}
     )
     def get(self, request):
-        # Get time range filter (default to weekly)
         time_range = request.query_params.get('time_range', 'week')
-        
-        # Calculate date range based on filter
-        today = timezone.now()
-        if time_range == 'week':
-            start_date = today - timedelta(days=7)
-        elif time_range == 'month':
-            start_date = today - timedelta(days=30)
-        elif time_range == 'year':
-            start_date = today - timedelta(days=365)
-        else:
-            start_date = today - timedelta(days=7)  # Default to weekly
-        
-        # Get orders data
-        total_orders = Order.objects.filter(created_at__gte=start_date).count()
-        active_orders = Order.objects.filter(status='pending', created_at__gte=start_date).count()
-        completed_orders = Order.objects.filter(status='delivered', created_at__gte=start_date).count()
-        canceled_orders = Order.objects.filter(status='canceled', created_at__gte=start_date).count()
-        
-        # Get revenue data
-        total_earnings = Order.objects.filter(
-            payment_status='paid', 
-            created_at__gte=start_date
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-        
-        # Calculate vendor payouts
-        # Assuming vendor gets 90% of order amount, adjust as needed
-        print(total_earnings)
-        vendor_payouts = float(total_earnings) * 0.9
-        
-        total_users = User.objects.all().count()
 
+        today = timezone.now()
+        if time_range == 'month':
+            delta = timedelta(days=30)
+        elif time_range == 'year':
+            delta = timedelta(days=365)
+        else:
+            delta = timedelta(days=7)
+
+        start_date = today - delta
+        prev_start = start_date - delta
+
+        # ── Orders ──────────────────────────────────────────────────────────
+        base_orders = Order.objects.filter(created_at__gte=start_date)
+
+        order_agg = base_orders.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status__in=self.ACTIVE_ORDER_STATUSES)),
+            completed=Count('id', filter=Q(status='delivered')),
+            canceled=Count('id', filter=Q(status__in=['canceled', 'rejected'])),
+        )
+
+        # ── Revenue: use real vendor_amount field, fall back to sum of total_amount ──
+        revenue_agg = base_orders.filter(payment_status='paid').aggregate(
+            total_earnings=Sum('total_amount'),
+            vendor_payouts=Sum('vendor_amount'),
+            platform_earnings=Sum('platform_amount'),
+        )
+        total_earnings = revenue_agg['total_earnings'] or 0
+        vendor_payouts = revenue_agg['vendor_payouts'] or 0
+
+        # ── Previous period for growth indicators ───────────────────────────
+        prev_orders = Order.objects.filter(
+            created_at__gte=prev_start,
+            created_at__lt=start_date,
+        )
+        prev_total = prev_orders.count()
+        prev_earnings = prev_orders.filter(payment_status='paid').aggregate(
+            total=Sum('total_amount')
+        )['total'] or 0
+
+        order_growth = total_earnings > 0 if prev_total == 0 else (order_agg['total'] > prev_total)
+        earnings_growth = total_earnings > 0 if float(prev_earnings) == 0 else (float(total_earnings) > float(prev_earnings))
+
+        # ── Users ────────────────────────────────────────────────────────────
+        total_users = User.objects.count()
         total_customers = User.objects.filter(role='buyer').count()
-        # Get user metrics
-        active_users = User.objects.filter(
-            is_active=True, 
-            last_login__gte=start_date
-        ).count()
-        
-        new_users = User.objects.filter(
-            created_at__gte=start_date
-        ).count()
-        
-        vendors_count = User.objects.filter(
-            role='vendor',
-            created_at__gte=start_date
-        ).count()
-        
-        riders_count = User.objects.filter(
-            role='rider',
-            created_at__gte=start_date
-        ).count()
-        
-        # Check if there's growth compared to previous period
-        previous_start = start_date - (today - start_date)
-        previous_end = start_date
-        
-        prev_total_orders = Order.objects.filter(
-            created_at__gte=previous_start,
-            created_at__lt=previous_end
-        ).count()
-        
+
+        active_users = User.objects.filter(is_active=True, last_login__gte=start_date).count()
+        new_users = User.objects.filter(created_at__gte=start_date).count()
+        vendors_count = User.objects.filter(role='vendor').count()
+        riders_count = User.objects.filter(role='rider').count()
+
         prev_active_users = User.objects.filter(
             is_active=True,
-            last_login__gte=previous_start,
-            last_login__lt=previous_end
+            last_login__gte=prev_start,
+            last_login__lt=start_date,
         ).count()
-        
-        prev_total_earnings = Order.objects.filter(
-            payment_status='paid',
-            created_at__gte=previous_start,
-            created_at__lt=previous_end
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-        
-        # Calculate growth indicators
-        order_growth = (total_orders > prev_total_orders) if prev_total_orders > 0 else True
-        user_growth = (active_users > prev_active_users) if prev_active_users > 0 else True
-        earnings_growth = (total_earnings > prev_total_earnings) if prev_total_earnings > 0 else True
-        
+        user_growth = active_users > 0 if prev_active_users == 0 else (active_users > prev_active_users)
+
         return success_response(data={
             "order_overview": {
-                "total_orders": {
-                    "value": total_orders,
-                    "growth": order_growth
-                },
-                "active_orders": {
-                    "value": active_orders
-                },
-                "completed_orders": {
-                    "value": completed_orders
-                },
-                "canceled_orders": {
-                    "value": canceled_orders
-                }
+                "total_orders": {"value": order_agg['total'], "growth": order_growth},
+                "active_orders": {"value": order_agg['active']},
+                "completed_orders": {"value": order_agg['completed']},
+                "canceled_orders": {"value": order_agg['canceled']},
             },
             "revenue_summary": {
-                "total_earnings": {
-                    "value": float(total_earnings),
-                    "growth": earnings_growth
-                },
-                "vendor_payouts": {
-                    "value": float(vendor_payouts)
-                }
+                "total_earnings": {"value": float(total_earnings), "growth": earnings_growth},
+                "vendor_payouts": {"value": float(vendor_payouts)},
+                "platform_earnings": {"value": float(revenue_agg['platform_earnings'] or 0)},
             },
             "user_metrics": {
-                "total_users": {
-                    "value": total_users    
-                },
-                "total_customers": {
-                    "value": total_customers
-                },
-                "active_users": {
-                    "value": active_users,
-                    "growth": user_growth
-                },
-                "new_users": {
-                    "value": new_users
-                },
-                "vendors": {
-                    "value": vendors_count
-                },
-                "riders": {
-                    "value": riders_count
-                }
+                "total_users": {"value": total_users},
+                "total_customers": {"value": total_customers},
+                "active_users": {"value": active_users, "growth": user_growth},
+                "new_users": {"value": new_users},
+                "vendors": {"value": vendors_count},
+                "riders": {"value": riders_count},
             }
         })
 
 
 
 class AdminGetMarketPlaceRiderListView(generics.GenericAPIView):
-    permission_classes = []
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     serializer_class = RiderSerializer
-    queryset = Rider.objects.all()
+    queryset = Rider.objects.filter(is_in_house_rider=True).select_related('user')
 
 
     def get(self,request):
+        order = None
+        order_id = request.GET.get('order_id')
+        queryset = self.get_queryset().order_by('-created_at')
+
+        if order_id:
+            try:
+                order = Order.objects.get(id=order_id)
+            except Order.DoesNotExist:
+                return bad_request_response(message="Order not found.", status_code=404)
+
+            latitude = order.delivery_latitude or order.location_latitude
+            longitude = order.delivery_longitude or order.location_longitude
+            order_zone = None
+            if latitude is not None and longitude is not None:
+                try:
+                    from product.models import DeliveryZone
+                    order_zone = DeliveryZone.get_zone_for_location(
+                        float(latitude),
+                        float(longitude),
+                    )
+                except (TypeError, ValueError):
+                    order_zone = None
+
+            if order_zone:
+                matching_ids = [
+                    rider.id
+                    for rider in queryset
+                    if (rider.get_current_zone() or rider.get_home_zone()) == order_zone
+                ]
+                queryset = queryset.filter(id__in=matching_ids)
+
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset(),
+            queryset,
             page_size=int(request.GET.get('page_size',20)),
-            addition_serializer_data={"rider_type":'marketplace'}
+            addition_serializer_data={
+                "rider_type":'marketplace',
+                "marketplace_order": order,
+            }
         )
     
 
@@ -494,6 +476,7 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         track_id = self.request.GET.get('track_id')
         status = self.request.GET.get('status')
         vendor_id = self.request.GET.get('vendor_id')
+        zone_id = self.request.GET.get('zone_id')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
@@ -503,6 +486,21 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         
         if vendor_id:
             queryset = queryset.filter(vendor__id=vendor_id)
+
+        if zone_id:
+            try:
+                zone = DeliveryZone.objects.get(id=zone_id, is_active=True)
+                matching_ids = [
+                    order.id
+                    for order in queryset.only('id', 'location_latitude', 'location_longitude', 'delivery_latitude', 'delivery_longitude')
+                    if zone.contains_location(
+                        order.delivery_latitude or order.location_latitude,
+                        order.delivery_longitude or order.location_longitude,
+                    )
+                ]
+                queryset = queryset.filter(id__in=matching_ids)
+            except DeliveryZone.DoesNotExist:
+                queryset = queryset.none()
 
         return queryset
 

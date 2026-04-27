@@ -506,14 +506,15 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 data=OrderSerializer(failed_order).data if failed_order else None,
             )
 
-        except:
+        except Exception as e:
+            import traceback
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[confirm-payment] Unhandled exception: {e}\nrequest data: {request.data}\n{traceback.format_exc()}")
             return bad_request_response(
-                message='Transaction not doest exist',
-                status_code=404
+                message=f'Error processing payment: {str(e)}',
+                status_code=400
             )
-        return bad_request_response(
-            message="Transaction not doest exist"
-        )
 
 
 class OrderPaymentWebhookView(generics.GenericAPIView):
@@ -910,6 +911,13 @@ class RiderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def available_order(self, request, pk=None):
         rider = self.get_object()
+        if rider.is_in_house_rider:
+            return paginate_success_response_with_serializer(
+                self.request,
+                OrderSerializer,
+                Order.objects.none(),
+                page_size=10
+            )
 
         query_location_latitude = self.request.GET.get('latitude')
         query_location_longitude = self.request.GET.get('longitude')
@@ -985,6 +993,10 @@ class RiderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def accept_order(self, request, pk=None):
         rider = self.get_object()
+        if rider.is_in_house_rider:
+            return bad_request_response(
+                message="Marketplace riders receive assigned orders from admin and cannot accept public available orders."
+            )
 
         from product.models import PlatformSettings
         settings = PlatformSettings.get_settings()
@@ -1238,9 +1250,9 @@ class RiderViewSet(viewsets.ModelViewSet):
                 )
 
         total_orders = orders.count()
-        total_earnings = delivered_orders.aggregate(
-            total=Sum('rider_earning')
-        )['total'] or 0
+        total_earnings = 0 if rider.is_in_house_rider else (
+            delivered_orders.aggregate(total=Sum('rider_earning'))['total'] or 0
+        )
         total_pending_delivery = orders.filter(
             status__in=['rider_assigned', 'confirmed', 'picked_up', 'in_transit', 'near_delivery']
         ).count()
@@ -1315,25 +1327,29 @@ class RiderViewSet(viewsets.ModelViewSet):
         except Exception as earning_error:
             print(f"Error calculating rider earning for {order.track_id}: {earning_error}")
 
-        # Apply platform commission to get net amount credited to rider
-        rider_earning_amount = order.calculate_net_rider_earning(gross_earning_amount)
-        order.rider_earning = rider_earning_amount
+        if rider.is_in_house_rider:
+            rider_earning_amount = Decimal('0.00')
+            order.rider_earning = rider_earning_amount
+        else:
+            # Apply platform commission to get net amount credited to rider
+            rider_earning_amount = order.calculate_net_rider_earning(gross_earning_amount)
+            order.rider_earning = rider_earning_amount
 
-        try:
-            wallet, _ = Wallet.objects.get_or_create(user=rider.user)
-            wallet.deposit(rider_earning_amount)
+            try:
+                wallet, _ = Wallet.objects.get_or_create(user=rider.user)
+                wallet.deposit(rider_earning_amount)
 
-            WalletTransaction.objects.create(
-                wallet=wallet,
-                user=rider.user,
-                amount=rider_earning_amount,
-                transaction_type='earning',
-                status='completed',
-                description=f"Earning from Order #{order.track_id}",
-                order=order
-            )
-        except Exception as earning_error:
-            print(f"Error recording rider earning for {order.track_id}: {earning_error}")
+                WalletTransaction.objects.create(
+                    wallet=wallet,
+                    user=rider.user,
+                    amount=rider_earning_amount,
+                    transaction_type='earning',
+                    status='completed',
+                    description=f"Earning from Order #{order.track_id}",
+                    order=order
+                )
+            except Exception as earning_error:
+                print(f"Error recording rider earning for {order.track_id}: {earning_error}")
 
         order.save()
 
@@ -1342,7 +1358,11 @@ class RiderViewSet(viewsets.ModelViewSet):
             notification_helper.send_to_users_with_executor(
                 users=[rider.user],
                 title="Delivery Confirmed! 🎉",
-                body=f"Order #{order.track_id} has been marked as delivered. Your earnings have been updated.",
+                body=(
+                    f"Order #{order.track_id} has been marked as delivered."
+                    if rider.is_in_house_rider
+                    else f"Order #{order.track_id} has been marked as delivered. Your earnings have been updated."
+                ),
                 data={
                     "event": "delivery_confirmed",
                     "order_id": str(order.id),

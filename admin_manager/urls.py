@@ -22,12 +22,14 @@ from admin_manager.views.announcements import (
     admin_publish_announcement
 )
 from admin_manager.views.notifications import AdminBulkPushNotificationView
+from admin_manager.views.staff_permissions import StaffPagePermissionsView
 
 
 urlpatterns = [ 
     
     # categories
     path('system-categories/', admin_product_view.AdminSystemCategoryListView.as_view(), name='admin_product_view-system_categories'),
+    path('delivery-zones/', admin_product_view.AdminDeliveryZoneListView.as_view(), name='admin-delivery-zone-list'),
 
     # overview
     path('dashboard/overview/', admin_product_view.AdminDashboardOverviewAPIView.as_view(), name='dashboard-overview'),
@@ -75,6 +77,7 @@ urlpatterns = [
 
     # Assign order to rider
     path('riders/<uuid:id>/assign-order/', admin_riders_view.AdminAssignOrderToRiderView.as_view(), name='admin_assign_order_to_rider'),
+    path('marketplace-orders/bulk-assign-rider/', admin_riders_view.AdminBulkAssignMarketplaceOrdersView.as_view(), name='admin_bulk_assign_marketplace_orders'),
     
          
 
@@ -115,5 +118,7 @@ urlpatterns = [
 
     # Notifications
     path('notifications/bulk-push/', AdminBulkPushNotificationView.as_view(), name='admin-bulk-push'),
-]
 
+    # Staff page permissions — used by the custom admin frontend
+    path('staff/my-pages/', StaffPagePermissionsView.as_view(), name='staff-my-pages'),
+]

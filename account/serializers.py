@@ -51,11 +51,72 @@ class RiderInlineUserSerializer(serializers.ModelSerializer):
 
 class RiderSerializer(serializers.ModelSerializer):
     user = RiderInlineUserSerializer()
+    current_zone = serializers.SerializerMethodField()
+    home_zone = serializers.SerializerMethodField()
+    assignment_context = serializers.SerializerMethodField()
 
     class Meta:
         model = Rider
         fields = '__all__'
         ref_name = 'AccountRiderSerializer'
+
+    def _serialize_zone(self, zone):
+        if not zone:
+            return None
+        return {
+            'id': str(zone.id),
+            'name': zone.name,
+            'fixed_fee': float(zone.fixed_fee),
+        }
+
+    def get_current_zone(self, obj):
+        return self._serialize_zone(obj.get_current_zone())
+
+    def get_home_zone(self, obj):
+        return self._serialize_zone(obj.get_home_zone())
+
+    def get_assignment_context(self, obj):
+        addition_serializer_data = (self.context or {}).get('addition_serializer_data') or {}
+        order = (self.context or {}).get('marketplace_order') or addition_serializer_data.get('marketplace_order')
+        if not order:
+            return None
+
+        from product.models import DeliveryZone
+
+        latitude = order.delivery_latitude or order.location_latitude
+        longitude = order.delivery_longitude or order.location_longitude
+        order_zone = None
+        if latitude is not None and longitude is not None:
+            try:
+                order_zone = DeliveryZone.get_zone_for_location(
+                    float(latitude),
+                    float(longitude),
+                )
+            except (TypeError, ValueError):
+                order_zone = None
+
+        rider_zone = obj.get_current_zone() or obj.get_home_zone()
+        reasons = []
+
+        if not obj.is_in_house_rider:
+            reasons.append('Not an in-house marketplace rider')
+        if obj.status != 'active':
+            reasons.append('Rider is not active')
+        if not obj.is_verified:
+            reasons.append('Rider is not verified')
+        if order_zone and not rider_zone:
+            reasons.append('Rider has no detected zone')
+        if order_zone and rider_zone and order_zone.id != rider_zone.id:
+            reasons.append('Rider is outside the order zone')
+        if not order_zone:
+            reasons.append('Order delivery address is outside active zones')
+
+        return {
+            'eligible': len(reasons) == 0,
+            'reasons': reasons,
+            'order_zone': self._serialize_zone(order_zone),
+            'rider_zone': self._serialize_zone(rider_zone),
+        }
 
     def to_representation(self, instance):
         # Access the custom data
@@ -91,9 +152,17 @@ class RiderSerializer(serializers.ModelSerializer):
                 if rider_type == 'marketplace':
                     orders_queryset_count = Order.objects.filter(
                         rider=instance,
-                        delivery_status='pending'
+                        status__in=[
+                            'rider_assigned',
+                            'confirmed',
+                            'preparing',
+                            'picked_up',
+                            'in_transit',
+                            'near_delivery',
+                        ]
                     ).count()
                     representation['ongoing_orders_count'] = orders_queryset_count
+                    representation['ongoing_orders'] = orders_queryset_count
 
                     ratings = RiderRating.objects.filter(rider=instance)
                     overall_rating = ratings.aggregate(

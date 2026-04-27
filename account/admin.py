@@ -2,9 +2,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
     FCMToken, PushNotificationLog, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
-    VerificationCode, Notification
+    VerificationCode, Notification, StaffPagePermission
 )
-# ...existing code...
 from .models import Guarantor, Address
 
 @admin.register(User)
@@ -242,8 +241,8 @@ class GuarantorInline(admin.TabularInline):
 
 @admin.register(Rider)
 class RiderAdmin(admin.ModelAdmin):
-    list_display = ('user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online')
-    list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online')
+    list_display = ('user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
+    list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider')
     search_fields = ('user__email', 'vehicle_number')
     readonly_fields = ('created_at', 'updated_at', 'location_updated_at')
     inlines = [GuarantorInline]
@@ -286,3 +285,125 @@ class NotificationLogAdmin(admin.ModelAdmin):
 
     
 admin.site.register(RiderRating)
+
+
+# ---------------------------------------------------------------------------
+# Staff Page Permissions
+# ---------------------------------------------------------------------------
+
+class StaffPagePermissionInline(admin.TabularInline):
+    model = StaffPagePermission
+    fk_name = 'user'
+    extra = 1
+    fields = ('page',)
+    readonly_fields = ()
+    verbose_name = 'Page Access'
+    verbose_name_plural = 'Custom Admin Page Access'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for obj in instances:
+            if not obj.pk:
+                obj.granted_by = request.user
+            obj.save()
+        formset.save_m2m()
+
+
+@admin.register(StaffPagePermission)
+class StaffPagePermissionAdmin(admin.ModelAdmin):
+    list_display = ('user_email', 'user_full_name', 'page_display', 'granted_by_email', 'created_at')
+    list_filter = ('page',)
+    search_fields = ('user__email', 'user__full_name')
+    readonly_fields = ('granted_by', 'created_at')
+    autocomplete_fields = ('user',)
+
+    fieldsets = (
+        (None, {
+            'fields': ('user', 'page'),
+            'description': (
+                'Grant a staff user access to a specific page in the custom admin dashboard. '
+                'The user must have <strong>is_staff = True</strong> on their account.'
+            ),
+        }),
+        ('Audit', {'fields': ('granted_by', 'created_at'), 'classes': ('collapse',)}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.granted_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description='User email', ordering='user__email')
+    def user_email(self, obj):
+        return obj.user.email
+
+    @admin.display(description='Full name', ordering='user__full_name')
+    def user_full_name(self, obj):
+        return obj.user.full_name or '—'
+
+    @admin.display(description='Page', ordering='page')
+    def page_display(self, obj):
+        return obj.get_page_display()
+
+    @admin.display(description='Granted by', ordering='granted_by__email')
+    def granted_by_email(self, obj):
+        return obj.granted_by.email if obj.granted_by else '—'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user', 'granted_by')
+
+
+# ---------------------------------------------------------------------------
+# Extend UserAdmin with page-permission inline + promote-to-staff action
+# ---------------------------------------------------------------------------
+
+# Unregister the existing UserAdmin and re-register with the inline
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class UserAdminWithPermissions(UserAdmin):
+    inlines = [StaffPagePermissionInline]
+    actions = [
+        'set_delivery_percentage_off_for_selected',
+        'send_bulk_notification_to_selected',
+        'promote_to_staff',
+        'demote_from_staff',
+        'grant_all_pages',
+        'revoke_all_pages',
+    ]
+
+    def promote_to_staff(self, request, queryset):
+        updated = queryset.filter(is_staff=False).update(is_staff=True)
+        self.message_user(request, f"{updated} user(s) promoted to staff.")
+
+    promote_to_staff.short_description = "Promote to staff (enable custom admin login)"
+
+    def demote_from_staff(self, request, queryset):
+        updated = queryset.exclude(is_superuser=True).filter(is_staff=True).update(is_staff=False)
+        self.message_user(request, f"{updated} user(s) removed from staff.")
+
+    demote_from_staff.short_description = "Remove staff status (disable custom admin login)"
+
+    def grant_all_pages(self, request, queryset):
+        pages = [p[0] for p in StaffPagePermission.PAGE_CHOICES]
+        created = 0
+        for user in queryset.filter(is_staff=True):
+            for page in pages:
+                _, is_new = StaffPagePermission.objects.get_or_create(
+                    user=user, page=page, defaults={'granted_by': request.user}
+                )
+                if is_new:
+                    created += 1
+        self.message_user(request, f"Granted {created} new page permission(s).")
+
+    grant_all_pages.short_description = "Grant ALL page access to selected staff users"
+
+    def revoke_all_pages(self, request, queryset):
+        deleted, _ = StaffPagePermission.objects.filter(user__in=queryset).delete()
+        self.message_user(request, f"Revoked {deleted} page permission(s).")
+
+    revoke_all_pages.short_description = "Revoke ALL page access from selected staff users"

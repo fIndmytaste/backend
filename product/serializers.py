@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from vendor.serializers import VendorSerializer
-from .models import ProductVariantCategory, UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
+from .models import DeliveryZone, ProductVariantCategory, UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
 
 
 
@@ -46,6 +46,7 @@ class OrderSerializer(serializers.ModelSerializer):
     whole_price = serializers.SerializerMethodField()
     promo_discount_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     payment_status = serializers.ChoiceField(choices=Order.PAYMENT_STATUS_CHOICES)
+    delivery_zone = serializers.SerializerMethodField()
     
     def get_total_commission(self, obj):
         """Get the total commission for the order."""
@@ -61,6 +62,26 @@ class OrderSerializer(serializers.ModelSerializer):
         delivery_fee = float(obj.delivery_fee or Decimal('0.00'))
         promo_discount_amount = float(obj.promo_discount_amount or Decimal('0.00'))
         return float(max(0.0, total_amount + delivery_fee - promo_discount_amount))
+
+    def get_delivery_zone(self, obj):
+        latitude = obj.delivery_latitude or obj.location_latitude
+        longitude = obj.delivery_longitude or obj.location_longitude
+        if latitude is None or longitude is None:
+            return None
+
+        try:
+            zone = DeliveryZone.get_zone_for_location(float(latitude), float(longitude))
+        except (TypeError, ValueError):
+            return None
+
+        if not zone:
+            return None
+
+        return {
+            "id": str(zone.id),
+            "name": zone.name,
+            "fixed_fee": float(zone.fixed_fee),
+        }
 
     class Meta:
         model = Order
@@ -85,6 +106,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "location_latitude",
             "location_longitude",
             "delivery_status",
+            "delivery_zone",
             "delivered_at",
             'created_at', 
             'updated_at'
@@ -129,6 +151,8 @@ class OrderSerializer(serializers.ModelSerializer):
 
 
     def _compute_rider_display_earning(self, instance):
+        if instance.rider and instance.rider.is_in_house_rider:
+            return 0.0
         return float(instance.calculate_net_rider_earning())
 
     def to_representation(self, instance: Order):

@@ -1,4 +1,4 @@
-from account.models import User, Vendor
+from account.models import Rider, User, Vendor
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
@@ -30,6 +30,9 @@ class WalletBalanceView(generics.RetrieveAPIView):
         - 401: Unauthorized access.
         """
         wallet, _ = Wallet.objects.get_or_create(user=request.user)
+        rider = Rider.objects.filter(user=request.user, is_in_house_rider=True).first()
+        if rider:
+            wallet.balance = 0
 
         return success_response(
             data=self.serializer_class(wallet).data,
@@ -62,6 +65,8 @@ class WalletTransactionsView(generics.ListAPIView):
         date_to = request.GET.get('date_to')
 
         query_set = self.get_queryset()
+        if Rider.objects.filter(user=request.user, is_in_house_rider=True).exists():
+            query_set = query_set.none()
 
         if transaction_type:
             query_set = query_set.filter(transaction_type=transaction_type)
@@ -106,6 +111,10 @@ class WithdrawalView(generics.GenericAPIView):
             return bad_request_response(message=serializer.errors)
 
         user:User = request.user
+        if Rider.objects.filter(user=user, is_in_house_rider=True).exists():
+            return bad_request_response(
+                message='Marketplace riders are paid by salary and cannot request wallet withdrawals.'
+            )
         
         paystack_manager = PaystackManager()
         vendor_account = Vendor.objects.filter(user=user).first()

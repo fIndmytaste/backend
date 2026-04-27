@@ -451,12 +451,28 @@ class Vendor(models.Model):
                 promo_info = delivery_fee_info.get(
                     'promo_info', {"is_applied": False, "discount_amount": 0})
             else:
-                # Marketplace follows fixed admin-configured item-count pricing.
-                # Per-vendor override takes priority over marketplace default base fee.
+                delivery_zone = None
+                if dest_lat is not None and dest_lon is not None:
+                    try:
+                        from product.models import DeliveryZone
+                        delivery_zone = DeliveryZone.get_zone_for_location(
+                            float(dest_lat),
+                            float(dest_lon),
+                        )
+                    except Exception:
+                        delivery_zone = None
+
+                # Marketplace follows fixed zone pricing when the customer
+                # address falls inside an active delivery zone. The old
+                # item-count marketplace pricing remains as a fallback.
                 vendor_base_fee = (
-                    self.marketplace_delivery_fee
-                    if self.marketplace_delivery_fee is not None
-                    else marketplace.delivery_fee
+                    delivery_zone.fixed_fee
+                    if delivery_zone is not None
+                    else (
+                        self.marketplace_delivery_fee
+                        if self.marketplace_delivery_fee is not None
+                        else marketplace.delivery_fee
+                    )
                 )
                 is_special_category = (
                     self.category and
@@ -464,13 +480,17 @@ class Vendor(models.Model):
                     self.category.is_special_pricing
                 )
                 logger.info(
-                    "[delivery_fee] marketplace=%s base_fee=%s (vendor_override=%s) "
+                    "[delivery_fee] marketplace=%s base_fee=%s zone=%s (vendor_override=%s) "
                     "second_item_fee=%s additional_item_fee=%s special_discount=%s is_special_category=%s",
-                    marketplace.id, vendor_base_fee, self.marketplace_delivery_fee,
+                    marketplace.id, vendor_base_fee,
+                    delivery_zone.id if delivery_zone else None,
+                    self.marketplace_delivery_fee,
                     marketplace.second_item_fee, marketplace.additional_item_fee,
                     marketplace.special_category_discount_percentage, is_special_category,
                 )
-                if is_special_category:
+                if delivery_zone is not None:
+                    delivery_fee = Decimal(vendor_base_fee).quantize(Decimal('0.01'))
+                elif is_special_category:
                     # SPECIAL PRICING: First item full price, additional items discounted
                     base_fee = vendor_base_fee
                     discount = marketplace.special_category_discount_percentage / \
@@ -980,4 +1000,54 @@ class VendorIssueReporting(models.Model):
     vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE)
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+# ---------------------------------------------------------------------------
+# Staff Page Permissions
+# ---------------------------------------------------------------------------
+
+class StaffPagePermission(models.Model):
+    """
+    Grants a staff user access to specific pages in the custom admin dashboard.
+    Created/managed by superusers via the Django admin.
+    The 'page' field corresponds to the slug/path checked by the frontend.
+    """
+
+    PAGE_CHOICES = [
+        ('overview', 'Overview'),
+        ('orders', 'Order Management'),
+        ('vendor', 'Vendor Management'),
+        ('riders', 'Rider Management'),
+        ('rider-verification', 'Rider Verification'),
+        ('customer', 'Customer Management'),
+        ('insights', 'Insights'),
+        ('marketplace', 'Marketplace Management'),
+        ('transactions', 'Transactions'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='page_permissions',
+        limit_choices_to={'is_staff': True},
+    )
+    page = models.CharField(max_length=40, choices=PAGE_CHOICES)
+    granted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='granted_permissions',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'page')
+        ordering = ['user__email', 'page']
+        verbose_name = 'Staff Page Permission'
+        verbose_name_plural = 'Staff Page Permissions'
+
+    def __str__(self):
+        return f"{self.user.email} → {self.get_page_display()}"
     updated_at = models.DateTimeField(auto_now=True)

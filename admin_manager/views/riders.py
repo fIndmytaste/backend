@@ -1,5 +1,6 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
+from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 from django.db.models import Avg, Count, Q, DecimalField
@@ -453,6 +454,7 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
 
     def post(self, request, id):
         order_id = request.data.get('order_id')
+        force_zone_override = str(request.data.get('force_zone_override', '')).lower() in ['1', 'true', 'yes']
         if not order_id:
             return bad_request_response(message="order_id is required.")
         try:
@@ -460,19 +462,76 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
         except Rider.DoesNotExist:
             return bad_request_response(message="Rider not found.", status_code=404)
         try:
-            order = Order.objects.get(id=order_id)
+            order = Order.objects.select_related('vendor').get(id=order_id)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found.", status_code=404)
         # Business rule: Only assign if order is unassigned
         if order.rider:
             return bad_request_response(message="Order already assigned to a rider.")
 
-        order.rider = rider
-        order.status = 'rider_assigned'
-        order.delivery_status = 'rider_assigned'
-        order.save()
+        if order.vendor and order.vendor.is_marketplace:
+            if not rider.is_in_house_rider:
+                return bad_request_response(message="Marketplace orders can only be assigned to in-house marketplace riders.")
+            if rider.status != 'active' or not rider.is_verified:
+                return bad_request_response(message="Rider must be active and verified before assignment.")
+
+            from product.models import DeliveryZone
+            latitude = order.delivery_latitude or order.location_latitude
+            longitude = order.delivery_longitude or order.location_longitude
+            order_zone = None
+            if latitude is not None and longitude is not None:
+                try:
+                    order_zone = DeliveryZone.get_zone_for_location(
+                        float(latitude),
+                        float(longitude),
+                    )
+                except (TypeError, ValueError):
+                    order_zone = None
+
+            if not order_zone:
+                return bad_request_response(
+                    message="Customer delivery address is outside active marketplace delivery zones.",
+                    data={"order_id": str(order.id)}
+                )
+
+            rider_zone = rider.get_current_zone() or rider.get_home_zone()
+            if not rider_zone:
+                return bad_request_response(
+                    message="Rider has no detected active delivery zone.",
+                    data={"rider_id": str(rider.id), "order_zone": order_zone.name}
+                )
+
+            if rider_zone.id != order_zone.id and not force_zone_override:
+                return bad_request_response(
+                    message="Rider is outside this order's delivery zone.",
+                    data={
+                        "order_zone": {"id": str(order_zone.id), "name": order_zone.name},
+                        "rider_zone": {"id": str(rider_zone.id), "name": rider_zone.name},
+                    }
+                )
+
+        with transaction.atomic():
+            locked_order = Order.objects.select_for_update().get(id=order.id)
+            if locked_order.rider_id:
+                return bad_request_response(message="Order already assigned to a rider.")
+            locked_order.rider = rider
+            locked_order.status = 'rider_assigned'
+            locked_order.delivery_status = 'rider_assigned'
+            locked_order.save()
+            order = locked_order
         notify_rider_order_assignment(order, rider)
-        return success_response(message="Order assigned to rider successfully.", data={"order_id": str(order.id), "rider_id": str(rider.id)})
+        return success_response(
+            message="Order assigned to rider successfully.",
+            data={
+                "order_id": str(order.id),
+                "rider_id": str(rider.id),
+                "delivery_zone": (
+                    {"id": str(order_zone.id), "name": order_zone.name}
+                    if order.vendor and order.vendor.is_marketplace and 'order_zone' in locals()
+                    else None
+                ),
+            }
+        )
 
 
 class AdminRiderAccountControlView(generics.GenericAPIView):
@@ -531,12 +590,97 @@ class AdminMarketplaceAssignOrderView(generics.GenericAPIView):
         if not rider.is_in_house_rider:
             return bad_request_response(message="Rider is not an in-house/marketplace rider.")
 
-        order.rider = rider
-        order.status = 'rider_assigned'
-        order.save()
-        notify_rider_order_assignment(order, rider)
+        return AdminAssignOrderToRiderView().post(request, rider.id)
 
-        return success_response(message="Marketplace order assigned manually.", data={"order_id": str(order.id), "rider_id": str(rider.id)})
+
+class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
+    """
+    Assign multiple marketplace orders to one in-house rider.
+    POST body: { "rider_id": "<uuid>", "order_ids": ["<uuid>", ...] }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        rider_id = request.data.get('rider_id')
+        order_ids = request.data.get('order_ids') or []
+
+        if not rider_id:
+            return bad_request_response(message="rider_id is required.")
+        if not isinstance(order_ids, list) or not order_ids:
+            return bad_request_response(message="order_ids must be a non-empty list.")
+
+        try:
+            rider = Rider.objects.get(id=rider_id)
+        except Rider.DoesNotExist:
+            return bad_request_response(message="Rider not found.", status_code=404)
+
+        if not rider.is_in_house_rider:
+            return bad_request_response(message="Marketplace orders can only be assigned to in-house marketplace riders.")
+        if rider.status != 'active' or not rider.is_verified:
+            return bad_request_response(message="Rider must be active and verified before assignment.")
+
+        from product.models import DeliveryZone
+        rider_zone = rider.get_current_zone() or rider.get_home_zone()
+        if not rider_zone:
+            return bad_request_response(message="Rider has no detected active delivery zone.")
+
+        assigned = []
+        skipped = []
+
+        with transaction.atomic():
+            orders = (
+                Order.objects
+                .select_for_update()
+                .select_related('vendor')
+                .filter(id__in=order_ids, vendor__is_marketplace=True)
+            )
+            orders_by_id = {str(order.id): order for order in orders}
+
+            for raw_order_id in order_ids:
+                order = orders_by_id.get(str(raw_order_id))
+                if not order:
+                    skipped.append({"order_id": str(raw_order_id), "reason": "Order not found or not a marketplace order."})
+                    continue
+                if order.rider_id:
+                    skipped.append({"order_id": str(order.id), "reason": "Order already assigned."})
+                    continue
+
+                latitude = order.delivery_latitude or order.location_latitude
+                longitude = order.delivery_longitude or order.location_longitude
+                order_zone = None
+                if latitude is not None and longitude is not None:
+                    try:
+                        order_zone = DeliveryZone.get_zone_for_location(float(latitude), float(longitude))
+                    except (TypeError, ValueError):
+                        order_zone = None
+
+                if not order_zone:
+                    skipped.append({"order_id": str(order.id), "reason": "Order is outside active delivery zones."})
+                    continue
+                if order_zone.id != rider_zone.id:
+                    skipped.append({"order_id": str(order.id), "reason": f"Order zone is {order_zone.name}, rider zone is {rider_zone.name}."})
+                    continue
+
+                order.rider = rider
+                order.status = 'rider_assigned'
+                order.delivery_status = 'rider_assigned'
+                order.save()
+                assigned.append(order)
+
+        for order in assigned:
+            try:
+                notify_rider_order_assignment(order, rider)
+            except Exception as notification_error:
+                print(f"Bulk assignment notification error for {order.id}: {notification_error}")
+
+        return success_response(
+            message=f"{len(assigned)} orders assigned to rider.",
+            data={
+                "assigned_order_ids": [str(order.id) for order in assigned],
+                "skipped": skipped,
+                "rider_zone": {"id": str(rider_zone.id), "name": rider_zone.name},
+            }
+        )
 
 
 class RiderAdvancePaymentView(generics.GenericAPIView):

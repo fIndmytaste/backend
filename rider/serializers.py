@@ -23,6 +23,8 @@ class OrderSerializer(serializers.ModelSerializer):
         return max(0.0, items_total + delivery_fee - promo_discount)
 
     def _compute_rider_display_earning(self, instance: Order) -> float:
+        if instance.rider and instance.rider.is_in_house_rider:
+            return 0.0
         return float(instance.calculate_net_rider_earning())
 
     def to_representation(self, instance: Order):
@@ -89,6 +91,8 @@ class OrderSerializer(serializers.ModelSerializer):
 
 def _compute_rider_earning(instance: Order) -> float:
     """Net delivery earning after platform commission is deducted."""
+    if instance.rider and instance.rider.is_in_house_rider:
+        return 0.0
     return float(instance.calculate_net_rider_earning())
 
 
@@ -176,6 +180,8 @@ class RiderOrderDetailSerializer(serializers.Serializer):
             'location_longitude': str(instance.location_longitude or ''),
             'note': instance.note or '',
             'rider_display_earning': _compute_rider_earning(instance),
+            'is_marketplace_order': bool(instance.vendor and instance.vendor.is_marketplace),
+            'is_salary_order': bool(instance.rider and instance.rider.is_in_house_rider),
             'delivery_fee': float(instance.delivery_fee or 0),
             'total_distance': float(instance.total_distance or 0),
             'estimated_pickup_time': estimated_pickup_time,
