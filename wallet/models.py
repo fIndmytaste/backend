@@ -95,7 +95,8 @@ class WalletTransaction(models.Model):
         return f"{prefix}-{random_part}"
 
     def __str__(self):
-        return f"{self.transaction_type} of {self.amount} for {self.wallet.user.email} - {self.status}"
+        user_email = self.wallet.user.email if self.wallet_id and self.wallet else "no-wallet"
+        return f"{self.transaction_type} of {self.amount} for {user_email} - {self.status}"
 
     def save(self, *args, **kwargs):
         if not self.reference_code:

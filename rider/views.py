@@ -321,6 +321,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
             reference = data.get('reference')          # order UUID (used to find WalletTransaction)
             trxref = data.get('trxref') or reference   # Paystack tx reference (used to verify with Paystack)
             transaction_reference = data.get('transaction_reference')
+            print(f"[confirm-payment] reference={reference} trxref={trxref} transaction_reference={transaction_reference}")
             trx_extist = self._find_transaction(trxref)
             if not trx_extist:
                 trx_extist = self._find_transaction(reference)
@@ -332,11 +333,14 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 trx_extist = WalletTransaction.objects.filter(
                     order_id=reference
                 ).select_related('order').first()
+            print(f"[confirm-payment] trx_extist id={trx_extist.id if trx_extist else None} wallet_id={trx_extist.wallet_id if trx_extist else None}")
 
             # verify transaction with paystack using the Paystack-issued reference (trxref)
             klass = PaystackManager()
             success, response = klass.verify_transaction(trxref)
+            print(f"[confirm-payment] paystack verify success={success} status={response.get('data', {}).get('status') if isinstance(response, dict) else response}")
             if not success:
+                print(f"[confirm-payment] EXIT: paystack verification failed. response={response}")
                 failed_order = self._mark_order_payment_failed(
                     trx_extist,
                     response_payload=response,
@@ -348,10 +352,10 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 )
 
             metadata = response.get('data', {}).get('metadata', {})
-            # print(json.dumps(response.get('data',{})))
-            print(response.get('data', {}).get('metadata', {}))
+            print(f"[confirm-payment] metadata={metadata}")
             trx_extist = trx_extist or self._find_transaction_from_metadata(metadata)
             if not metadata:
+                print(f"[confirm-payment] EXIT: metadata is empty")
                 failed_order = self._mark_order_payment_failed(
                     trx_extist,
                     response_payload=response,
@@ -370,6 +374,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     trx_extist = trx_extist or self._find_transaction_from_metadata(metadata)
 
             if not trx_extist:
+                print(f"[confirm-payment] EXIT: trx_extist not found after metadata lookup")
                 failed_order = self._mark_order_payment_failed(
                     trx_extist,
                     response_payload=response,
@@ -382,6 +387,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
 
             if trx_extist.external_reference:
                 if trx_extist.external_reference != trxref:
+                    print(f"[confirm-payment] EXIT: external_reference mismatch. stored={trx_extist.external_reference} trxref={trxref}")
                     failed_order = self._mark_order_payment_failed(
                         trx_extist,
                         response_payload=response,
@@ -397,7 +403,9 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                 #  confirm the amount paid
                 order = trx_extist.order
                 amount_paid = (response['data']['amount']) / 100
+                print(f"[confirm-payment] amount_paid={amount_paid} trx_extist.amount={trx_extist.amount}")
                 if float(amount_paid) != float(trx_extist.amount):
+                    print(f"[confirm-payment] EXIT: amount mismatch. paid={amount_paid} expected={trx_extist.amount}")
                     failed_order = self._mark_order_payment_failed(
                         trx_extist,
                         response_payload=response,
