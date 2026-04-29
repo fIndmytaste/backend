@@ -337,6 +337,11 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
             klass = PaystackManager()
             success, response = klass.verify_transaction(trxref)
             if not success:
+                import logging
+                logging.getLogger(__name__).error(
+                    f"[confirm-payment] paystack verify failed: trxref={trxref} reference={reference} "
+                    f"transaction_reference={transaction_reference} response={response}"
+                )
                 failed_order = self._mark_order_payment_failed(
                     trx_extist,
                     response_payload=response,
@@ -394,8 +399,13 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
             if response['data'].get('status') == 'success':
                 #  confirm the amount paid
                 order = trx_extist.order
-                amount_paid = (response['data']['amount']) / 100
-                if float(amount_paid) != float(trx_extist.amount):
+                amount_paid = round((response['data']['amount']) / 100, 2)
+                if round(float(trx_extist.amount), 2) != amount_paid:
+                    import logging
+                    logging.getLogger(__name__).error(
+                        f"[confirm-payment] amount mismatch: paid={amount_paid} expected={trx_extist.amount} "
+                        f"trxref={trxref} reference={reference} trx_id={trx_extist.id}"
+                    )
                     failed_order = self._mark_order_payment_failed(
                         trx_extist,
                         response_payload=response,
@@ -412,13 +422,13 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
 
                     # save order and other commission details
                     order.save_vendor_and_commision()
-                    
+
                     # Process referral reward if applicable
                     process_referral_reward(order)
 
                     trx_extist.status = "completed"
                     trx_extist.response_data = response
-                    trx_extist.external_reference = reference
+                    trx_extist.external_reference = trxref
                     trx_extist.description = 'Order Payment'
                     trx_extist.save()
 

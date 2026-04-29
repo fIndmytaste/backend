@@ -28,7 +28,8 @@ No new models are introduced — data is aggregated from:
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.db.models import Count, Avg, Sum, Q
+from django.db.models import Count, Avg, Sum, Q, FloatField
+from django.db.models.functions import Cast
 from django.utils import timezone
 from datetime import timedelta
 
@@ -150,8 +151,8 @@ class AdminUserLocationAnalyticsView(generics.GenericAPIView):
                 .annotate(
                     user_count=Count('user', distinct=True),
                     address_count=Count('id'),
-                    avg_lat=Avg('location_latitude'),
-                    avg_lon=Avg('location_longitude'),
+                    avg_lat=Avg(Cast('location_latitude', output_field=FloatField())),
+                    avg_lon=Avg(Cast('location_longitude', output_field=FloatField())),
                 )
                 .order_by('-user_count')[:limit]
             )
@@ -288,8 +289,8 @@ class AdminOrderHeatmapView(generics.GenericAPIView):
                 .annotate(
                     order_count=Count('id'),
                     total_revenue=Sum('total_amount'),
-                    avg_lat=Avg('location_latitude'),
-                    avg_lon=Avg('location_longitude'),
+                    avg_lat=Avg(Cast('location_latitude', output_field=FloatField())),
+                    avg_lon=Avg(Cast('location_longitude', output_field=FloatField())),
                 )
                 .order_by('-order_count')[:limit]
             )
