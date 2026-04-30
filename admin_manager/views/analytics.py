@@ -32,6 +32,7 @@ from django.db.models import Count, Avg, Sum, Q, FloatField
 from django.db.models.functions import Cast
 from django.utils import timezone
 from datetime import timedelta
+import re
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -90,7 +91,46 @@ def _zone_for_location(zones, latitude, longitude):
     return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
 
 
+def _normalize_area_text(value):
+    return re.sub(r'[^a-z0-9]+', ' ', str(value or '').lower()).strip()
+
+
+def _zone_for_text(zones, *values):
+    haystack = _normalize_area_text(' '.join(str(value or '') for value in values))
+    if not haystack:
+        return None
+
+    for zone in zones:
+        zone_name = _normalize_area_text(zone.name)
+        primary_name = _normalize_area_text(zone.name.split('(')[0])
+        bracket_matches = re.findall(r'\((.*?)\)', zone.name)
+        aliases = [zone_name, primary_name] + [
+            _normalize_area_text(alias)
+            for alias in bracket_matches
+        ]
+        if any(alias and re.search(rf'\b{re.escape(alias)}\b', haystack) for alias in aliases):
+            return zone
+    return None
+
+
 def _area_from_row(row, zones):
+    zone = _zone_for_location(
+        zones,
+        row.get('delivery_latitude') or row.get('location_latitude'),
+        row.get('delivery_longitude') or row.get('location_longitude'),
+    )
+    if not zone:
+        zone = _zone_for_text(
+            zones,
+            row.get('address'),
+            row.get('city'),
+            row.get('state'),
+            row.get('area_label'),
+            row.get('name'),
+        )
+    if zone:
+        return zone.name, 'Delivery Zone', zone.name
+
     city = (row.get('city') or '').strip()
     state = (row.get('state') or '').strip()
     if city and state:
@@ -99,14 +139,6 @@ def _area_from_row(row, zones):
         return city, '', city
     if state:
         return '', state, state
-
-    zone = _zone_for_location(
-        zones,
-        row.get('delivery_latitude') or row.get('location_latitude'),
-        row.get('delivery_longitude') or row.get('location_longitude'),
-    )
-    if zone:
-        return zone.name, 'Delivery Zone', zone.name
     return 'Unknown', 'Unknown', 'Unknown'
 
 
@@ -179,18 +211,55 @@ class AdminUserLocationAnalyticsView(generics.GenericAPIView):
             if city_filter:
                 addr_qs = addr_qs.filter(city__icontains=city_filter)
 
-            # ── Group by city + state ──────────────────────────────────────
-            grouped = (
-                addr_qs
-                .values('city', 'state')
-                .annotate(
-                    user_count=Count('user', distinct=True),
-                    address_count=Count('id'),
-                    avg_lat=Avg(Cast('location_latitude', output_field=FloatField())),
-                    avg_lon=Avg(Cast('location_longitude', output_field=FloatField())),
-                )
-                .order_by('-user_count')[:limit]
-            )
+            zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+            area_coord_map = {}
+
+            def add_coord(key, row):
+                lat = _round_coord(row.get('delivery_latitude') or row.get('location_latitude'), 5)
+                lon = _round_coord(row.get('delivery_longitude') or row.get('location_longitude'), 5)
+                if lat is None or lon is None:
+                    return
+                entry = area_coord_map.setdefault(key, {'lat_total': 0, 'lon_total': 0, 'coord_count': 0})
+                entry['lat_total'] += lat
+                entry['lon_total'] += lon
+                entry['coord_count'] += 1
+
+            def centroid_for(key):
+                entry = area_coord_map.get(key)
+                if not entry or not entry['coord_count']:
+                    return None
+                return {
+                    'lat': _round_coord(entry['lat_total'] / entry['coord_count'], 5),
+                    'lon': _round_coord(entry['lon_total'] / entry['coord_count'], 5),
+                }
+            area_map = {}
+            for row in addr_qs.values(
+                'user_id',
+                'city',
+                'state',
+                'address',
+                'location_latitude',
+                'location_longitude',
+            ):
+                city, state, area_label = _area_from_row(row, zones)
+                entry = area_map.setdefault(area_label, {
+                    'city': city,
+                    'state': state,
+                    'area_label': area_label,
+                    'user_ids': set(),
+                    'address_count': 0,
+                    'lat_total': 0,
+                    'lon_total': 0,
+                    'coord_count': 0,
+                })
+                entry['user_ids'].add(row['user_id'])
+                entry['address_count'] += 1
+                lat = _round_coord(row.get('location_latitude'), 5)
+                lon = _round_coord(row.get('location_longitude'), 5)
+                if lat is not None and lon is not None:
+                    entry['lat_total'] += lat
+                    entry['lon_total'] += lon
+                    entry['coord_count'] += 1
 
             # ── Build heatmap point cloud (individual coords) ──────────────
             # Returns up to 500 individual geo-points for a dot-density map
@@ -199,15 +268,16 @@ class AdminUserLocationAnalyticsView(generics.GenericAPIView):
             ).exclude(
                 location_longitude__isnull=True
             ).values(
-                'location_latitude', 'location_longitude', 'city', 'state'
+                'location_latitude', 'location_longitude', 'city', 'state', 'address'
             )[:500]
 
             points = [
                 {
                     'lat': _round_coord(p['location_latitude'], 5),
                     'lon': _round_coord(p['location_longitude'], 5),
-                    'city': p['city'],
-                    'state': p['state'],
+                    'city': _area_from_row(p, zones)[0],
+                    'state': _area_from_row(p, zones)[1],
+                    'area_label': _area_from_row(p, zones)[2],
                 }
                 for p in points_qs
                 if _round_coord(p['location_latitude'], 5) is not None
@@ -217,20 +287,21 @@ class AdminUserLocationAnalyticsView(generics.GenericAPIView):
             total_users_in_range = user_qs.count()
             users_with_address = addr_qs.values('user').distinct().count()
 
-            areas = [
-                {
-                    'city': g['city'] or 'Unknown',
-                    'state': g['state'] or 'Unknown',
-                    'area_label': f"{g['city'] or 'Unknown'}, {g['state'] or 'Unknown'}",
-                    'user_count': g['user_count'],
-                    'address_count': g['address_count'],
-                    'centroid': {
-                        'lat': _round_coord(g['avg_lat'], 5),
-                        'lon': _round_coord(g['avg_lon'], 5),
-                    } if g['avg_lat'] and g['avg_lon'] else None,
-                }
-                for g in grouped
-            ]
+            areas = sorted(
+                area_map.values(),
+                key=lambda item: len(item['user_ids']),
+                reverse=True,
+            )[:limit]
+            for area in areas:
+                coord_count = area.pop('coord_count')
+                lat_total = area.pop('lat_total')
+                lon_total = area.pop('lon_total')
+                user_ids = area.pop('user_ids')
+                area['user_count'] = len(user_ids)
+                area['centroid'] = {
+                    'lat': _round_coord(lat_total / coord_count, 5),
+                    'lon': _round_coord(lon_total / coord_count, 5),
+                } if coord_count else None
 
             return success_response(data={
                 'period': {
@@ -322,6 +393,7 @@ class AdminOrderHeatmapView(generics.GenericAPIView):
             area_rows = order_qs.values(
                 'city',
                 'state',
+                'address',
                 'location_latitude',
                 'location_longitude',
                 'delivery_latitude',
@@ -361,6 +433,7 @@ class AdminOrderHeatmapView(generics.GenericAPIView):
                 'delivery_longitude',
                 'city',
                 'state',
+                'address',
                 'total_amount'
             )[:500]
 
@@ -465,24 +538,26 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
             min_users = int(request.GET.get('min_users', 5))
             min_orders = int(request.GET.get('min_orders', 3))
 
-            # ── Users per city/state ───────────────────────────────────────
-            user_areas = (
-                Address.objects.filter(
-                    user__role='buyer',
-                    user__created_at__gte=start_dt,
-                    user__created_at__lte=end_dt,
-                    is_active=True,
-                )
-                .values('city', 'state')
-                .annotate(user_count=Count('user', distinct=True))
-            )
+            zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+
+            # ── Users per zone/area ────────────────────────────────────────
+            user_area_sets = {}
+            for row in Address.objects.filter(
+                user__role='buyer',
+                user__created_at__gte=start_dt,
+                user__created_at__lte=end_dt,
+                is_active=True,
+            ).values('user_id', 'city', 'state', 'address', 'location_latitude', 'location_longitude'):
+                city, state, _area_label = _area_from_row(row, zones)
+                key = (city, state)
+                user_area_sets.setdefault(key, set()).add(row['user_id'])
+                add_coord(key, row)
             user_area_map = {
-                (r['city'] or '', r['state'] or ''): r['user_count']
-                for r in user_areas
+                key: len(user_ids)
+                for key, user_ids in user_area_sets.items()
             }
 
-            # ── Orders per area. Prefer city/state, fall back to delivery zone. ──
-            zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+            # ── Orders per area. Prefer delivery zone, fall back to city/state. ──
             order_area_map = {}
             for row in Order.objects.filter(
                 created_at__gte=start_dt,
@@ -491,6 +566,7 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
             ).values(
                 'city',
                 'state',
+                'address',
                 'location_latitude',
                 'location_longitude',
                 'delivery_latitude',
@@ -505,17 +581,18 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
                 })
                 entry['order_count'] += 1
                 entry['total_revenue'] += float(row['total_amount'] or 0)
+                add_coord(key, row)
 
-            # ── Active vendors per city/state ──────────────────────────────
-            vendor_areas = (
-                Vendor.objects.filter(is_active=True, approval_status='approved')
-                .values('city', 'state')
-                .annotate(vendor_count=Count('id'))
-            )
-            vendor_area_map = {
-                (r['city'] or '', r['state'] or ''): r['vendor_count']
-                for r in vendor_areas
-            }
+            # ── Active vendors per zone/area ───────────────────────────────
+            vendor_area_map = {}
+            for row in Vendor.objects.filter(
+                is_active=True,
+                approval_status='approved',
+            ).values('id', 'name', 'city', 'state', 'address', 'location_latitude', 'location_longitude'):
+                city, state, _area_label = _area_from_row(row, zones)
+                key = (city, state)
+                vendor_area_map[key] = vendor_area_map.get(key, 0) + 1
+                add_coord(key, row)
 
             # ── Merge all areas ────────────────────────────────────────────
             all_area_keys = set(user_area_map) | set(order_area_map) | set(vendor_area_map)
@@ -525,6 +602,8 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
             underserved_areas = []    # vendors exist but almost no orders
 
             for city, state in all_area_keys:
+                if city == 'Unknown' and state == 'Unknown':
+                    continue
                 key = (city, state)
                 users = user_area_map.get(key, 0)
                 orders_info = order_area_map.get(key, {'order_count': 0, 'total_revenue': 0})
@@ -532,7 +611,7 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
 
                 order_count = orders_info['order_count']
                 revenue = orders_info['total_revenue']
-                area_label = f"{city or 'Unknown'}, {state or 'Unknown'}"
+                area_label = city if state == 'Delivery Zone' else f"{city or 'Unknown'}, {state or 'Unknown'}"
 
                 entry = {
                     'city': city or 'Unknown',
@@ -543,6 +622,7 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
                     'total_revenue': revenue,
                     'vendor_count': vendors,
                     'demand_score': users + (order_count * 2),  # weighted signal
+                    'centroid': centroid_for(key),
                 }
 
                 if vendors == 0 and (users >= min_users or order_count >= min_orders):
@@ -560,12 +640,13 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
             # ── All vendors map (for context) ──────────────────────────────
             all_vendor_areas = [
                 {
-                    'city': r['city'] or 'Unknown',
-                    'state': r['state'] or 'Unknown',
-                    'area_label': f"{r['city'] or 'Unknown'}, {r['state'] or 'Unknown'}",
-                    'vendor_count': r['vendor_count'],
+                    'city': city or 'Unknown',
+                    'state': state or 'Unknown',
+                    'area_label': city if state == 'Delivery Zone' else f"{city or 'Unknown'}, {state or 'Unknown'}",
+                    'vendor_count': vendor_count,
+                    'centroid': centroid_for((city, state)),
                 }
-                for r in vendor_areas
+                for (city, state), vendor_count in vendor_area_map.items()
             ]
 
             return success_response(data={
@@ -620,18 +701,33 @@ class AdminLocationSummaryView(generics.GenericAPIView):
             now = timezone.now()
             start_dt = now - timedelta(days=30)
 
-            # Top 5 cities by user registration
-            top_user_cities = (
-                Address.objects.filter(
-                    user__role='buyer',
-                    is_active=True,
-                )
-                .values('city', 'state')
-                .annotate(user_count=Count('user', distinct=True))
-                .order_by('-user_count')[:5]
-            )
-
             zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+
+            # Top 5 signup zones. Prefer delivery zone, fall back to city/state.
+            user_area_counts = {}
+            for row in Address.objects.filter(
+                user__role='buyer',
+                is_active=True,
+            ).values('user_id', 'city', 'state', 'address', 'location_latitude', 'location_longitude'):
+                city, state, area_label = _area_from_row(row, zones)
+                entry = user_area_counts.setdefault(area_label, {
+                    'city': city,
+                    'state': state,
+                    'area_label': area_label,
+                    'user_ids': set(),
+                })
+                entry['user_ids'].add(row['user_id'])
+            top_user_cities = sorted(
+                (
+                    {
+                        'area_label': item['area_label'],
+                        'user_count': len(item['user_ids']),
+                    }
+                    for item in user_area_counts.values()
+                ),
+                key=lambda item: item['user_count'],
+                reverse=True,
+            )[:5]
 
             # Top 5 order areas by order count. Prefer city/state, fall back to delivery zone.
             order_area_counts = {}
@@ -641,6 +737,7 @@ class AdminLocationSummaryView(generics.GenericAPIView):
             ).values(
                 'city',
                 'state',
+                'address',
                 'location_latitude',
                 'location_longitude',
                 'delivery_latitude',
@@ -666,10 +763,10 @@ class AdminLocationSummaryView(generics.GenericAPIView):
                 for item in order_area_counts.values()
             }
             cities_with_vendors = set(
-                (r['city'] or '', r['state'] or '')
+                _area_from_row(r, zones)[:2]
                 for r in Vendor.objects.filter(
                     is_active=True, approval_status='approved'
-                ).values('city', 'state').distinct()
+                ).values('name', 'city', 'state', 'address', 'location_latitude', 'location_longitude')
             )
             gap_count = len(cities_with_demand - cities_with_vendors)
 
@@ -684,7 +781,7 @@ class AdminLocationSummaryView(generics.GenericAPIView):
                 'gap_areas_count': gap_count,
                 'top_cities_by_users': [
                     {
-                        'area_label': f"{r['city'] or 'Unknown'}, {r['state'] or 'Unknown'}",
+                        'area_label': r['area_label'],
                         'user_count': r['user_count'],
                     }
                     for r in top_user_cities
