@@ -69,11 +69,29 @@ class RiderSerializer(serializers.ModelSerializer):
             'fixed_fee': float(zone.fixed_fee),
         }
 
+    def _zone_for_location(self, latitude, longitude):
+        if latitude is None or longitude is None:
+            return None
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+
+        zones = (self.context or {}).get('active_delivery_zones')
+        if zones is not None:
+            return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
+
+        from product.models import DeliveryZone
+        return DeliveryZone.get_zone_for_location(lat, lng)
+
     def get_current_zone(self, obj):
-        return self._serialize_zone(obj.get_current_zone())
+        zone = self._zone_for_location(obj.current_latitude, obj.current_longitude)
+        return self._serialize_zone(zone)
 
     def get_home_zone(self, obj):
-        return self._serialize_zone(obj.get_home_zone())
+        zone = self._zone_for_location(obj.location_latitude, obj.location_longitude)
+        return self._serialize_zone(zone)
 
     def get_assignment_context(self, obj):
         addition_serializer_data = (self.context or {}).get('addition_serializer_data') or {}
@@ -81,21 +99,16 @@ class RiderSerializer(serializers.ModelSerializer):
         if not order:
             return None
 
-        from product.models import DeliveryZone
-
         latitude = order.delivery_latitude or order.location_latitude
         longitude = order.delivery_longitude or order.location_longitude
-        order_zone = None
-        if latitude is not None and longitude is not None:
-            try:
-                order_zone = DeliveryZone.get_zone_for_location(
-                    float(latitude),
-                    float(longitude),
-                )
-            except (TypeError, ValueError):
-                order_zone = None
-
-        rider_zone = obj.get_current_zone() or obj.get_home_zone()
+        order_zone = (
+            (self.context or {}).get('assignment_order_zone') or
+            self._zone_for_location(latitude, longitude)
+        )
+        rider_zone = (
+            self._zone_for_location(obj.current_latitude, obj.current_longitude) or
+            self._zone_for_location(obj.location_latitude, obj.location_longitude)
+        )
         reasons = []
 
         if not obj.is_in_house_rider:
@@ -150,23 +163,27 @@ class RiderSerializer(serializers.ModelSerializer):
             if isinstance(addition_serializer_data, dict):
                 rider_type = addition_serializer_data.get('rider_type')
                 if rider_type == 'marketplace':
-                    orders_queryset_count = Order.objects.filter(
-                        rider=instance,
-                        status__in=[
-                            'rider_assigned',
-                            'confirmed',
-                            'preparing',
-                            'picked_up',
-                            'in_transit',
-                            'near_delivery',
-                        ]
-                    ).count()
+                    orders_queryset_count = getattr(instance, 'ongoing_orders_count', None)
+                    if orders_queryset_count is None:
+                        orders_queryset_count = Order.objects.filter(
+                            rider=instance,
+                            status__in=[
+                                'rider_assigned',
+                                'confirmed',
+                                'preparing',
+                                'picked_up',
+                                'in_transit',
+                                'near_delivery',
+                            ]
+                        ).count()
                     representation['ongoing_orders_count'] = orders_queryset_count
                     representation['ongoing_orders'] = orders_queryset_count
 
-                    ratings = RiderRating.objects.filter(rider=instance)
-                    overall_rating = ratings.aggregate(
-                        avg_rating=Avg('rating'))['avg_rating']
+                    overall_rating = getattr(instance, 'overall_rating', None)
+                    if overall_rating is None:
+                        ratings = RiderRating.objects.filter(rider=instance)
+                        overall_rating = ratings.aggregate(
+                            avg_rating=Avg('rating'))['avg_rating']
                     if overall_rating is None:
                         overall_rating = Decimal('0.00')
                     else:
@@ -232,9 +249,10 @@ class UserSerializer(serializers.ModelSerializer):
             representation = super().to_representation(instance)
             rider_obj, created = Rider.objects.get_or_create(user=instance)
             print(rider_obj, created)
-            representation['rider'] = RiderSerializer(rider_obj).data
+            rider_data = RiderSerializer(rider_obj).data
+            representation['rider'] = rider_data
             representation['profile_image'] = instance.get_profile_image()
-            representation['delivery_zone'] = rider_obj.get_current_zone()
+            representation['delivery_zone'] = rider_data.get('current_zone')
             return representation
 
         elif instance.role == 'vendor':

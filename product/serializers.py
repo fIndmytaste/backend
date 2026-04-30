@@ -50,7 +50,10 @@ class OrderSerializer(serializers.ModelSerializer):
     
     def get_total_commission(self, obj):
         """Get the total commission for the order."""
-        return float(obj.calculate_total_commission())
+        prefetched_items = None
+        if hasattr(obj, '_prefetched_objects_cache') and 'items' in obj._prefetched_objects_cache:
+            prefetched_items = list(obj.items.all())
+        return float(obj.calculate_total_commission(prefetched_items=prefetched_items))
     
     def get_whole_price(self, obj):
         """Get the final payable price shown to the customer.
@@ -70,9 +73,16 @@ class OrderSerializer(serializers.ModelSerializer):
             return None
 
         try:
-            zone = DeliveryZone.get_zone_for_location(float(latitude), float(longitude))
+            lat = float(latitude)
+            lng = float(longitude)
         except (TypeError, ValueError):
             return None
+
+        zones = (self.context or {}).get('active_delivery_zones')
+        if zones is None:
+            zone = DeliveryZone.get_zone_for_location(lat, lng)
+        else:
+            zone = next((candidate for candidate in zones if candidate.contains_location(lat, lng)), None)
 
         if not zone:
             return None
@@ -274,6 +284,105 @@ class OrderSerializer(serializers.ModelSerializer):
         rep['estimated_dropoff_time'] = estimated_dropoff_time
 
         return rep
+
+
+class AdminOrderListSerializer(serializers.ModelSerializer):
+    total_amount = serializers.SerializerMethodField()
+    delivery_fee = serializers.SerializerMethodField()
+    delivery_zone = serializers.SerializerMethodField()
+    customer = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
+    rider = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = [
+            'id',
+            'track_id',
+            'status',
+            'delivery_status',
+            'address',
+            'total_amount',
+            'delivery_fee',
+            'delivery_zone',
+            'customer',
+            'vendor',
+            'rider',
+            'created_at',
+            'updated_at',
+        ]
+
+    def _money(self, value):
+        return float(value or 0)
+
+    def _serialize_user(self, user):
+        if not user:
+            return None
+        return {
+            'id': str(user.id),
+            'name': user.full_name or f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            'email': user.email,
+            'phone_number': user.phone_number,
+            'profile_image': user.get_profile_image(),
+        }
+
+    def _serialize_zone(self, zone):
+        if not zone:
+            return None
+        return {
+            'id': str(zone.id),
+            'name': zone.name,
+            'fixed_fee': float(zone.fixed_fee),
+        }
+
+    def get_total_amount(self, obj):
+        return self._money(obj.total_amount) + self._money(obj.delivery_fee) - self._money(obj.promo_discount_amount)
+
+    def get_delivery_fee(self, obj):
+        return self._money(obj.delivery_fee)
+
+    def get_delivery_zone(self, obj):
+        latitude = obj.delivery_latitude or obj.location_latitude
+        longitude = obj.delivery_longitude or obj.location_longitude
+        if latitude is None or longitude is None:
+            return None
+
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+
+        zones = (self.context or {}).get('active_delivery_zones')
+        if zones is None:
+            zone = DeliveryZone.get_zone_for_location(lat, lng)
+        else:
+            zone = next((candidate for candidate in zones if candidate.contains_location(lat, lng)), None)
+        return self._serialize_zone(zone)
+
+    def get_customer(self, obj):
+        return self._serialize_user(obj.user)
+
+    def get_vendor(self, obj):
+        vendor = obj.vendor
+        if not vendor:
+            return None
+        return {
+            'id': str(vendor.id),
+            'name': vendor.name or self._serialize_user(vendor.user).get('name'),
+            'email': getattr(vendor, 'email', '') or getattr(vendor.user, 'email', ''),
+            'phone_number': getattr(vendor, 'phone_number', '') or getattr(vendor.user, 'phone_number', ''),
+            'profile_image': vendor.thumbnail_url or vendor.logo_url or vendor.user.get_profile_image(),
+        }
+
+    def get_rider(self, obj):
+        if not obj.rider:
+            return None
+        user_data = self._serialize_user(obj.rider.user)
+        return {
+            'id': str(obj.rider.id),
+            **user_data,
+        }
 
 
 class CreateOrderSerializer(serializers.Serializer): 

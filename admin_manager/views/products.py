@@ -1,6 +1,6 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum, Count, Q
+from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
 from datetime import timedelta
 
@@ -12,7 +12,7 @@ from product.models import DeliveryZone, Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
-from product.serializers import OrderSerializer, RatingSerializer
+from product.serializers import AdminOrderListSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
 
 
@@ -258,37 +258,75 @@ class AdminGetMarketPlaceRiderListView(generics.GenericAPIView):
     queryset = Rider.objects.filter(is_in_house_rider=True).select_related('user')
 
 
+    def _zone_for_location(self, zones, latitude, longitude):
+        if latitude is None or longitude is None:
+            return None
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+        return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
+
     def get(self,request):
         order = None
         order_id = request.GET.get('order_id')
-        queryset = self.get_queryset().order_by('-created_at')
+        zone_id = request.GET.get('zone_id')
+        queryset = self.get_queryset().filter(
+            status='active',
+            is_verified=True,
+        ).annotate(
+            ongoing_orders_count=Count(
+                'orders',
+                filter=Q(orders__status__in=[
+                    'rider_assigned',
+                    'confirmed',
+                    'preparing',
+                    'picked_up',
+                    'in_transit',
+                    'near_delivery',
+                ]),
+                distinct=True,
+            )
+        ).annotate(
+            overall_rating=Avg('ratings__rating'),
+        ).order_by('ongoing_orders_count', '-created_at')
+        zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        order_zone = None
+
+        if zone_id:
+            order_zone = next((zone for zone in zones if str(zone.id) == str(zone_id)), None)
+            if not order_zone:
+                return bad_request_response(message="Delivery zone not found.", status_code=404)
 
         if order_id:
             try:
-                order = Order.objects.get(id=order_id)
+                order = Order.objects.only(
+                    'id',
+                    'delivery_latitude',
+                    'delivery_longitude',
+                    'location_latitude',
+                    'location_longitude',
+                ).get(id=order_id)
             except Order.DoesNotExist:
                 return bad_request_response(message="Order not found.", status_code=404)
 
-            latitude = order.delivery_latitude or order.location_latitude
-            longitude = order.delivery_longitude or order.location_longitude
-            order_zone = None
-            if latitude is not None and longitude is not None:
-                try:
-                    from product.models import DeliveryZone
-                    order_zone = DeliveryZone.get_zone_for_location(
-                        float(latitude),
-                        float(longitude),
-                    )
-                except (TypeError, ValueError):
-                    order_zone = None
+            if not order_zone:
+                latitude = order.delivery_latitude or order.location_latitude
+                longitude = order.delivery_longitude or order.location_longitude
+                order_zone = self._zone_for_location(zones, latitude, longitude)
 
-            if order_zone:
-                matching_ids = [
-                    rider.id
-                    for rider in queryset
-                    if (rider.get_current_zone() or rider.get_home_zone()) == order_zone
-                ]
-                queryset = queryset.filter(id__in=matching_ids)
+        if order_zone:
+            matching_ids = [
+                rider.id
+                for rider in queryset
+                if self._zone_for_location(
+                    zones,
+                    rider.current_latitude or rider.location_latitude,
+                    rider.current_longitude or rider.location_longitude,
+                ) == order_zone
+            ]
+            queryset = queryset.filter(id__in=matching_ids)
 
         return paginate_success_response_with_serializer(
             request,
@@ -298,7 +336,11 @@ class AdminGetMarketPlaceRiderListView(generics.GenericAPIView):
             addition_serializer_data={
                 "rider_type":'marketplace',
                 "marketplace_order": order,
-            }
+            },
+            extra_serializer_context={
+                "active_delivery_zones": zones,
+                "assignment_order_zone": order_zone,
+            },
         )
     
 
@@ -467,42 +509,102 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
     """
     Endpoint to fetch all orders from all marketplace vendors.
     """
-    serializer_class = OrderSerializer
+    serializer_class = AdminOrderListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Order.objects.filter(vendor__is_marketplace=True).order_by('-created_at')
+    queryset = Order.objects.filter(
+        Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False)
+    ).distinct().order_by('-created_at')
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().select_related(
+            'user',
+            'vendor',
+            'vendor__user',
+            'rider',
+            'rider__user',
+        )
         track_id = self.request.GET.get('track_id')
+        search = self.request.GET.get('search')
         status = self.request.GET.get('status')
+        assignment_status = self.request.GET.get('assignment_status')
         vendor_id = self.request.GET.get('vendor_id')
         zone_id = self.request.GET.get('zone_id')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
 
+        if search:
+            queryset = queryset.filter(
+                Q(track_id__icontains=search) |
+                Q(id__icontains=search) |
+                Q(vendor__name__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search)
+            )
+
         if status:
             queryset = queryset.filter(status__iexact=status)
+
+        if assignment_status == 'incoming':
+            queryset = queryset.filter(rider__isnull=True).exclude(
+                Q(status__in=['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status__in=['delivered', 'canceled'])
+            )
+        elif assignment_status == 'assigned':
+            queryset = queryset.filter(rider__isnull=False).exclude(
+                Q(status__in=['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status__in=['delivered', 'canceled'])
+            )
+        elif assignment_status == 'completed':
+            queryset = queryset.filter(Q(status='delivered') | Q(delivery_status='delivered'))
+        elif assignment_status in ['canceled', 'cancelled']:
+            queryset = queryset.filter(
+                Q(status__in=['canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status='canceled')
+            )
         
         if vendor_id:
             queryset = queryset.filter(vendor__id=vendor_id)
 
         if zone_id:
             try:
-                zone = DeliveryZone.objects.get(id=zone_id, is_active=True)
+                zones = self.get_active_delivery_zones()
+                zone = next((candidate for candidate in zones if str(candidate.id) == str(zone_id)), None)
+                if not zone:
+                    raise DeliveryZone.DoesNotExist
                 matching_ids = [
-                    order.id
-                    for order in queryset.only('id', 'location_latitude', 'location_longitude', 'delivery_latitude', 'delivery_longitude')
+                    order['id']
+                    for order in queryset.values(
+                        'id',
+                        'location_latitude',
+                        'location_longitude',
+                        'delivery_latitude',
+                        'delivery_longitude',
+                    )
                     if zone.contains_location(
-                        order.delivery_latitude or order.location_latitude,
-                        order.delivery_longitude or order.location_longitude,
+                        order['delivery_latitude'] or order['location_latitude'],
+                        order['delivery_longitude'] or order['location_longitude'],
                     )
                 ]
                 queryset = queryset.filter(id__in=matching_ids)
             except DeliveryZone.DoesNotExist:
                 queryset = queryset.none()
 
-        return queryset
+        return queryset.annotate(
+            priority=Case(
+                When(status='pending', then=Value(0)),
+                When(rider__isnull=True, then=Value(1)),
+                When(status='confirmed', then=Value(2)),
+                When(status='looking_for_rider', then=Value(3)),
+                default=Value(9),
+                output_field=IntegerField(),
+            )
+        ).order_by('priority', '-created_at')
+
+    def get_active_delivery_zones(self):
+        if not hasattr(self, '_active_delivery_zones'):
+            self._active_delivery_zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        return self._active_delivery_zones
 
     @swagger_auto_schema(
         operation_summary="List All Orders from Marketplace Vendors (Admin)",
@@ -568,7 +670,10 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             self.serializer_class,
             self.get_queryset(),
             page_size=int(request.GET.get('page_size', 20)),
-            addition_serializer_data=addition_serializer_data
+            addition_serializer_data=addition_serializer_data,
+            extra_serializer_context={
+                "active_delivery_zones": self.get_active_delivery_zones(),
+            },
         )
 
 
@@ -576,7 +681,29 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.all()
+    queryset = Order.objects.select_related(
+        'user',
+        'vendor',
+        'vendor__user',
+        'rider',
+        'rider__user',
+    ).prefetch_related(
+        'items',
+        'items__product',
+        'items__product__parent',
+        'items__product__productimage_set',
+        'items__product__parent__productimage_set',
+        'items__product__productvariantcategory_set',
+        'items__variant_selections',
+        'items__variant_selections__variant',
+        'items__variant_selections__variant__category',
+        'items__variant_selections__variant__product',
+    )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["active_delivery_zones"] = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        return context
 
     @swagger_auto_schema(
         operation_description="Retrieve detailed information of a specific order by ID.",
@@ -599,7 +726,10 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         try:
             order = self.get_object()
-            serializer = self.get_serializer(order)
+            serializer = self.get_serializer(order, context={
+                **self.get_serializer_context(),
+                "include_delivery_info": True,
+            })
             return success_response(serializer.data)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found.")
@@ -611,7 +741,7 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
 class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.all()
+    queryset = Order.objects.select_related('user', 'vendor', 'vendor__user', 'rider', 'rider__user')
 
     def get(self, request, *args, **kwargs):
         try:
@@ -625,21 +755,27 @@ class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
             if order.user:
                 response['user'] = dict(
                     id=order.user.id,
+                    name=order.user.full_name or f"{order.user.first_name or ''} {order.user.last_name or ''}".strip() or order.user.email,
                     profile_image=order.user.get_profile_image(),
-                    phone_number=order.user.phone_number
+                    phone_number=order.user.phone_number,
+                    email=order.user.email,
                 )
 
             if order.vendor:
                 response['vendor'] = dict(
                     id=order.vendor.id,
-                    profile_image=order.vendor.user.get_profile_image(),
-                    phone_number=order.vendor.user.phone_number
+                    name=order.vendor.name or order.vendor.user.full_name or order.vendor.user.email,
+                    profile_image=order.vendor.thumbnail_url or order.vendor.logo_url or order.vendor.user.get_profile_image(),
+                    phone_number=getattr(order.vendor, 'phone_number', '') or order.vendor.user.phone_number,
+                    email=getattr(order.vendor, 'email', '') or order.vendor.user.email,
                 )
             if order.rider:
                 response['rider'] = dict(
                     id=order.rider.id,
+                    name=order.rider.user.full_name or f"{order.rider.user.first_name or ''} {order.rider.user.last_name or ''}".strip() or order.rider.user.email,
                     profile_image=order.rider.user.get_profile_image(),
-                    phone_number=order.rider.user.phone_number
+                    phone_number=order.rider.user.phone_number,
+                    email=order.rider.user.email,
                 )
             return success_response(response)
         except Order.DoesNotExist:

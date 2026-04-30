@@ -3,7 +3,7 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 
 from account.models import Vendor, VendorRating
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
@@ -64,10 +64,23 @@ class AdminMarketPlaceVendorListView(generics.ListAPIView):
     )
     def get(self, request):
         category = request.GET.get("category")
+        search = request.GET.get("search")
+        vendors = Vendor.objects.filter(
+            Q(is_marketplace=True) | Q(marketplace__isnull=False)
+        ).distinct()
+
         if category:
-            vendors = Vendor.objects.filter(category__name__icontains='market')
-        else:
-            vendors = Vendor.objects.all()
+            vendors = vendors.filter(category__name__icontains=category)
+
+        if search:
+            vendors = vendors.filter(
+                Q(name__icontains=search) |
+                Q(address__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search) |
+                Q(user__email__icontains=search)
+            )
+
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,

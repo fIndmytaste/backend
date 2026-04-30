@@ -20,6 +20,15 @@ from helpers.websocket_notification import notify_rider_order_assignment
 from rider.serializers import RiderRatingCreateSerializer
 
 
+def _is_marketplace_order(order):
+    vendor = getattr(order, 'vendor', None)
+    if not vendor:
+        return False
+    if vendor.is_marketplace:
+        return True
+    return vendor.marketplace_set.exists()
+
+
 class AdminRiderListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = RiderSerializer
@@ -469,7 +478,9 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
         if order.rider:
             return bad_request_response(message="Order already assigned to a rider.")
 
-        if order.vendor and order.vendor.is_marketplace:
+        is_marketplace_order = _is_marketplace_order(order)
+
+        if is_marketplace_order:
             if not rider.is_in_house_rider:
                 return bad_request_response(message="Marketplace orders can only be assigned to in-house marketplace riders.")
             if rider.status != 'active' or not rider.is_verified:
@@ -527,7 +538,7 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
                 "rider_id": str(rider.id),
                 "delivery_zone": (
                     {"id": str(order_zone.id), "name": order_zone.name}
-                    if order.vendor and order.vendor.is_marketplace and 'order_zone' in locals()
+                    if is_marketplace_order and 'order_zone' in locals()
                     else None
                 ),
             }
@@ -600,6 +611,16 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
     """
     permission_classes = [IsAuthenticated]
 
+    def _zone_for_location(self, zones, latitude, longitude):
+        if latitude is None or longitude is None:
+            return None
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+        return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
+
     def post(self, request):
         rider_id = request.data.get('rider_id')
         order_ids = request.data.get('order_ids') or []
@@ -620,19 +641,29 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
             return bad_request_response(message="Rider must be active and verified before assignment.")
 
         from product.models import DeliveryZone
-        rider_zone = rider.get_current_zone() or rider.get_home_zone()
+        zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        rider_zone = (
+            self._zone_for_location(zones, rider.current_latitude, rider.current_longitude) or
+            self._zone_for_location(zones, rider.location_latitude, rider.location_longitude)
+        )
         if not rider_zone:
             return bad_request_response(message="Rider has no detected active delivery zone.")
 
         assigned = []
         skipped = []
+        now = timezone.now()
 
         with transaction.atomic():
             orders = (
                 Order.objects
                 .select_for_update()
                 .select_related('vendor')
-                .filter(id__in=order_ids, vendor__is_marketplace=True)
+                .filter(
+                    Q(vendor__is_marketplace=True) |
+                    Q(vendor__marketplace__isnull=False),
+                    id__in=order_ids,
+                )
+                .distinct()
             )
             orders_by_id = {str(order.id): order for order in orders}
 
@@ -647,12 +678,7 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
 
                 latitude = order.delivery_latitude or order.location_latitude
                 longitude = order.delivery_longitude or order.location_longitude
-                order_zone = None
-                if latitude is not None and longitude is not None:
-                    try:
-                        order_zone = DeliveryZone.get_zone_for_location(float(latitude), float(longitude))
-                    except (TypeError, ValueError):
-                        order_zone = None
+                order_zone = self._zone_for_location(zones, latitude, longitude)
 
                 if not order_zone:
                     skipped.append({"order_id": str(order.id), "reason": "Order is outside active delivery zones."})
@@ -664,8 +690,14 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
                 order.rider = rider
                 order.status = 'rider_assigned'
                 order.delivery_status = 'rider_assigned'
-                order.save()
+                order.updated_at = now
                 assigned.append(order)
+
+            if assigned:
+                Order.objects.bulk_update(
+                    assigned,
+                    ['rider', 'status', 'delivery_status', 'updated_at'],
+                )
 
         for order in assigned:
             try:
