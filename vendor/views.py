@@ -1,7 +1,7 @@
 import redis
 from django.conf import settings
 from rest_framework import status, generics 
-from django.db.models import Q, Avg,Sum, Count
+from django.db.models import Q, Avg, Sum, Count, Prefetch
 from account.models import Address, Notification, Rider, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.order_utils import get_distance_between_two_location
@@ -25,6 +25,7 @@ from product.serializers import OrderSerializer
 from vendor.models import MarketPlace
 from wallet.models import Wallet, WalletTransaction
 from .serializers import (
+    BuyerVendorCardSerializer,
     MarketPlaceSerializer,
     VendorCategorySerializer,
     BuyerVendorProductSerializer,
@@ -51,7 +52,7 @@ import logging
 # resolve average_rating, total_ratings, is_favorite, and marketplace
 # membership without firing any extra per-vendor SQL queries.
 # ---------------------------------------------------------------------------
-def _annotate_vendors(vendors, user=None):
+def _annotate_vendors(vendors, user=None, include_rating_objects=False):
     """
     Accept either a QuerySet or a plain list of Vendor instances.
     Returns a list with per-instance attributes set for the serializer.
@@ -73,16 +74,18 @@ def _annotate_vendors(vendors, user=None):
     )
     rating_map = {str(row['vendor_id']): row for row in rating_qs}
 
-    # --- prefetch all ratings for recent_reviews / user_rating in one query ---
-    all_ratings = list(
-        VendorRating.objects
-        .filter(vendor_id__in=vendor_ids)
-        .select_related('user')
-        .order_by('-created_at')
-    )
     ratings_by_vendor = {}
-    for r in all_ratings:
-        ratings_by_vendor.setdefault(str(r.vendor_id), []).append(r)
+    if include_rating_objects:
+        # Detail-style serializers need review objects; card serializers only need
+        # aggregate rating fields and should not pull every review row.
+        all_ratings = list(
+            VendorRating.objects
+            .filter(vendor_id__in=vendor_ids)
+            .select_related('user')
+            .order_by('-created_at')
+        )
+        for r in all_ratings:
+            ratings_by_vendor.setdefault(str(r.vendor_id), []).append(r)
 
     # --- favorite vendor IDs for the current user (single query) ---
     fav_ids = set()
@@ -107,10 +110,11 @@ def _annotate_vendors(vendors, user=None):
         row = rating_map.get(vid, {})
         v._avg_rating = row.get('avg', 0) or 0
         v._total_ratings = row.get('cnt', 0) or 0
-        # Inject the prefetch cache so _get_prefetched_ratings picks it up.
-        if not hasattr(v, '_prefetched_objects_cache'):
-            v._prefetched_objects_cache = {}
-        v._prefetched_objects_cache['ratings'] = ratings_by_vendor.get(vid, [])
+        if include_rating_objects:
+            # Inject the prefetch cache so _get_prefetched_ratings picks it up.
+            if not hasattr(v, '_prefetched_objects_cache'):
+                v._prefetched_objects_cache = {}
+            v._prefetched_objects_cache['ratings'] = ratings_by_vendor.get(vid, [])
         v._is_favorite = vid in fav_ids
         v._is_marketplace_member = vid in marketplace_vendor_ids
 
@@ -855,8 +859,13 @@ class GetVendorDetailView(generics.GenericAPIView):
     )
     def get(self, request, vendor_id):
         try:
-            vendor = Vendor.objects.get(id=vendor_id)
-            serializer = self.serializer_class(vendor)
+            vendor = (
+                Vendor.objects
+                .select_related('user', 'category')
+                .prefetch_related('ratings__user', 'marketplace_set')
+                .get(id=vendor_id)
+            )
+            serializer = self.serializer_class(vendor, context={'request': request})
             return success_response(serializer.data)
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
@@ -891,18 +900,21 @@ class BuyerVendorProductListView(generics.ListAPIView):
 
             queryset = (
                 Product.objects
-                .filter(parent=None, vendor=vendor)
+                .filter(parent=None, vendor=vendor, is_delete=False)
                 .select_related('vendor__category')
                 .annotate(
                     average_rating_value=Avg('ratings__rating'),
                     total_ratings_value=Count('ratings', distinct=True),
                 )
                 .prefetch_related(
-                    'productimage_set',
+                    Prefetch(
+                        'productimage_set',
+                        queryset=ProductImage.objects.filter(is_active=True).order_by('-is_primary', 'id'),
+                    ),
                     'productvariantcategory_set__variants',
                     'variants',
-                    'ratings',
                 )
+                .order_by('-is_featured', 'name')
             )
 
             return paginate_success_response_with_serializer(
@@ -926,7 +938,7 @@ from drf_yasg.utils import swagger_auto_schema
 
 class HotPickVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
     def get_vendor_candidates(self):
         user_lat, user_lon = resolve_request_coordinates(self.request)
@@ -1049,7 +1061,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
 
     # permission_classes = [IsAuthenticated]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
     queryset = Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
     
     def get_queryset(self):
@@ -1162,7 +1174,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
 
 class AllVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
     def get(self, request):
         from helpers.redis_geo import SEARCH_RADIUS_KM
@@ -1245,7 +1257,7 @@ class SingleMarketPlaceCategoryView(generics.GenericAPIView):
 
 class SingleMarketPlaceCategoryVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
     def get(self, request, category_id):
         try:
@@ -1277,7 +1289,7 @@ class SingleMarketPlaceCategoryVendorsView(generics.GenericAPIView):
 
 class AllMarketPlaceVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
 
     def get_queryset(self):
@@ -1425,7 +1437,7 @@ class AllVendorsNewCachedView(generics.GenericAPIView):
     No delivery-radius enforcement here — this is a browsing endpoint.
     """
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
     def get(self, request):
         from helpers.redis_geo import SEARCH_RADIUS_KM

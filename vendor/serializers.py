@@ -1007,6 +1007,90 @@ class VendorSerializer(serializers.ModelSerializer):
         return data
 
 
+class BuyerVendorCardSerializer(serializers.ModelSerializer):
+    thumbnail = serializers.SerializerMethodField()
+    logo = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+    total_ratings = serializers.SerializerMethodField()
+    recent_reviews = serializers.SerializerMethodField()
+    user_rating = serializers.SerializerMethodField()
+    is_favorite = serializers.SerializerMethodField()
+    category = SystemCategorySerializer()
+    is_marketplace_vendor = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Vendor
+        fields = [
+            'id',
+            'name',
+            'email',
+            'phone_number',
+            'country',
+            'state',
+            'city',
+            'address',
+            'location_latitude',
+            'location_longitude',
+            'description',
+            'logo',
+            'thumbnail',
+            'rating',
+            'average_rating',
+            'total_ratings',
+            'recent_reviews',
+            'user_rating',
+            'is_favorite',
+            'is_active',
+            'is_featured',
+            'created_at',
+            'updated_at',
+            'open_time',
+            'close_time',
+            'open_day',
+            'close_day',
+            'estimated_delivery_time',
+            'starting_delivery_price',
+            'category',
+            'is_marketplace_vendor',
+        ]
+
+    def get_thumbnail(self, obj: Vendor):
+        return obj.thumbnail_url
+
+    def get_logo(self, obj: Vendor):
+        return obj.logo_url
+
+    def get_average_rating(self, obj: Vendor):
+        annotated = getattr(obj, '_avg_rating', None)
+        if annotated is not None:
+            return round(float(annotated), 2)
+        if obj.rating is not None:
+            return round(float(obj.rating), 2)
+        return 0.0
+
+    def get_total_ratings(self, obj: Vendor):
+        annotated = getattr(obj, '_total_ratings', None)
+        return int(annotated or 0)
+
+    def get_recent_reviews(self, obj: Vendor):
+        return []
+
+    def get_user_rating(self, obj: Vendor):
+        return None
+
+    def get_is_favorite(self, obj: Vendor):
+        annotated = getattr(obj, '_is_favorite', None)
+        if annotated is not None:
+            return bool(annotated)
+        return False
+
+    def get_is_marketplace_vendor(self, obj: Vendor):
+        annotated = getattr(obj, '_is_marketplace_member', None)
+        if annotated is not None:
+            return bool(annotated)
+        return bool(getattr(obj, 'is_marketplace', False))
+
+
 class VendorRatingCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating vendor ratings"""
     
