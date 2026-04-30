@@ -624,6 +624,7 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
     def post(self, request):
         rider_id = request.data.get('rider_id')
         order_ids = request.data.get('order_ids') or []
+        force_zone_override = str(request.data.get('force_zone_override', '')).lower() in ['1', 'true', 'yes']
 
         if not rider_id:
             return bad_request_response(message="rider_id is required.")
@@ -683,7 +684,7 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
                 if not order_zone:
                     skipped.append({"order_id": str(order.id), "reason": "Order is outside active delivery zones."})
                     continue
-                if order_zone.id != rider_zone.id:
+                if order_zone.id != rider_zone.id and not force_zone_override:
                     skipped.append({"order_id": str(order.id), "reason": f"Order zone is {order_zone.name}, rider zone is {rider_zone.name}."})
                     continue
 
