@@ -248,6 +248,7 @@ class RiderAdmin(admin.ModelAdmin):
     inlines = [GuarantorInline]
     fieldsets = (
         (None, {'fields': ('user', 'mode_of_transport', 'vehicle_number', 'vehicle_brand', 'plate_number', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')}),
+        ('Verification Documents', {'fields': ('drivers_license_front', 'drivers_license_back', 'nin_front', 'nin_back', 'vehicle_insurance', 'vehicle_registration')}),
         ('Address', {'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude','preferred_location')}),
         ('Next of Kin', {'fields': ('next_of_kin', 'next_of_kin_phone')}),
         ('Performance', {'fields': ('on_time_delivery_rate', 'successful_delivery_rate', 'order_acceptance_rate', 'average_customer_rating')}),

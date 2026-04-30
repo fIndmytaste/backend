@@ -45,6 +45,78 @@ from django.utils.dateparse import parse_date
 from rest_framework.decorators import api_view
 from math import radians, cos
 import logging
+
+# ---------------------------------------------------------------------------
+# Shared helper: annotate a vendor queryset/list so VendorSerializer can
+# resolve average_rating, total_ratings, is_favorite, and marketplace
+# membership without firing any extra per-vendor SQL queries.
+# ---------------------------------------------------------------------------
+def _annotate_vendors(vendors, user=None):
+    """
+    Accept either a QuerySet or a plain list of Vendor instances.
+    Returns a list with per-instance attributes set for the serializer.
+    """
+    from django.db.models import Avg, Count, OuterRef, Exists, Subquery, FloatField
+    vendor_list = list(vendors)
+    if not vendor_list:
+        return vendor_list
+
+    vendor_ids = [v.id for v in vendor_list]
+
+    # --- ratings: avg + count per vendor via a single aggregation query ---
+    from account.models import VendorRating
+    rating_qs = (
+        VendorRating.objects
+        .filter(vendor_id__in=vendor_ids)
+        .values('vendor_id')
+        .annotate(avg=Avg('rating'), cnt=Count('id'))
+    )
+    rating_map = {str(row['vendor_id']): row for row in rating_qs}
+
+    # --- prefetch all ratings for recent_reviews / user_rating in one query ---
+    all_ratings = list(
+        VendorRating.objects
+        .filter(vendor_id__in=vendor_ids)
+        .select_related('user')
+        .order_by('-created_at')
+    )
+    ratings_by_vendor = {}
+    for r in all_ratings:
+        ratings_by_vendor.setdefault(str(r.vendor_id), []).append(r)
+
+    # --- favorite vendor IDs for the current user (single query) ---
+    fav_ids = set()
+    if user and user.is_authenticated:
+        fav_ids = set(
+            str(vid) for vid in
+            UserFavoriteVendor.objects
+            .filter(user=user, vendor_id__in=vendor_ids)
+            .values_list('vendor_id', flat=True)
+        )
+
+    # --- marketplace membership (single query) ---
+    marketplace_vendor_ids = set(
+        str(vid) for vid in
+        MarketPlace.objects
+        .filter(vendors__id__in=vendor_ids)
+        .values_list('vendors', flat=True)
+    )
+
+    for v in vendor_list:
+        vid = str(v.id)
+        row = rating_map.get(vid, {})
+        v._avg_rating = row.get('avg', 0) or 0
+        v._total_ratings = row.get('cnt', 0) or 0
+        # Inject the prefetch cache so _get_prefetched_ratings picks it up.
+        if not hasattr(v, '_prefetched_objects_cache'):
+            v._prefetched_objects_cache = {}
+        v._prefetched_objects_cache['ratings'] = ratings_by_vendor.get(vid, [])
+        v._is_favorite = vid in fav_ids
+        v._is_marketplace_member = vid in marketplace_vendor_ids
+
+    return vendor_list
+
+
 # Vendor Views
 
 
@@ -946,7 +1018,10 @@ class HotPickVendorsView(generics.GenericAPIView):
         )
 
         # Return top N — keep the rating-first order, no re-sort by distance
-        limited_vendors = [vendor for vendor, _, _ in ranked_candidates[:limit]]
+        limited_vendors = _annotate_vendors(
+            [vendor for vendor, _, _ in ranked_candidates[:limit]],
+            user=request.user if request.user.is_authenticated else None,
+        )
 
         return paginate_success_response_with_serializer(
             request,
@@ -1047,14 +1122,18 @@ class FeaturedVendorsView(generics.GenericAPIView):
         }
     )
     def get(self, request):
+        vendors = _annotate_vendors(
+            self.get_queryset(),
+            user=request.user if request.user.is_authenticated else None,
+        )
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset(),
+            vendors,
             page_size=20
         )
 
-   
+
 
 
 # class AllVendorsView(generics.GenericAPIView):
@@ -1125,8 +1204,16 @@ class AllVendorsView(generics.GenericAPIView):
                     regular_vendors.append(v)
                     seen_ids.add(v.id)
 
-        data = self.serializer_class(regular_vendors, many=True, context={'request': request}).data
-        return success_response(data)
+        regular_vendors = _annotate_vendors(
+            regular_vendors,
+            user=request.user if request.user.is_authenticated else None,
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            regular_vendors,
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 
@@ -1174,10 +1261,16 @@ class SingleMarketPlaceCategoryVendorsView(generics.GenericAPIView):
         )
         queryset = apply_vendor_search(queryset, search)
 
-        queryset = list(queryset.order_by('-rating', 'name'))
-
-        data = self.serializer_class(queryset, many=True, context={'request': request}).data
-        return success_response(data)
+        vendor_list = _annotate_vendors(
+            list(queryset.order_by('-rating', 'name')),
+            user=request.user if request.user.is_authenticated else None,
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            vendor_list,
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 
@@ -1204,9 +1297,16 @@ class AllMarketPlaceVendorsView(generics.GenericAPIView):
 
 
     def get(self, request):
-        vendors = self.get_queryset()
-        data = self.serializer_class(vendors, many=True,context={'request': request}).data
-        return success_response(data)
+        vendors = _annotate_vendors(
+            self.get_queryset(),
+            user=request.user if request.user.is_authenticated else None,
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            vendors,
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 
@@ -1352,11 +1452,15 @@ class AllVendorsNewCachedView(generics.GenericAPIView):
                 kwargs['radius_km'] = radius
             vendors = nearest_first_vendors(queryset, user_lat, user_lon, **kwargs)
 
+        vendors = _annotate_vendors(
+            vendors,
+            user=request.user if request.user.is_authenticated else None,
+        )
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             vendors,
-            10,
+            page_size=int(request.GET.get('page_size', 20)),
         )
 
 

@@ -1,11 +1,12 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Case, IntegerField, Sum, Value, When
 from django.utils import timezone
 from django.db.models import Avg, Count, Q, DecimalField
 from account.models import Rider, RiderRating, User
 from account.serializers import RiderDocumentverificationSerializer, RiderSerializer
+from admin_manager.serializers.lists import AdminRiderListSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from admin_manager.serializers.riders import RiderPerformanceMetricsSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response, internal_server_error_response
@@ -31,14 +32,47 @@ def _is_marketplace_order(order):
 
 class AdminRiderListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = RiderSerializer
-    queryset = Rider.objects.all()
+    serializer_class = AdminRiderListSerializer
+    queryset = Rider.objects.select_related('user').all()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        search = self.request.GET.get('search', '').strip()
+        document_status = self.request.GET.get('document_status', '').strip()
+        status = self.request.GET.get('status', '').strip()
+
+        if search:
+            queryset = queryset.filter(
+                Q(user__full_name__icontains=search) |
+                Q(user__first_name__icontains=search) |
+                Q(user__last_name__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(user__phone_number__icontains=search) |
+                Q(vehicle_number__icontains=search) |
+                Q(plate_number__icontains=search)
+            )
+
+        if document_status:
+            queryset = queryset.filter(document_status=document_status)
+        if status:
+            queryset = queryset.filter(status=status)
+
+        return queryset.annotate(
+            verification_priority=Case(
+                When(document_status='submitted', then=Value(0)),
+                When(document_status='pending', then=Value(1)),
+                When(document_status='rejected', then=Value(2)),
+                When(document_status='approved', then=Value(3)),
+                default=Value(4),
+                output_field=IntegerField(),
+            )
+        ).order_by('verification_priority', '-created_at')
 
     def get(self, request):
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset().order_by('-created_at'),
+            self.get_queryset(),
             page_size=int(request.GET.get('page_size', 20))
         )
 
@@ -70,6 +104,26 @@ class AdminRiderDocumentverificationView(generics.RetrieveUpdateDestroyAPIView):
     def patch(self, request, *args, **kwargs):
         response = super().patch(request, *args, **kwargs)
         rider = self.get_object()
+        update_fields = ['updated_at']
+        user_update_fields = ['updated_at']
+
+        if rider.document_status == 'approved':
+            rider.is_verified = True
+            rider.status = 'active'
+            rider.user.is_active = True
+            update_fields.extend(['is_verified', 'status'])
+            user_update_fields.append('is_active')
+        elif rider.document_status == 'rejected':
+            rider.is_verified = False
+            rider.status = 'inactive'
+            rider.user.is_active = False
+            update_fields.extend(['is_verified', 'status'])
+            user_update_fields.append('is_active')
+
+        if len(update_fields) > 1:
+            rider.save(update_fields=update_fields)
+            rider.user.save(update_fields=user_update_fields)
+
         # Notify rider of verification status update
         from helpers.push_notification import notification_helper
         try:

@@ -4,7 +4,7 @@ from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
 from datetime import timedelta
 
-from account.models import Rider, User
+from account.models import Rider, User, Vendor
 from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
@@ -183,11 +183,14 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         # ── Orders ──────────────────────────────────────────────────────────
         base_orders = Order.objects.filter(created_at__gte=start_date)
 
+        completed_statuses = ['delivered']
+        canceled_statuses = ['canceled', 'cancelled', 'rejected', 'failed', 'payment_failed']
+
         order_agg = base_orders.aggregate(
             total=Count('id'),
             active=Count('id', filter=Q(status__in=self.ACTIVE_ORDER_STATUSES)),
-            completed=Count('id', filter=Q(status='delivered')),
-            canceled=Count('id', filter=Q(status__in=['canceled', 'rejected'])),
+            completed=Count('id', filter=Q(status__in=completed_statuses) | Q(delivery_status__in=completed_statuses)),
+            canceled=Count('id', filter=Q(status__in=canceled_statuses) | Q(delivery_status__in=canceled_statuses)),
         )
 
         # ── Revenue: use real vendor_amount field, fall back to sum of total_amount ──
@@ -209,7 +212,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             total=Sum('total_amount')
         )['total'] or 0
 
-        order_growth = total_earnings > 0 if prev_total == 0 else (order_agg['total'] > prev_total)
+        order_growth = order_agg['total'] > 0 if prev_total == 0 else (order_agg['total'] > prev_total)
         earnings_growth = total_earnings > 0 if float(prev_earnings) == 0 else (float(total_earnings) > float(prev_earnings))
 
         # ── Users ────────────────────────────────────────────────────────────
@@ -218,8 +221,8 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
 
         active_users = User.objects.filter(is_active=True, last_login__gte=start_date).count()
         new_users = User.objects.filter(created_at__gte=start_date).count()
-        vendors_count = User.objects.filter(role='vendor').count()
-        riders_count = User.objects.filter(role='rider').count()
+        vendors_count = Vendor.objects.count()
+        riders_count = Rider.objects.count()
 
         prev_active_users = User.objects.filter(
             is_active=True,
@@ -243,6 +246,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             "user_metrics": {
                 "total_users": {"value": total_users},
                 "total_customers": {"value": total_customers},
+                "customers": {"value": total_customers},
                 "active_users": {"value": active_users, "growth": user_growth},
                 "new_users": {"value": new_users},
                 "vendors": {"value": vendors_count},
@@ -426,18 +430,35 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
 
 
 class AdminGetAllOrdersAPIView(generics.GenericAPIView):
-    serializer_class = OrderSerializer
+    serializer_class = AdminOrderListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Order.objects.all().order_by('-created_at')
+    queryset = Order.objects.all().select_related(
+        'user',
+        'vendor',
+        'vendor__user',
+        'rider',
+        'rider__user',
+    ).order_by('-created_at')
 
 
     def get_queryset(self):
         queryset = super().get_queryset()
         track_id = self.request.GET.get('track_id')
+        search = self.request.GET.get('search')
         status = self.request.GET.get('status')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
+
+        if search:
+            queryset = queryset.filter(
+                Q(track_id__icontains=search) |
+                Q(id__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(vendor__name__icontains=search) |
+                Q(address__icontains=search)
+            )
 
         if status:
             queryset = queryset.filter(status__iexact=status)
@@ -495,12 +516,14 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         addition_serializer_data = {
             'is_vendor':True
         }
+        active_delivery_zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             self.get_queryset(),
             page_size=int(request.GET.get('page_size',20)),
-            addition_serializer_data=addition_serializer_data
+            addition_serializer_data=addition_serializer_data,
+            extra_serializer_context={'active_delivery_zones': active_delivery_zones}
         )
     
 

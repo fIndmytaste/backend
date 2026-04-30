@@ -599,14 +599,17 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
             200: VendorSerializer,
         }
     )
-    def get(self, request , system_category_id):
-
-        queryset = self.get_queryset(category_id=system_category_id) 
+    def get(self, request, system_category_id):
+        from vendor.views import _annotate_vendors
+        queryset = _annotate_vendors(
+            self.get_queryset(category_id=system_category_id),
+            user=request.user if request.user.is_authenticated else None,
+        )
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             queryset,
-            page_size=int(request.GET.get('page_size',20))
+            page_size=int(request.GET.get('page_size', 20))
         )
     
     

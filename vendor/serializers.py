@@ -880,39 +880,57 @@ class VendorSerializer(serializers.ModelSerializer):
     def get_logo(self, obj:Vendor):
         return obj.logo_url
     
-    def get_average_rating(self, obj:Vendor):
-        """Calculate and return the average rating for the vendor"""
-        avg_rating = obj.ratings.aggregate(avg_rating=Avg('rating'))['avg_rating']
-        return round(float(avg_rating), 2) if avg_rating else 0.00
-    
+    def _get_prefetched_ratings(self, obj):
+        """Return prefetched ratings list if available, else evaluate queryset once."""
+        if hasattr(obj, '_prefetched_objects_cache') and 'ratings' in obj._prefetched_objects_cache:
+            return list(obj.ratings.all())
+        if not hasattr(obj, '_ratings_cache'):
+            obj._ratings_cache = list(obj.ratings.all())
+        return obj._ratings_cache
+
+    def get_average_rating(self, obj: Vendor):
+        # Prefer annotated value set by list views (zero DB cost).
+        annotated = getattr(obj, '_avg_rating', None)
+        if annotated is not None:
+            return round(float(annotated), 2)
+        ratings = self._get_prefetched_ratings(obj)
+        if not ratings:
+            return 0.00
+        return round(sum(float(r.rating) for r in ratings) / len(ratings), 2)
+
     def get_total_ratings(self, obj):
-        """Return total number of ratings for the vendor"""
-        return obj.ratings.count()
-    
+        annotated = getattr(obj, '_total_ratings', None)
+        if annotated is not None:
+            return annotated
+        return len(self._get_prefetched_ratings(obj))
+
     def get_recent_reviews(self, obj):
-        """Return the 5 most recent reviews with comments"""
-        recent_ratings = obj.ratings.filter(comment__isnull=False).exclude(comment='').order_by('-created_at')[:5]
-        return VendorRatingSerializer(recent_ratings, many=True).data
-    
+        ratings = self._get_prefetched_ratings(obj)
+        with_comments = [r for r in ratings if r.comment]
+        with_comments.sort(key=lambda r: r.created_at, reverse=True)
+        return VendorRatingSerializer(with_comments[:5], many=True).data
+
     def get_user_rating(self, obj):
-        """Return the current user's rating for this vendor if they have rated it"""
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            try:
-                user_rating = obj.ratings.get(user=request.user)
-                return VendorRatingSerializer(user_rating).data
-            except VendorRating.DoesNotExist:
-                return None
+        if not (request and request.user and request.user.is_authenticated):
+            return None
+        ratings = self._get_prefetched_ratings(obj)
+        for r in ratings:
+            if r.user_id == request.user.id:
+                return VendorRatingSerializer(r).data
         return None
-    
 
     def get_is_favorite(self, obj):
+        # Prefer annotated boolean set by list views (zero DB cost).
+        annotated = getattr(obj, '_is_favorite', None)
+        if annotated is not None:
+            return bool(annotated)
         request = self.context.get('request')
         try:
             if request and request.user.is_authenticated:
                 return UserFavoriteVendor.objects.filter(user=request.user, vendor=obj).exists()
             return False
-        except:
+        except Exception:
             return False
 
     def to_representation(self, instance):
@@ -925,9 +943,10 @@ class VendorSerializer(serializers.ModelSerializer):
 
         from django.core.cache import cache as django_cache
 
-        # Check marketplace membership via prefetched cache when available.
-        is_marketplace = False
-        if hasattr(instance, '_prefetched_objects_cache') and 'marketplace_set' in instance._prefetched_objects_cache:
+        # Prefer annotated flag or prefetched reverse relation — avoids a per-vendor query.
+        if hasattr(instance, '_is_marketplace_member'):
+            is_marketplace = instance._is_marketplace_member
+        elif hasattr(instance, '_prefetched_objects_cache') and 'marketplace_set' in instance._prefetched_objects_cache:
             is_marketplace = bool(list(instance.marketplace_set.all()))
         else:
             is_marketplace = MarketPlace.objects.filter(vendors=instance).exists()

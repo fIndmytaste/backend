@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from account.models import Vendor, VendorRating
 from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
+from admin_manager.serializers.lists import AdminVendorListSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi
@@ -18,40 +19,9 @@ from vendor.serializers import ProductSerializer, VendorSerializer
 
 
 class AdminVendorListView(generics.ListAPIView):
-    serializer_class = VendorSerializer
+    serializer_class = AdminVendorListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Vendor.objects.all()
-
-    @swagger_auto_schema(
-        operation_description="Get the details of a vendor.",
-        operation_summary="Retrieve the details of a specific vendor.",
-        responses={
-            200: VendorSerializer,
-            404: "Vendor Not Found",
-            401: "Unauthorized",
-        }
-    )
-    def get(self, request):
-        category = request.GET.get("category")
-        if category:
-            vendors = Vendor.objects.filter(category__name=category)
-        else:
-            vendors = Vendor.objects.all()
-        return paginate_success_response_with_serializer(
-            request,
-            self.serializer_class,
-            vendors,
-            page_size=int(request.GET.get('page_size',20))
-        )
-
-
-
-
-
-class AdminMarketPlaceVendorListView(generics.ListAPIView):
-    serializer_class = VendorSerializer
-    permission_classes = [IsAuthenticated]
-    queryset = Vendor.objects.all()
+    queryset = Vendor.objects.select_related('user', 'category').all()
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",
@@ -65,7 +35,52 @@ class AdminMarketPlaceVendorListView(generics.ListAPIView):
     def get(self, request):
         category = request.GET.get("category")
         search = request.GET.get("search")
-        vendors = Vendor.objects.filter(
+        if category:
+            vendors = self.get_queryset().filter(category__name__icontains=category)
+        else:
+            vendors = self.get_queryset()
+
+        if search:
+            vendors = vendors.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(phone_number__icontains=search) |
+                Q(address__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search) |
+                Q(user__email__icontains=search)
+            )
+
+        vendors = vendors.order_by('-created_at')
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            vendors,
+            page_size=int(request.GET.get('page_size',20))
+        )
+
+
+
+
+
+class AdminMarketPlaceVendorListView(generics.ListAPIView):
+    serializer_class = AdminVendorListSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Vendor.objects.select_related('user', 'category').all()
+
+    @swagger_auto_schema(
+        operation_description="Get the details of a vendor.",
+        operation_summary="Retrieve the details of a specific vendor.",
+        responses={
+            200: VendorSerializer,
+            404: "Vendor Not Found",
+            401: "Unauthorized",
+        }
+    )
+    def get(self, request):
+        category = request.GET.get("category")
+        search = request.GET.get("search")
+        vendors = self.get_queryset().filter(
             Q(is_marketplace=True) | Q(marketplace__isnull=False)
         ).distinct()
 
@@ -84,7 +99,7 @@ class AdminMarketPlaceVendorListView(generics.ListAPIView):
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            vendors,
+            vendors.order_by('-created_at'),
             page_size=int(request.GET.get('page_size',20))
         )
 

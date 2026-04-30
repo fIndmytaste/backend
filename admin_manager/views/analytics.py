@@ -37,7 +37,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from account.models import Address, User, Vendor
-from product.models import Order
+from product.models import DeliveryZone, Order
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response
 
 
@@ -73,6 +73,41 @@ def _round_coord(value, precision=2):
         return round(float(value), precision)
     except (TypeError, ValueError):
         return None
+
+
+def _is_blank(value):
+    return value is None or str(value).strip() == ''
+
+
+def _zone_for_location(zones, latitude, longitude):
+    if latitude is None or longitude is None:
+        return None
+    try:
+        lat = float(latitude)
+        lng = float(longitude)
+    except (TypeError, ValueError):
+        return None
+    return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
+
+
+def _area_from_row(row, zones):
+    city = (row.get('city') or '').strip()
+    state = (row.get('state') or '').strip()
+    if city and state:
+        return city, state, f"{city}, {state}"
+    if city:
+        return city, '', city
+    if state:
+        return '', state, state
+
+    zone = _zone_for_location(
+        zones,
+        row.get('delivery_latitude') or row.get('location_latitude'),
+        row.get('delivery_longitude') or row.get('location_longitude'),
+    )
+    if zone:
+        return zone.name, 'Delivery Zone', zone.name
+    return 'Unknown', 'Unknown', 'Unknown'
 
 
 # ---------------------------------------------------------------------------
@@ -282,38 +317,64 @@ class AdminOrderHeatmapView(generics.GenericAPIView):
             if order_status:
                 order_qs = order_qs.filter(status=order_status)
 
-            # ── Group by city + state ──────────────────────────────────────
-            grouped = (
-                order_qs
-                .values('city', 'state')
-                .annotate(
-                    order_count=Count('id'),
-                    total_revenue=Sum('total_amount'),
-                    avg_lat=Avg(Cast('location_latitude', output_field=FloatField())),
-                    avg_lon=Avg(Cast('location_longitude', output_field=FloatField())),
-                )
-                .order_by('-order_count')[:limit]
+            zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+            area_map = {}
+            area_rows = order_qs.values(
+                'city',
+                'state',
+                'location_latitude',
+                'location_longitude',
+                'delivery_latitude',
+                'delivery_longitude',
+                'total_amount',
             )
+            for row in area_rows:
+                city, state, area_label = _area_from_row(row, zones)
+                entry = area_map.setdefault(area_label, {
+                    'city': city,
+                    'state': state,
+                    'area_label': area_label,
+                    'order_count': 0,
+                    'total_revenue': 0,
+                    'lat_total': 0,
+                    'lon_total': 0,
+                    'coord_count': 0,
+                })
+                entry['order_count'] += 1
+                entry['total_revenue'] += float(row['total_amount'] or 0)
+                lat = _round_coord(row.get('delivery_latitude') or row.get('location_latitude'), 5)
+                lon = _round_coord(row.get('delivery_longitude') or row.get('location_longitude'), 5)
+                if lat is not None and lon is not None:
+                    entry['lat_total'] += lat
+                    entry['lon_total'] += lon
+                    entry['coord_count'] += 1
 
             # ── Point cloud for map (up to 500 individual delivery coords) ─
             points_qs = order_qs.exclude(
-                location_latitude__isnull=True
+                Q(location_latitude__isnull=True) & Q(delivery_latitude__isnull=True)
             ).exclude(
-                location_longitude__isnull=True
+                Q(location_longitude__isnull=True) & Q(delivery_longitude__isnull=True)
             ).values(
-                'location_latitude', 'location_longitude', 'city', 'state', 'total_amount'
+                'location_latitude',
+                'location_longitude',
+                'delivery_latitude',
+                'delivery_longitude',
+                'city',
+                'state',
+                'total_amount'
             )[:500]
 
             points = [
                 {
-                    'lat': _round_coord(p['location_latitude'], 5),
-                    'lon': _round_coord(p['location_longitude'], 5),
-                    'city': p['city'],
-                    'state': p['state'],
+                    'lat': _round_coord(p.get('delivery_latitude') or p.get('location_latitude'), 5),
+                    'lon': _round_coord(p.get('delivery_longitude') or p.get('location_longitude'), 5),
+                    'city': _area_from_row(p, zones)[0],
+                    'state': _area_from_row(p, zones)[1],
+                    'area_label': _area_from_row(p, zones)[2],
                     'order_value': float(p['total_amount'] or 0),
                 }
                 for p in points_qs
-                if _round_coord(p['location_latitude'], 5) is not None
+                if _round_coord(p.get('delivery_latitude') or p.get('location_latitude'), 5) is not None
             ]
 
             # ── Totals ─────────────────────────────────────────────────────
@@ -322,20 +383,19 @@ class AdminOrderHeatmapView(generics.GenericAPIView):
                 total_revenue=Sum('total_amount'),
             )
 
-            areas = [
-                {
-                    'city': g['city'] or 'Unknown',
-                    'state': g['state'] or 'Unknown',
-                    'area_label': f"{g['city'] or 'Unknown'}, {g['state'] or 'Unknown'}",
-                    'order_count': g['order_count'],
-                    'total_revenue': float(g['total_revenue'] or 0),
-                    'centroid': {
-                        'lat': _round_coord(g['avg_lat'], 5),
-                        'lon': _round_coord(g['avg_lon'], 5),
-                    } if g['avg_lat'] and g['avg_lon'] else None,
-                }
-                for g in grouped
-            ]
+            areas = sorted(
+                area_map.values(),
+                key=lambda item: item['order_count'],
+                reverse=True,
+            )[:limit]
+            for area in areas:
+                coord_count = area.pop('coord_count')
+                lat_total = area.pop('lat_total')
+                lon_total = area.pop('lon_total')
+                area['centroid'] = {
+                    'lat': _round_coord(lat_total / coord_count, 5),
+                    'lon': _round_coord(lon_total / coord_count, 5),
+                } if coord_count else None
 
             return success_response(data={
                 'period': {
@@ -421,26 +481,30 @@ class AdminVendorCoverageGapView(generics.GenericAPIView):
                 for r in user_areas
             }
 
-            # ── Orders per city/state ──────────────────────────────────────
-            order_areas = (
-                Order.objects.filter(
-                    created_at__gte=start_dt,
-                    created_at__lte=end_dt,
-                    payment_status='paid',
-                )
-                .values('city', 'state')
-                .annotate(
-                    order_count=Count('id'),
-                    total_revenue=Sum('total_amount'),
-                )
-            )
-            order_area_map = {
-                (r['city'] or '', r['state'] or ''): {
-                    'order_count': r['order_count'],
-                    'total_revenue': float(r['total_revenue'] or 0),
-                }
-                for r in order_areas
-            }
+            # ── Orders per area. Prefer city/state, fall back to delivery zone. ──
+            zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+            order_area_map = {}
+            for row in Order.objects.filter(
+                created_at__gte=start_dt,
+                created_at__lte=end_dt,
+                payment_status='paid',
+            ).values(
+                'city',
+                'state',
+                'location_latitude',
+                'location_longitude',
+                'delivery_latitude',
+                'delivery_longitude',
+                'total_amount',
+            ):
+                city, state, _area_label = _area_from_row(row, zones)
+                key = (city, state)
+                entry = order_area_map.setdefault(key, {
+                    'order_count': 0,
+                    'total_revenue': 0,
+                })
+                entry['order_count'] += 1
+                entry['total_revenue'] += float(row['total_amount'] or 0)
 
             # ── Active vendors per city/state ──────────────────────────────
             vendor_areas = (
@@ -567,25 +631,40 @@ class AdminLocationSummaryView(generics.GenericAPIView):
                 .order_by('-user_count')[:5]
             )
 
-            # Top 5 cities by order count (last 30 days)
-            top_order_cities = (
-                Order.objects.filter(
-                    created_at__gte=start_dt,
-                    payment_status='paid',
-                )
-                .values('city', 'state')
-                .annotate(order_count=Count('id'))
-                .order_by('-order_count')[:5]
-            )
+            zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+
+            # Top 5 order areas by order count. Prefer city/state, fall back to delivery zone.
+            order_area_counts = {}
+            for row in Order.objects.filter(
+                created_at__gte=start_dt,
+                payment_status='paid',
+            ).values(
+                'city',
+                'state',
+                'location_latitude',
+                'location_longitude',
+                'delivery_latitude',
+                'delivery_longitude',
+            ):
+                city, state, area_label = _area_from_row(row, zones)
+                entry = order_area_counts.setdefault(area_label, {
+                    'city': city,
+                    'state': state,
+                    'area_label': area_label,
+                    'order_count': 0,
+                })
+                entry['order_count'] += 1
+            top_order_cities = sorted(
+                order_area_counts.values(),
+                key=lambda item: item['order_count'],
+                reverse=True,
+            )[:5]
 
             # Count of cities with demand but no vendor
-            cities_with_demand = set(
-                (r['city'] or '', r['state'] or '')
-                for r in Order.objects.filter(
-                    created_at__gte=start_dt,
-                    payment_status='paid',
-                ).values('city', 'state').distinct()
-            )
+            cities_with_demand = {
+                (item['city'], item['state'])
+                for item in order_area_counts.values()
+            }
             cities_with_vendors = set(
                 (r['city'] or '', r['state'] or '')
                 for r in Vendor.objects.filter(
@@ -612,7 +691,7 @@ class AdminLocationSummaryView(generics.GenericAPIView):
                 ],
                 'top_cities_by_orders': [
                     {
-                        'area_label': f"{r['city'] or 'Unknown'}, {r['state'] or 'Unknown'}",
+                        'area_label': r['area_label'],
                         'order_count': r['order_count'],
                     }
                     for r in top_order_cities

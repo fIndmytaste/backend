@@ -297,6 +297,16 @@ class Vendor(models.Model):
         help_text="Override base delivery fee for this vendor when in a marketplace. Leave blank to use marketplace default."
     )
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['approval_status'], name='vendor_approval_status_idx'),
+            models.Index(fields=['is_active'], name='vendor_is_active_idx'),
+            models.Index(fields=['is_featured'], name='vendor_is_featured_idx'),
+            models.Index(fields=['is_marketplace'], name='vendor_is_marketplace_idx'),
+            models.Index(fields=['approval_status', 'is_active'], name='vendor_approval_active_idx'),
+            models.Index(fields=['category'], name='vendor_category_idx'),
+        ]
+
     def __str__(self):
         return f"{self.name} ({self.user.email})"
 
