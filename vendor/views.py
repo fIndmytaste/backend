@@ -20,7 +20,7 @@ from helpers.websocket_notification import (
 from helpers.permissions import IsVendor
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory, UserFavoriteVendor
+from product.models import Order, PlatformSettings, Product, ProductImage, SystemCategory, VendorCategory, UserFavoriteVendor
 from product.serializers import OrderSerializer
 from vendor.models import MarketPlace
 from wallet.models import Wallet, WalletTransaction
@@ -901,7 +901,7 @@ class BuyerVendorProductListView(generics.ListAPIView):
             queryset = (
                 Product.objects
                 .filter(parent=None, vendor=vendor, is_delete=False)
-                .select_related('vendor__category')
+                .select_related('vendor__category', 'category', 'system_category')
                 .annotate(
                     average_rating_value=Avg('ratings__rating'),
                     total_ratings_value=Count('ratings', distinct=True),
@@ -917,12 +917,18 @@ class BuyerVendorProductListView(generics.ListAPIView):
                 .order_by('-is_featured', 'name')
             )
 
+            platform_settings = PlatformSettings.get_settings()
+
             return paginate_success_response_with_serializer(
                 request,
                 self.serializer_class,
                 queryset,
                 page_size=int(request.GET.get('page_size', 20)),
-                addition_serializer_data={'request': request, 'is_vendor': is_vendor}
+                addition_serializer_data={'request': request, 'is_vendor': is_vendor},
+                extra_serializer_context={
+                    'platform_commission_active': platform_settings.is_commission_active,
+                    'platform_default_commission_rate': platform_settings.default_commission_percentage,
+                },
             )
         except Vendor.DoesNotExist:
             return bad_request_response(message= "Vendor not found")

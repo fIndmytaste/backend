@@ -1,5 +1,6 @@
 import json
 from multiprocessing import context
+from decimal import Decimal, ROUND_HALF_UP
 from rest_framework import serializers
 from django.db.models import Q, Avg
 from account.models import User, Vendor, VendorRating
@@ -501,6 +502,42 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
     def get_discounted_price(self, obj):
         return obj.get_discounted_price()
 
+    def _commission_is_active(self):
+        value = self.context.get('platform_commission_active')
+        return True if value is None else bool(value)
+
+    def _default_commission_rate(self):
+        value = self.context.get('platform_default_commission_rate')
+        if value is None:
+            return Decimal('0.00')
+        return Decimal(str(value))
+
+    def _commission_rate_for_product(self, product):
+        vendor = getattr(product, 'vendor', None)
+        if vendor is None and hasattr(product, 'product'):
+            vendor = getattr(product.product, 'vendor', None)
+
+        if vendor is not None:
+            vendor_rate = getattr(vendor, 'commission_percentage', None)
+            if vendor_rate is not None:
+                return Decimal(str(vendor_rate))
+
+            category = getattr(vendor, 'category', None)
+            category_rate = getattr(category, 'commission_percentage', None)
+            if category_rate is not None:
+                return Decimal(str(category_rate))
+
+        return self._default_commission_rate()
+
+    def _price_with_commission(self, product, base_price):
+        base = Decimal(str(base_price or 0))
+        if not self._commission_is_active():
+            return base.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        rate = self._commission_rate_for_product(product) / Decimal('100')
+        commission = (base * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return (base + commission).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
     def get_images(self, obj):
         if hasattr(obj, '_prefetched_objects_cache') and 'productimage_set' in obj._prefetched_objects_cache:
             images = obj.productimage_set.all()
@@ -556,7 +593,7 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
                         {
                             "id": prod.id,
                             "name": prod.name,
-                            "price": float(prod.price) if is_vendor else float(prod.get_price_with_commission()),
+                            "price": float(prod.price) if is_vendor else float(self._price_with_commission(prod, prod.price)),
                         }
                         for prod in child_products
                     ]
@@ -571,7 +608,7 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
         grouped_variants = defaultdict(list)
         for variant in variants_qs:
             key = variant.variant_category_name.strip() if variant.variant_category_name else "Uncategorized"
-            price = float(variant.price) if is_vendor else float(variant.get_price_with_commission())
+            price = float(variant.price) if is_vendor else float(self._price_with_commission(variant, variant.price))
             grouped_variants[key].append({
                 "id": variant.id,
                 "name": variant.name,
@@ -601,7 +638,7 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
         context = self.context
         addition_data = context.get('addition_serializer_data') or {}
         is_vendor = context.get('is_vendor', False) or addition_data.get('is_vendor', False)
-        data['price'] = float(instance.price) if is_vendor else float(instance.get_price_with_commission())
+        data['price'] = float(instance.price) if is_vendor else float(self._price_with_commission(instance, instance.price))
         return data
 
 

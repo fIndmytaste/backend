@@ -37,7 +37,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from drf_yasg import openapi
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from django.db.models import F
+from django.db.models import F, Q, Avg, Count, Prefetch
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 from account.models import Address, Vendor, VendorRating,VendorIssueReporting
@@ -52,9 +52,9 @@ from helpers.vendor_discovery import (
 from product.promo_models import PromoCode
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, FavoriteVendorSerializer, OrderSerializer, PromoCodeSerializer, RatingSerializer
 from vendor.models import MarketPlace
-from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
+from vendor.serializers import BuyerVendorProductSerializer, ProductSerializer, SystemCategorySerializer, VendorSerializer
 from wallet.models import WalletTransaction
-from .models import DeliveryFee, UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
+from .models import DeliveryFee, PlatformSettings, UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
 from account.models import Notification
 from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
@@ -496,7 +496,7 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
     Endpoint to get products by system category.
     """
     permission_classes = [AllowAny]
-    serializer_class = ProductSerializer
+    serializer_class = BuyerVendorProductSerializer
 
     @swagger_auto_schema(
         operation_description="Get a list of products belonging to a system category.",
@@ -516,14 +516,66 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, system_category_id):
+        try:
+            system_category = SystemCategory.objects.get(id=system_category_id)
+        except SystemCategory.DoesNotExist:
+            return bad_request_response(message="System category not found")
+
+        is_marketplace_category = system_category.name.lower() == 'marketplace'
+        if is_marketplace_category:
+            marketplace_vendor_ids = MarketPlace.objects.filter(
+                is_active=True
+            ).values_list('vendors', flat=True)
+            products = Product.objects.filter(
+                parent=None,
+                vendor_id__in=marketplace_vendor_ids,
+                is_delete=False,
+            )
+        else:
+            products = Product.objects.filter(
+                parent=None,
+                system_category_id=system_category_id,
+                is_delete=False,
+            )
+
+        search = request.query_params.get('search')
+        if search:
+            products = products.filter(
+                Q(name__icontains=search) |
+                Q(description__icontains=search) |
+                Q(category__name__icontains=search) |
+                Q(vendor__name__icontains=search)
+            )
+
         products = (
-            Product.objects
-            .filter(parent=None, system_category__id=system_category_id)
-            .select_related(*_PRODUCT_SELECT_RELATED)
-            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+            products
+            .select_related('vendor__category', 'category', 'system_category')
+            .annotate(
+                average_rating_value=Avg('ratings__rating'),
+                total_ratings_value=Count('ratings', distinct=True),
+            )
+            .prefetch_related(
+                Prefetch(
+                    'productimage_set',
+                    queryset=ProductImage.objects.filter(is_active=True).order_by('-is_primary', 'id'),
+                ),
+                'productvariantcategory_set__variants',
+                'variants',
+            )
+            .order_by('-is_featured', 'vendor__name', 'name')
         )
-        serializer = self.serializer_class(products, many=True, context={'request': request})
-        return success_response(serializer.data)
+
+        platform_settings = PlatformSettings.get_settings()
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            products,
+            page_size=int(request.GET.get('page_size', 20)),
+            extra_serializer_context={
+                'platform_commission_active': platform_settings.is_commission_active,
+                'platform_default_commission_rate': platform_settings.default_commission_percentage,
+            },
+        )
     
 
 class DeleteProductImageView(generics.GenericAPIView):
