@@ -100,7 +100,8 @@ def get_candidate_riders_for_order(order: Order, exclude_rider: Optional[Rider] 
     ordered by expanding neighbourhood bands around the vendor.
     Marketplace vendor orders are excluded — they require admin assignment.
     """
-    if getattr(order.vendor, 'is_marketplace', False):
+    vendor = order.vendor
+    if getattr(vendor, 'is_marketplace', False) or vendor.marketplace_set.exists():
         return []
 
     riders = Rider.objects.filter(

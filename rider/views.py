@@ -12,7 +12,7 @@ from helpers.websocket_notification import (
     send_order_accepted_notification_customer,
 )
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -957,8 +957,11 @@ class RiderViewSet(viewsets.ModelViewSet):
         candidate_qs = Order.objects.filter(
             rider=None,
             status__in=['looking_for_rider', 'awaiting_rider'],
-            vendor__is_marketplace=False,
-        ).exclude(id__in=declined_order_ids).select_related(
+        ).exclude(
+            id__in=declined_order_ids
+        ).exclude(
+            Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False)
+        ).select_related(
             'vendor', 'vendor__user',
         ).prefetch_related(
             'items',
