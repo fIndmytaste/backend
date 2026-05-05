@@ -957,6 +957,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         candidate_qs = Order.objects.filter(
             rider=None,
             status__in=['looking_for_rider', 'awaiting_rider'],
+            vendor__is_marketplace=False,
         ).exclude(id__in=declined_order_ids).select_related(
             'vendor', 'vendor__user',
         ).prefetch_related(

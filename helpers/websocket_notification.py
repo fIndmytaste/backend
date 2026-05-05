@@ -98,7 +98,11 @@ def get_candidate_riders_for_order(order: Order, exclude_rider: Optional[Rider] 
     """
     Return riders eligible to see an available order based on proximity and status,
     ordered by expanding neighbourhood bands around the vendor.
+    Marketplace vendor orders are excluded — they require admin assignment.
     """
+    if getattr(order.vendor, 'is_marketplace', False):
+        return []
+
     riders = Rider.objects.filter(
         status='active',
         is_verified=True,
