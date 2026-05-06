@@ -23,6 +23,12 @@ from admin_manager.views.announcements import (
 )
 from admin_manager.views.notifications import AdminBulkPushNotificationView
 from admin_manager.views.staff_permissions import StaffPagePermissionsView
+from admin_manager.views.service_charges import (
+    AdminServiceChargeTierListCreateView,
+    AdminServiceChargeTierDetailView,
+    AdminBukaServiceChargeListView,
+    AdminBukaServiceChargeDetailView,
+)
 
 
 urlpatterns = [ 
@@ -121,4 +127,16 @@ urlpatterns = [
 
     # Staff page permissions — used by the custom admin frontend
     path('staff/my-pages/', StaffPagePermissionsView.as_view(), name='staff-my-pages'),
+
+    # ── Pricing / Service Charges ──────────────────────────────────────────
+    # GET  ?category_id=<uuid>  → filter tiers by category
+    # POST → create tier
+    path('pricing/service-charge-tiers/', AdminServiceChargeTierListCreateView.as_view(), name='admin-service-charge-tier-list'),
+    path('pricing/service-charge-tiers/<uuid:tier_id>/', AdminServiceChargeTierDetailView.as_view(), name='admin-service-charge-tier-detail'),
+
+    # Buka per-item charges
+    # GET  ?vendor_id=<uuid>  → filter by vendor
+    # POST → create/update charge for a product
+    path('pricing/buka-service-charges/', AdminBukaServiceChargeListView.as_view(), name='admin-buka-service-charge-list'),
+    path('pricing/buka-service-charges/<uuid:charge_id>/', AdminBukaServiceChargeDetailView.as_view(), name='admin-buka-service-charge-detail'),
 ]

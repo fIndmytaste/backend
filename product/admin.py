@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import (
     SystemCategory, VendorCategory, Product, ProductImage,
     Order, OrderItem, Rating, UserFavoriteVendor, ProductView, DeliveryTracking,
-    PlatformSettings, DeliveryZone, EstateGatePass
+    PlatformSettings, DeliveryZone, EstateGatePass,
+    ServiceChargeTier, BukaItemServiceCharge,
 )
 from .promo_models import PromoCode, PromoUsage
 
@@ -202,4 +203,48 @@ class PromoUsageAdmin(admin.ModelAdmin):
     list_filter = ('promo__promo_type',)
     search_fields = ('promo__code', 'user__username', 'order__id')
     readonly_fields = ('used_at', 'promo', 'user', 'order', 'discount_amount', 'original_amount', 'final_amount', 'distance_at_usage')
-    date_hierarchy = 'used_at'
+
+
+@admin.register(ServiceChargeTier)
+class ServiceChargeTierAdmin(admin.ModelAdmin):
+    list_display = ('system_category', 'min_price', 'max_price', 'flat_charge', 'is_active', 'updated_at')
+    list_display_links = ('system_category',)
+    list_editable = ('min_price', 'max_price', 'flat_charge', 'is_active')
+    list_filter = ('system_category', 'is_active')
+    search_fields = ('system_category__name',)
+    ordering = ('system_category__name', 'min_price')
+    fieldsets = (
+        (None, {
+            'fields': ('system_category', 'is_active'),
+        }),
+        ('Price Range', {
+            'description': 'Set the product price range this flat charge applies to. Leave Max Price blank for an open-ended top tier.',
+            'fields': ('min_price', 'max_price'),
+        }),
+        ('Service Charge', {
+            'description': 'Fixed naira amount added to the product price. Editable at any time without app update.',
+            'fields': ('flat_charge',),
+        }),
+    )
+
+
+@admin.register(BukaItemServiceCharge)
+class BukaItemServiceChargeAdmin(admin.ModelAdmin):
+    list_display = ('product', 'vendor_name', 'flat_charge', 'is_active', 'updated_at')
+    list_display_links = ('product',)
+    list_editable = ('flat_charge', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('product__name', 'product__vendor__business_name')
+    fieldsets = (
+        (None, {
+            'fields': ('product', 'is_active'),
+        }),
+        ('Service Charge', {
+            'description': 'Fixed naira amount added per unit. Formula: (Base Price + Charge) × Quantity.',
+            'fields': ('flat_charge',),
+        }),
+    )
+
+    @admin.display(description='Vendor')
+    def vendor_name(self, obj):
+        return obj.product.vendor.business_name if obj.product.vendor else '—'

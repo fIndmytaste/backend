@@ -90,6 +90,91 @@ class PlatformSettings(models.Model):
         return f"Platform Settings (Commission: {self.default_commission_percentage}%)"
 
 
+class ServiceChargeTier(models.Model):
+    """
+    Flat-rate service charge tier for a system category, based on product price range.
+    Each category (Marketplace, Pharmacy, Beauty, etc.) has its own independent tiers.
+    Admin can create, edit, or delete tiers at any time without app updates.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    system_category = models.ForeignKey(
+        'SystemCategory',
+        on_delete=models.CASCADE,
+        related_name='service_charge_tiers',
+        help_text="The system category this tier belongs to (e.g. Marketplace, Pharmacy)."
+    )
+    min_price = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        help_text="Lower bound of the product price range (inclusive). E.g. 100.00"
+    )
+    max_price = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        null=True, blank=True,
+        help_text="Upper bound of the product price range (inclusive). Leave blank for open-ended top tier."
+    )
+    flat_charge = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Fixed naira amount charged as a service fee for items in this range."
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['system_category', 'min_price']
+        verbose_name = "Service Charge Tier"
+        verbose_name_plural = "Service Charge Tiers"
+
+    def __str__(self):
+        upper = f"–₦{self.max_price}" if self.max_price else "+"
+        return f"{self.system_category.name}: ₦{self.min_price}{upper} → ₦{self.flat_charge}"
+
+    @classmethod
+    def get_charge_for(cls, system_category, price: Decimal) -> Decimal:
+        """Return the flat service charge for a given product price in a category."""
+        tier = (
+            cls.objects
+            .filter(
+                system_category=system_category,
+                is_active=True,
+                min_price__lte=price,
+            )
+            .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=price))
+            .order_by('min_price')
+            .first()
+        )
+        return tier.flat_charge if tier else Decimal('0.00')
+
+
+class BukaItemServiceCharge(models.Model):
+    """
+    Per-item flat service charge for Buka (food) vendors.
+    Each item can have its own charge, editable by admin at any time.
+    Calculation: (base_price + service_charge) × quantity
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    product = models.OneToOneField(
+        'Product',
+        on_delete=models.CASCADE,
+        related_name='buka_service_charge',
+        help_text="The Buka product this service charge applies to."
+    )
+    flat_charge = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Fixed naira service charge added to this item's price per unit."
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Buka Item Service Charge"
+        verbose_name_plural = "Buka Item Service Charges"
+
+    def __str__(self):
+        return f"{self.product.name}: +₦{self.flat_charge}"
+
+
 class DeliveryZone(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -390,105 +475,79 @@ class Product(models.Model):
                 return self.price - discount_amount
         return self.price
 
-    def get_commission_rate(self):
+    def _is_buka_category(self) -> bool:
+        """Return True when this product belongs to a Buka-style system category."""
+        if not self.system_category:
+            return False
+        key = (self.system_category.name_key or '').lower()
+        return 'buka' in key
+
+    def get_service_charge(self, base_price: Decimal = None) -> Decimal:
         """
-        Get the applicable commission rate for this product.
-        Priority: Vendor-specific > Category-specific > Platform default
+        Return the flat service charge the customer pays on top of the base price.
 
-        Returns:
-            Decimal: Commission percentage
+        Logic:
+          • Buka products: use per-item BukaItemServiceCharge if one exists.
+          • All other categories: look up ServiceChargeTier by price range.
+          • Falls back to 0 if no tier/charge is configured.
         """
-        return self.vendor.get_commission_rate()
-
-    def calculate_commission(self, base_price=None):
-        """
-        Calculate commission amount for the product.
-
-        Args:
-            base_price: Optional specific price to calculate commission on.
-                       If None, uses the product's discounted price or regular price.
-
-        Returns:
-            Decimal: Commission amount
-        """
-        from decimal import Decimal
-
-        # # Check if vendor has custom rate
-        # if  self.vendor.commission_percentage is not None:
-        #     return self.vendor.commission_percentage
-
-        # # Check if category has custom rate
-        # if  self.vendor.category and self.vendor.category.commission_percentage is not None:
-        #     return self.vendor.category.commission_percentage
-
-        settings = PlatformSettings.get_settings()
-        if not settings.is_commission_active:
-            return Decimal('0.00')
-
         if base_price is None:
             base_price = self.get_discounted_price()
 
-        rate = self.get_commission_rate() / Decimal('100')
-        return (base_price * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if self._is_buka_category():
+            try:
+                charge_obj = self.buka_service_charge
+                if charge_obj.is_active:
+                    return charge_obj.flat_charge
+            except BukaItemServiceCharge.DoesNotExist:
+                pass
+            return Decimal('0.00')
 
-    def get_price_with_commission(self):
-        """
-        Get final price including commission (base price case).
-        This is what the customer pays.
+        if self.system_category:
+            return ServiceChargeTier.get_charge_for(self.system_category, base_price)
 
-        Returns:
-            Decimal: Price + Commission
-        """
-        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return Decimal('0.00')
 
-    def get_discounted_price_with_commission(self):
-        """
-        Get discounted price including commission.
+    def get_price_with_service_charge(self) -> Decimal:
+        """Return base price + flat service charge (no discount)."""
+        charge = self.get_service_charge(self.price)
+        return (self.price + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-        Returns:
-            Decimal: Discounted Price + Commission
-        """
+    def get_discounted_price_with_service_charge(self) -> Decimal:
+        """Return discounted price + flat service charge."""
         discounted = self.get_discounted_price()
-        return (discounted + self.calculate_commission(discounted)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        charge = self.get_service_charge(discounted)
+        return (discounted + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-    def get_display_price(self):
-        """
-        Get the final price to display to customers (includes commission).
-        Uses discounted price if available, otherwise regular price.
+    def get_display_price(self) -> Decimal:
+        """Price shown to customers — discounted price + flat service charge."""
+        return self.get_discounted_price_with_service_charge()
 
-        Returns:
-            Decimal: Final display price
-        """
-        return self.get_discounted_price_with_commission()
+    # ── Legacy aliases kept so existing callers don't break ──────────────
 
-    def get_vendor_earnings(self, quantity=1):
-        """
-        Calculate what the vendor will receive (price without commission).
+    def get_commission_rate(self):
+        return self.vendor.get_commission_rate()
 
-        Args:
-            quantity: Number of units sold
+    def calculate_commission(self, base_price=None):
+        """Preserved for backward compatibility — now delegates to flat-rate logic."""
+        return self.get_service_charge(base_price)
 
-        Returns:
-            Decimal: Vendor earnings
-        """
-        from decimal import Decimal
+    def get_price_with_commission(self) -> Decimal:
+        return self.get_price_with_service_charge()
+
+    def get_discounted_price_with_commission(self) -> Decimal:
+        return self.get_discounted_price_with_service_charge()
+
+    def get_vendor_earnings(self, quantity=1) -> Decimal:
+        """Vendor receives the base (discounted) price; service charge goes to the platform."""
         base_price = self.get_discounted_price()
         return (base_price * quantity).quantize(Decimal('0.01'))
 
-    def get_platform_earnings(self, quantity=1):
-        """
-        Calculate platform commission earnings.
-
-        Args:
-            quantity: Number of units sold
-
-        Returns:
-            Decimal: Platform commission
-        """
-        from decimal import Decimal
+    def get_platform_earnings(self, quantity=1) -> Decimal:
+        """Platform earns the flat service charge per unit."""
         base_price = self.get_discounted_price()
-        commission = self.calculate_commission(base_price)
-        return (commission * quantity).quantize(Decimal('0.01'))
+        charge = self.get_service_charge(base_price)
+        return (charge * quantity).quantize(Decimal('0.01'))
 
     def is_favorite(self):
         """
@@ -578,38 +637,20 @@ class ProductVariant(models.Model):
         """
         return self.product.get_commission_rate()
 
-    def calculate_commission(self, base_price=None):
-        """
-        Calculate commission amount for the variant.
-
-        Args:
-            base_price: Optional specific price to calculate commission on.
-                       If None, uses the variant's price.
-
-        Returns:
-            Decimal: Commission amount
-        """
-        from decimal import Decimal
-
-        settings = PlatformSettings.get_settings()
-        if not settings.is_commission_active:
-            return Decimal('0.00')
-
+    def get_service_charge(self, base_price: Decimal = None) -> Decimal:
+        """Delegate to the parent product's flat-rate service charge logic."""
         if base_price is None:
             base_price = self.price
+        return self.product.get_service_charge(Decimal(str(base_price)))
 
-        rate = self.get_commission_rate() / Decimal('100')
-        return (Decimal(str(base_price)) * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    def calculate_commission(self, base_price=None):
+        """Backward-compatible alias — delegates to flat-rate service charge."""
+        return self.get_service_charge(base_price)
 
-    def get_price_with_commission(self):
-        """
-        Get final price including commission.
-        This is what the customer pays for this variant.
-
-        Returns:
-            Decimal: Price + Commission
-        """
-        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    def get_price_with_commission(self) -> Decimal:
+        """Price customer pays for this variant (base + flat service charge)."""
+        charge = self.get_service_charge(self.price)
+        return (self.price + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 # --- OrderItemVariant for tracking variant selections in orders ---
