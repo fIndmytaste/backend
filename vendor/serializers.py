@@ -226,7 +226,11 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
     def get_discounted_price(self, obj):
-        return obj.get_discounted_price()
+        context = self.context or {}
+        addition_data = context.get('addition_serializer_data') or {}
+        is_vendor = context.get('is_vendor', False) or addition_data.get('is_vendor', False)
+        price = obj.get_discounted_price() if is_vendor else obj.get_discounted_price_with_service_charge()
+        return float(price)
 
     def get_price_with_commission(self, obj):
         """Return the product price including commission"""
@@ -500,7 +504,11 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
         ]
 
     def get_discounted_price(self, obj):
-        return obj.get_discounted_price()
+        context = self.context or {}
+        addition_data = context.get('addition_serializer_data') or {}
+        is_vendor = context.get('is_vendor', False) or addition_data.get('is_vendor', False)
+        price = obj.get_discounted_price() if is_vendor else obj.get_discounted_price_with_service_charge()
+        return float(price)
 
     def _price_with_commission(self, product, base_price):
         """Return base_price + flat service charge for the given product."""

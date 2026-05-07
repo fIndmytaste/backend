@@ -21,7 +21,15 @@ class BuyerProductSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_discounted_price(self, obj):
-        return obj.get_discounted_price()
+        return float(obj.get_discounted_price_with_service_charge())
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['price'] = float(instance.get_price_with_service_charge())
+        data['discounted_price'] = float(instance.get_discounted_price_with_service_charge())
+        data['service_charge'] = float(instance.get_service_charge())
+        data['base_price'] = float(instance.price)
+        return data
     
     def get_images(self,obj):
         return ProductImageSerializerClass(obj.productimage_set.all(),many=True).data
@@ -153,7 +161,7 @@ class OrderSerializer(serializers.ModelSerializer):
                 order=order,
                 product=product,
                 quantity=item_data['quantity'],
-                price=product.price
+                price=product.get_price_with_commission()
             )
 
         order.update_total_amount()
@@ -185,7 +193,7 @@ class OrderSerializer(serializers.ModelSerializer):
                     'product': {
                         'id': parent.id,
                         'name': parent.name,
-                        'price': float(parent.price),
+                        'price': float(item.price),
                         'images': ProductImageSerializerClass(parent_images, many=True).data,
                     },
                     'price': float(item.price),
@@ -217,7 +225,7 @@ class OrderSerializer(serializers.ModelSerializer):
                     'product': {
                         'id': product.id,
                         'name': product.name,
-                        'price': float(product.price),
+                        'price': float(item.price),
                         'images': ProductImageSerializerClass(product_images, many=True).data,
                     },
                     'price': float(item.price),

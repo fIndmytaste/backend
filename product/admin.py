@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django import forms
+from django.http import JsonResponse
+from django.urls import path
 from .models import (
     SystemCategory, VendorCategory, Product, ProductImage,
     Order, OrderItem, Rating, UserFavoriteVendor, ProductView, DeliveryTracking,
@@ -6,6 +9,34 @@ from .models import (
     ServiceChargeTier, BukaItemServiceCharge,
 )
 from .promo_models import PromoCode, PromoUsage
+
+class BukaItemServiceChargeForm(forms.ModelForm):
+    class Meta:
+        model = BukaItemServiceCharge
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        vendor_id = (
+            self.data.get('vendor')
+            or self.initial.get('vendor')
+            or getattr(self.instance, 'vendor_id', None)
+        )
+
+        if vendor_id:
+            self.fields['product'].queryset = Product.objects.filter(
+                vendor_id=vendor_id,
+                parent__isnull=True,
+                is_delete=False,
+            ).order_by('name')
+        else:
+            self.fields['product'].queryset = Product.objects.none()
+            self.fields['product'].help_text = 'Choose a vendor first, then select one of that vendor’s products.'
+
+        self.fields['product'].widget.attrs['data-current-product'] = str(
+            getattr(self.instance, 'product_id', '') or ''
+        )
+
 
 # Inline for OrderItem
 class OrderItemInline(admin.TabularInline):
@@ -207,15 +238,16 @@ class PromoUsageAdmin(admin.ModelAdmin):
 
 @admin.register(ServiceChargeTier)
 class ServiceChargeTierAdmin(admin.ModelAdmin):
-    list_display = ('system_category', 'min_price', 'max_price', 'flat_charge', 'is_active', 'updated_at')
+    list_display = ('system_category', 'vendor', 'min_price', 'max_price', 'flat_charge', 'is_active', 'updated_at')
     list_display_links = ('system_category',)
     list_editable = ('min_price', 'max_price', 'flat_charge', 'is_active')
-    list_filter = ('system_category', 'is_active')
-    search_fields = ('system_category__name',)
-    ordering = ('system_category__name', 'min_price')
+    list_filter = ('system_category', 'vendor', 'is_active')
+    search_fields = ('system_category__name', 'vendor__name', 'vendor__email')
+    ordering = ('system_category__name', 'vendor__name', 'min_price')
     fieldsets = (
         (None, {
-            'fields': ('system_category', 'is_active'),
+            'fields': ('system_category', 'vendor', 'is_active'),
+            'description': 'Choose a vendor to make this tier apply only to that vendor. Leave Vendor blank for the category default.',
         }),
         ('Price Range', {
             'description': 'Set the product price range this flat charge applies to. Leave Max Price blank for an open-ended top tier.',
@@ -230,14 +262,16 @@ class ServiceChargeTierAdmin(admin.ModelAdmin):
 
 @admin.register(BukaItemServiceCharge)
 class BukaItemServiceChargeAdmin(admin.ModelAdmin):
-    list_display = ('product', 'vendor_name', 'flat_charge', 'is_active', 'updated_at')
+    form = BukaItemServiceChargeForm
+    list_display = ('vendor', 'product', 'flat_charge', 'is_active', 'updated_at')
     list_display_links = ('product',)
     list_editable = ('flat_charge', 'is_active')
-    list_filter = ('is_active',)
-    search_fields = ('product__name', 'product__vendor__business_name')
+    list_filter = ('vendor', 'is_active')
+    search_fields = ('product__name', 'product__vendor__name', 'product__vendor__email')
     fieldsets = (
         (None, {
-            'fields': ('product', 'is_active'),
+            'fields': ('vendor', 'product', 'is_active'),
+            'description': 'Choose the vendor first. The Product field will then show only that vendor’s products.',
         }),
         ('Service Charge', {
             'description': 'Fixed naira amount added per unit. Formula: (Base Price + Charge) × Quantity.',
@@ -245,6 +279,41 @@ class BukaItemServiceChargeAdmin(admin.ModelAdmin):
         }),
     )
 
+    class Media:
+        js = ('admin/js/buka_service_charge_product_filter.js',)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                'vendor-products/',
+                self.admin_site.admin_view(self.vendor_products_view),
+                name='product_bukaitemservicecharge_vendor_products',
+            ),
+        ]
+        return custom_urls + urls
+
+    def vendor_products_view(self, request):
+        vendor_id = request.GET.get('vendor')
+        products = Product.objects.none()
+        if vendor_id:
+            products = Product.objects.filter(
+                vendor_id=vendor_id,
+                parent__isnull=True,
+                is_delete=False,
+            ).order_by('name')
+
+        return JsonResponse({
+            'products': [
+                {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'price': float(product.price),
+                }
+                for product in products
+            ]
+        })
+
     @admin.display(description='Vendor')
     def vendor_name(self, obj):
-        return obj.product.vendor.business_name if obj.product.vendor else '—'
+        return obj.vendor.name if obj.vendor else '—'

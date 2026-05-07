@@ -1271,7 +1271,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                                 order=order,
                                 product=variant_product,
                                 quantity=variant['quantity'],
-                                price=variant_product.price
+                                price=variant_product.get_price_with_commission()
                             )
                             item_count += variant['quantity']
                             print(
@@ -1282,7 +1282,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                             order=order,
                             product=main_product,
                             quantity=item['quantity'],
-                            price=main_product.price
+                            price=main_product.get_price_with_commission()
                         )
                         item_count += item['quantity']
 
@@ -1492,7 +1492,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                                 order=order,
                                 product=variant_product,
                                 quantity=variant['quantity'],
-                                price=variant_product.price
+                                price=variant_product.get_price_with_commission()
                             )
                             item_count += variant['quantity']
 
@@ -1501,7 +1501,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                                 order=order,
                                 product=main_product,
                                 quantity=item['quantity'],
-                                price=main_product.price
+                                price=main_product.get_price_with_commission()
                             )
                             item_count += item['quantity']
                     else:
@@ -1509,7 +1509,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                             order=order,
                             product=main_product,
                             quantity=item['quantity'],
-                            price=main_product.price
+                            price=main_product.get_price_with_commission()
                         )
                         item_count += item['quantity']
 
@@ -1953,7 +1953,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                                 order=order,
                                 product=variant_product,
                                 quantity=variant['quantity'],
-                                price=variant_product.price
+                                price=variant_product.get_price_with_commission()
                             )
                             item_count += variant['quantity']
                     else:
@@ -1961,7 +1961,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                             order=order,
                             product=main_product,
                             quantity=item['quantity'],
-                            price=main_product.price
+                            price=main_product.get_price_with_commission()
                         )
                         item_count += item['quantity']
 

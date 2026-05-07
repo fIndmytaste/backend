@@ -1,10 +1,12 @@
 from django.contrib import admin
+from django import forms
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
     FCMToken, PushNotificationLog, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
     VerificationCode, Notification, StaffPagePermission
 )
 from .models import Guarantor, Address
+from product.models import BukaItemServiceCharge, Product, ServiceChargeTier
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
@@ -186,16 +188,62 @@ class AddressAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'city', 'state', 'country')
     readonly_fields = ('created_at', 'updated_at')
 
+
+class VendorServiceChargeTierInline(admin.TabularInline):
+    model = ServiceChargeTier
+    extra = 1
+    fields = ('system_category', 'min_price', 'max_price', 'flat_charge', 'is_active')
+    autocomplete_fields = ('system_category',)
+    show_change_link = True
+
+
+class BukaItemServiceChargeInlineForm(forms.ModelForm):
+    parent_vendor = None
+
+    class Meta:
+        model = BukaItemServiceCharge
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        vendor_id = getattr(self.instance, 'vendor_id', None)
+        if not vendor_id and self.parent_vendor:
+            vendor_id = self.parent_vendor.id
+
+        if vendor_id:
+            self.fields['product'].queryset = Product.objects.filter(
+                vendor_id=vendor_id,
+                parent__isnull=True,
+                is_delete=False,
+            ).order_by('name')
+        else:
+            self.fields['product'].queryset = Product.objects.none()
+
+
+class BukaItemServiceChargeInline(admin.TabularInline):
+    model = BukaItemServiceCharge
+    form = BukaItemServiceChargeInlineForm
+    extra = 1
+    fields = ('product', 'flat_charge', 'is_active')
+    show_change_link = True
+
+    def get_formset(self, request, obj=None, **kwargs):
+        formset = super().get_formset(request, obj, **kwargs)
+        formset.form.parent_vendor = obj
+        return formset
+
+
 @admin.register(Vendor)
 class VendorAdmin(admin.ModelAdmin):
     list_display = (
         'name', 'email', 'city', 'state',
         'is_active', 'is_featured', 'is_marketplace', 'approval_status',
-        'rating', 'commission_percentage', 'marketplace_delivery_fee',
+        'rating', 'service_charge_tier_count', 'buka_item_charge_count', 'marketplace_delivery_fee',
     )
     list_filter = ('is_active', 'is_featured', 'is_marketplace', 'country', 'category', 'approval_status')
     search_fields = ('name', 'email', 'user__email', 'city', 'state')
     readonly_fields = ('created_at', 'updated_at')
+    inlines = [VendorServiceChargeTierInline, BukaItemServiceChargeInline]
     fieldsets = (
         ('Vendor Info', {
             'fields': ('user', 'name', 'email', 'phone_number', 'description',
@@ -210,8 +258,8 @@ class VendorAdmin(admin.ModelAdmin):
                        'estimated_delivery_time'),
         }),
         ('Financials', {
-            'description': 'marketplace_delivery_fee overrides the marketplace base fee for this vendor only.',
-            'fields': ('commission_percentage', 'marketplace_delivery_fee',
+            'description': 'Service charge tiers for this vendor are managed in the inline rows below. marketplace_delivery_fee overrides the marketplace base fee for this vendor only.',
+            'fields': ('marketplace_delivery_fee',
                        'starting_delivery_price',
                        'bank_account', 'bank_account_name', 'bank_name'),
         }),
@@ -223,6 +271,14 @@ class VendorAdmin(admin.ModelAdmin):
             'fields': ('created_at', 'updated_at'),
         }),
     )
+
+    @admin.display(description='Service charge tiers')
+    def service_charge_tier_count(self, obj):
+        return obj.service_charge_tiers.count()
+
+    @admin.display(description='Buka item charges')
+    def buka_item_charge_count(self, obj):
+        return obj.buka_item_service_charges.count()
 
 @admin.register(VendorRating)
 class VendorRatingAdmin(admin.ModelAdmin):

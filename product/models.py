@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from cloudinary.models import CloudinaryField
 from product.promo_models import PromoCode
@@ -92,8 +93,8 @@ class PlatformSettings(models.Model):
 
 class ServiceChargeTier(models.Model):
     """
-    Flat-rate service charge tier for a system category, based on product price range.
-    Each category (Marketplace, Pharmacy, Beauty, etc.) has its own independent tiers.
+    Flat-rate service charge tier based on product price range.
+    Tiers can be vendor-specific, or category defaults when vendor is blank.
     Admin can create, edit, or delete tiers at any time without app updates.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -102,6 +103,14 @@ class ServiceChargeTier(models.Model):
         on_delete=models.CASCADE,
         related_name='service_charge_tiers',
         help_text="The system category this tier belongs to (e.g. Marketplace, Pharmacy)."
+    )
+    vendor = models.ForeignKey(
+        'account.Vendor',
+        on_delete=models.CASCADE,
+        related_name='service_charge_tiers',
+        null=True,
+        blank=True,
+        help_text="Optional vendor-specific tier. Leave blank to make this a category default."
     )
     min_price = models.DecimalField(
         max_digits=12, decimal_places=2,
@@ -121,26 +130,69 @@ class ServiceChargeTier(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['system_category', 'min_price']
+        ordering = ['system_category', 'vendor__name', 'min_price']
         verbose_name = "Service Charge Tier"
         verbose_name_plural = "Service Charge Tiers"
 
+    def clean(self):
+        super().clean()
+        if self.max_price is not None and self.max_price < self.min_price:
+            raise ValidationError({'max_price': 'Max price must be greater than or equal to min price.'})
+
+        overlapping = (
+            ServiceChargeTier.objects
+            .filter(
+                system_category=self.system_category,
+                vendor=self.vendor,
+                is_active=True,
+            )
+            .filter(models.Q(min_price__lte=self.max_price) if self.max_price is not None else models.Q())
+            .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=self.min_price))
+        )
+        if self.pk:
+            overlapping = overlapping.exclude(pk=self.pk)
+
+        if self.is_active and overlapping.exists():
+            raise ValidationError(
+                'This active service charge tier overlaps another active tier for the same vendor/category scope.'
+            )
+
     def __str__(self):
         upper = f"–₦{self.max_price}" if self.max_price else "+"
-        return f"{self.system_category.name}: ₦{self.min_price}{upper} → ₦{self.flat_charge}"
+        owner = self.vendor.name if self.vendor else self.system_category.name
+        return f"{owner}: ₦{self.min_price}{upper} → ₦{self.flat_charge}"
 
     @classmethod
-    def get_charge_for(cls, system_category, price: Decimal) -> Decimal:
-        """Return the flat service charge for a given product price in a category."""
+    def get_charge_for(cls, system_category, price: Decimal, vendor=None) -> Decimal:
+        """
+        Return the flat service charge for a given product price.
+        Vendor-specific tiers override category default tiers.
+        """
+        base_filters = {
+            'system_category': system_category,
+            'is_active': True,
+            'min_price__lte': price,
+        }
+
+        def matching_tier(vendor_value):
+            return (
+                cls.objects
+                .filter(**base_filters, vendor=vendor_value)
+                .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=price))
+                .order_by('-min_price')
+                .first()
+            )
+
+        if vendor is not None:
+            tier = matching_tier(vendor)
+            if tier:
+                return tier.flat_charge
+
         tier = (
             cls.objects
-            .filter(
-                system_category=system_category,
-                is_active=True,
-                min_price__lte=price,
-            )
+            .filter(**base_filters, vendor__isnull=True)
             .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=price))
-            .order_by('min_price')
+            .order_by('-min_price')
             .first()
         )
         return tier.flat_charge if tier else Decimal('0.00')
@@ -153,6 +205,14 @@ class BukaItemServiceCharge(models.Model):
     Calculation: (base_price + service_charge) × quantity
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(
+        'account.Vendor',
+        on_delete=models.CASCADE,
+        related_name='buka_item_service_charges',
+        null=True,
+        blank=True,
+        help_text="The vendor whose product this item charge applies to."
+    )
     product = models.OneToOneField(
         'Product',
         on_delete=models.CASCADE,
@@ -170,6 +230,17 @@ class BukaItemServiceCharge(models.Model):
     class Meta:
         verbose_name = "Buka Item Service Charge"
         verbose_name_plural = "Buka Item Service Charges"
+
+    def clean(self):
+        super().clean()
+        if self.product and self.vendor and self.product.vendor_id != self.vendor_id:
+            raise ValidationError({'product': 'Product must belong to the selected vendor.'})
+
+    def save(self, *args, **kwargs):
+        if self.product_id and not self.vendor_id:
+            self.vendor_id = self.product.vendor_id
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.product.name}: +₦{self.flat_charge}"
@@ -487,24 +558,29 @@ class Product(models.Model):
         Return the flat service charge the customer pays on top of the base price.
 
         Logic:
-          • Buka products: use per-item BukaItemServiceCharge if one exists.
-          • All other categories: look up ServiceChargeTier by price range.
+          • Buka per-item override, if present.
+          • Vendor-specific ServiceChargeTier by price range.
+          • Category default ServiceChargeTier by price range.
           • Falls back to 0 if no tier/charge is configured.
         """
         if base_price is None:
             base_price = self.get_discounted_price()
 
-        if self._is_buka_category():
-            try:
-                charge_obj = self.buka_service_charge
-                if charge_obj.is_active:
-                    return charge_obj.flat_charge
-            except BukaItemServiceCharge.DoesNotExist:
-                pass
-            return Decimal('0.00')
+        try:
+            charge_obj = self.buka_service_charge
+            if charge_obj.is_active:
+                return charge_obj.flat_charge
+        except BukaItemServiceCharge.DoesNotExist:
+            pass
 
         if self.system_category:
-            return ServiceChargeTier.get_charge_for(self.system_category, base_price)
+            tier_charge = ServiceChargeTier.get_charge_for(
+                self.system_category,
+                base_price,
+                vendor=self.vendor,
+            )
+            if tier_charge:
+                return tier_charge
 
         return Decimal('0.00')
 
