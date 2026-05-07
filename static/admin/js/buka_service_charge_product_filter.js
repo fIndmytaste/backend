@@ -1,12 +1,20 @@
 (function () {
-  function adminModelBaseUrl() {
+  function vendorProductsUrl() {
+    var productSelect = document.getElementById("id_product");
+    if (productSelect) {
+      var configuredUrl = productSelect.getAttribute("data-vendor-products-url");
+      if (configuredUrl) {
+        return configuredUrl;
+      }
+    }
+
     var marker = "/product/bukaitemservicecharge/";
     var path = window.location.pathname;
     var index = path.indexOf(marker);
     if (index === -1) {
       return null;
     }
-    return path.slice(0, index + marker.length);
+    return path.slice(0, index + marker.length) + "vendor-products/";
   }
 
   function setProductOptions(productSelect, products, selectedProductId) {
@@ -39,13 +47,13 @@
       return;
     }
 
-    var baseUrl = adminModelBaseUrl();
-    if (!baseUrl) {
+    var endpointUrl = vendorProductsUrl();
+    if (!endpointUrl) {
       return;
     }
 
     productSelect.disabled = true;
-    fetch(baseUrl + "vendor-products/?vendor=" + encodeURIComponent(vendorId), {
+    fetch(endpointUrl + "?vendor=" + encodeURIComponent(vendorId), {
       credentials: "same-origin",
     })
       .then(function (response) {

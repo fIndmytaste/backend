@@ -213,7 +213,6 @@ class BukaItemServiceChargeInlineForm(forms.ModelForm):
         if vendor_id:
             self.fields['product'].queryset = Product.objects.filter(
                 vendor_id=vendor_id,
-                parent__isnull=True,
                 is_delete=False,
             ).order_by('name')
         else:

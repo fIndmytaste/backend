@@ -26,7 +26,6 @@ class BukaItemServiceChargeForm(forms.ModelForm):
         if vendor_id:
             self.fields['product'].queryset = Product.objects.filter(
                 vendor_id=vendor_id,
-                parent__isnull=True,
                 is_delete=False,
             ).order_by('name')
         else:
@@ -282,6 +281,11 @@ class BukaItemServiceChargeAdmin(admin.ModelAdmin):
     class Media:
         js = ('admin/js/buka_service_charge_product_filter.js',)
 
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        form = super().get_form(request, obj, change, **kwargs)
+        form.base_fields['product'].widget.attrs['data-vendor-products-url'] = 'vendor-products/'
+        return form
+
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
@@ -299,7 +303,6 @@ class BukaItemServiceChargeAdmin(admin.ModelAdmin):
         if vendor_id:
             products = Product.objects.filter(
                 vendor_id=vendor_id,
-                parent__isnull=True,
                 is_delete=False,
             ).order_by('name')
 
