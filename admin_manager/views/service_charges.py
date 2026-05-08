@@ -6,7 +6,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from account.models import Vendor
-from product.models import BukaItemServiceCharge, Product, ServiceChargeTier, SystemCategory
+from product.models import (
+    BukaItemServiceCharge,
+    BukaVariantServiceCharge,
+    Product,
+    ProductVariant,
+    ServiceChargeTier,
+    SystemCategory,
+)
 from helpers.response.response_format import bad_request_response, success_response
 
 
@@ -31,12 +38,33 @@ def _tier_to_dict(tier):
 def _buka_charge_to_dict(charge):
     return {
         "id": str(charge.id),
+        "target_type": "product",
         "vendor_id": str(charge.vendor_id or charge.product.vendor_id),
         "vendor_name": (charge.vendor.name if charge.vendor_id else charge.product.vendor.name),
         "product_id": str(charge.product_id),
         "product_name": charge.product.name,
+        "variant_id": None,
+        "variant_name": None,
         "base_price": str(charge.product.price),
         "customer_price": str(charge.product.get_price_with_service_charge()),
+        "flat_charge": str(charge.flat_charge),
+        "is_active": charge.is_active,
+        "updated_at": charge.updated_at.isoformat(),
+    }
+
+
+def _buka_variant_charge_to_dict(charge):
+    return {
+        "id": str(charge.id),
+        "target_type": "variant",
+        "vendor_id": str(charge.vendor_id or charge.product.vendor_id),
+        "vendor_name": (charge.vendor.name if charge.vendor_id else charge.product.vendor.name),
+        "product_id": str(charge.product_id),
+        "product_name": charge.product.name,
+        "variant_id": str(charge.variant_id),
+        "variant_name": charge.variant.name,
+        "base_price": str(charge.variant.price),
+        "customer_price": str(charge.variant.get_price_with_commission()),
         "flat_charge": str(charge.flat_charge),
         "is_active": charge.is_active,
         "updated_at": charge.updated_at.isoformat(),
@@ -162,20 +190,33 @@ class AdminBukaServiceChargeListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = BukaItemServiceCharge.objects.select_related('product', 'vendor', 'product__vendor').order_by(
+        product_charges = BukaItemServiceCharge.objects.select_related('product', 'vendor', 'product__vendor').order_by(
             'vendor__name', 'product__name'
         )
+        variant_charges = BukaVariantServiceCharge.objects.select_related(
+            'product', 'vendor', 'product__vendor', 'variant', 'variant__category'
+        ).order_by('vendor__name', 'product__name', 'variant__name')
         vendor_id = request.query_params.get('vendor_id')
         if vendor_id:
-            qs = qs.filter(vendor_id=vendor_id)
+            product_charges = product_charges.filter(vendor_id=vendor_id)
+            variant_charges = variant_charges.filter(vendor_id=vendor_id)
+
+        data = [_buka_charge_to_dict(c) for c in product_charges]
+        data.extend(_buka_variant_charge_to_dict(c) for c in variant_charges)
+        data.sort(key=lambda item: (
+            item["vendor_name"] or "",
+            item["product_name"] or "",
+            item["variant_name"] or "",
+        ))
         return success_response(
             message="Buka service charges retrieved.",
-            data=[_buka_charge_to_dict(c) for c in qs],
+            data=data,
         )
 
     def post(self, request):
         data = request.data
         product_id = data.get('product_id')
+        variant_id = data.get('variant_id')
         flat_charge = data.get('flat_charge')
 
         if not product_id or flat_charge is None:
@@ -185,6 +226,33 @@ class AdminBukaServiceChargeListView(APIView):
             product = Product.objects.get(pk=product_id)
         except Product.DoesNotExist:
             return bad_request_response(message="Product not found.")
+
+        if variant_id:
+            try:
+                variant = ProductVariant.objects.select_related('product').get(
+                    pk=variant_id,
+                    product=product,
+                )
+            except ProductVariant.DoesNotExist:
+                return bad_request_response(message="Variant not found for this product.")
+
+            charge, created = BukaVariantServiceCharge.objects.update_or_create(
+                variant=variant,
+                defaults={
+                    'vendor': product.vendor,
+                    'product': product,
+                    'flat_charge': Decimal(str(flat_charge)),
+                    'is_active': data.get('is_active', True),
+                },
+            )
+            return Response(
+                {
+                    "status": True,
+                    "message": "Variant service charge saved.",
+                    "data": _buka_variant_charge_to_dict(charge),
+                },
+                status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+            )
 
         charge, created = BukaItemServiceCharge.objects.update_or_create(
             product=product,
@@ -232,6 +300,19 @@ class AdminBukaVendorProductListView(APIView):
                     "base_price": str(product.price),
                     "customer_price": str(product.get_price_with_service_charge()),
                     "has_buka_charge": hasattr(product, 'buka_service_charge'),
+                    "variants": [
+                        {
+                            "id": str(variant.id),
+                            "name": variant.name,
+                            "category_name": variant.category.category_name,
+                            "base_price": str(variant.price),
+                            "customer_price": str(variant.get_price_with_commission()),
+                            "has_buka_charge": hasattr(variant, 'buka_service_charge'),
+                        }
+                        for variant in ProductVariant.objects.select_related('category')
+                        .filter(product=product, is_active=True)
+                        .order_by('category__category_name', 'name')
+                    ],
                 }
                 for product in products
             ],
@@ -250,13 +331,24 @@ class AdminBukaServiceChargeDetailView(APIView):
         try:
             return BukaItemServiceCharge.objects.select_related('product', 'vendor', 'product__vendor').get(pk=charge_id)
         except BukaItemServiceCharge.DoesNotExist:
+            pass
+        try:
+            return BukaVariantServiceCharge.objects.select_related(
+                'product', 'vendor', 'product__vendor', 'variant', 'variant__category'
+            ).get(pk=charge_id)
+        except BukaVariantServiceCharge.DoesNotExist:
             return None
+
+    def _to_dict(self, charge):
+        if isinstance(charge, BukaVariantServiceCharge):
+            return _buka_variant_charge_to_dict(charge)
+        return _buka_charge_to_dict(charge)
 
     def get(self, request, charge_id):
         charge = self._get(charge_id)
         if not charge:
             return bad_request_response(message="Charge not found.")
-        return success_response(message="Charge retrieved.", data=_buka_charge_to_dict(charge))
+        return success_response(message="Charge retrieved.", data=self._to_dict(charge))
 
     def patch(self, request, charge_id):
         charge = self._get(charge_id)
@@ -269,7 +361,7 @@ class AdminBukaServiceChargeDetailView(APIView):
         if 'is_active' in data:
             charge.is_active = bool(data['is_active'])
         charge.save()
-        return success_response(message="Charge updated.", data=_buka_charge_to_dict(charge))
+        return success_response(message="Charge updated.", data=self._to_dict(charge))
 
     def delete(self, request, charge_id):
         charge = self._get(charge_id)

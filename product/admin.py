@@ -6,7 +6,7 @@ from .models import (
     SystemCategory, VendorCategory, Product, ProductImage,
     Order, OrderItem, Rating, UserFavoriteVendor, ProductView, DeliveryTracking,
     PlatformSettings, DeliveryZone, EstateGatePass,
-    ServiceChargeTier, BukaItemServiceCharge,
+    ServiceChargeTier, BukaItemServiceCharge, BukaVariantServiceCharge, ProductVariant,
 )
 from .promo_models import PromoCode, PromoUsage
 
@@ -35,6 +35,43 @@ class BukaItemServiceChargeForm(forms.ModelForm):
         self.fields['product'].widget.attrs['data-current-product'] = str(
             getattr(self.instance, 'product_id', '') or ''
         )
+
+
+class BukaVariantServiceChargeForm(forms.ModelForm):
+    class Meta:
+        model = BukaVariantServiceCharge
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        vendor_id = (
+            self.data.get('vendor')
+            or self.initial.get('vendor')
+            or getattr(self.instance, 'vendor_id', None)
+        )
+        product_id = (
+            self.data.get('product')
+            or self.initial.get('product')
+            or getattr(self.instance, 'product_id', None)
+        )
+
+        if vendor_id:
+            self.fields['product'].queryset = Product.objects.filter(
+                vendor_id=vendor_id,
+                is_delete=False,
+            ).order_by('name')
+        else:
+            self.fields['product'].queryset = Product.objects.none()
+            self.fields['product'].help_text = 'Choose a vendor first, then select one of that vendor’s products.'
+
+        if product_id:
+            self.fields['variant'].queryset = ProductVariant.objects.filter(
+                product_id=product_id,
+                is_active=True,
+            ).select_related('category').order_by('category__category_name', 'name')
+        else:
+            self.fields['variant'].queryset = ProductVariant.objects.none()
+            self.fields['variant'].help_text = 'Choose a product first, then select one of its variants.'
 
 
 # Inline for OrderItem
@@ -322,3 +359,23 @@ class BukaItemServiceChargeAdmin(admin.ModelAdmin):
     @admin.display(description='Vendor')
     def vendor_name(self, obj):
         return obj.vendor.name if obj.vendor else '—'
+
+
+@admin.register(BukaVariantServiceCharge)
+class BukaVariantServiceChargeAdmin(admin.ModelAdmin):
+    form = BukaVariantServiceChargeForm
+    list_display = ('vendor', 'product', 'variant', 'flat_charge', 'is_active', 'updated_at')
+    list_display_links = ('variant',)
+    list_editable = ('flat_charge', 'is_active')
+    list_filter = ('vendor', 'is_active')
+    search_fields = ('product__name', 'variant__name', 'vendor__name', 'vendor__email')
+    fieldsets = (
+        (None, {
+            'fields': ('vendor', 'product', 'variant', 'is_active'),
+            'description': 'Choose the vendor, then the product, then the product variant.',
+        }),
+        ('Service Charge', {
+            'description': 'Fixed naira amount added per selected variant.',
+            'fields': ('flat_charge',),
+        }),
+    )

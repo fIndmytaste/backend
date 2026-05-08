@@ -715,9 +715,20 @@ class ProductVariant(models.Model):
         return self.product.get_commission_rate()
 
     def get_service_charge(self, base_price: Decimal = None) -> Decimal:
-        """Delegate to the parent product's flat-rate service charge logic."""
+        """
+        Return the variant-specific flat service charge when configured.
+        Falls back to the parent product's service charge/tier logic.
+        """
         if base_price is None:
             base_price = self.price
+
+        try:
+            charge_obj = self.buka_service_charge
+            if charge_obj.is_active:
+                return charge_obj.flat_charge
+        except BukaVariantServiceCharge.DoesNotExist:
+            pass
+
         return self.product.get_service_charge(Decimal(str(base_price)))
 
     def calculate_commission(self, base_price=None):
@@ -728,6 +739,66 @@ class ProductVariant(models.Model):
         """Price customer pays for this variant (base + flat service charge)."""
         charge = self.get_service_charge(self.price)
         return (self.price + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+class BukaVariantServiceCharge(models.Model):
+    """
+    Per-variant flat service charge for Buka product options.
+    Overrides the parent product charge for the selected variant only.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(
+        'account.Vendor',
+        on_delete=models.CASCADE,
+        related_name='buka_variant_service_charges',
+        null=True,
+        blank=True,
+        help_text="The vendor whose product variant this charge applies to."
+    )
+    product = models.ForeignKey(
+        'Product',
+        on_delete=models.CASCADE,
+        related_name='buka_variant_service_charges',
+        help_text="The parent Buka product for this variant charge."
+    )
+    variant = models.OneToOneField(
+        'ProductVariant',
+        on_delete=models.CASCADE,
+        related_name='buka_service_charge',
+        help_text="The Buka product variant this service charge applies to."
+    )
+    flat_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Fixed naira service charge added to this variant's price per unit."
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Buka Variant Service Charge"
+        verbose_name_plural = "Buka Variant Service Charges"
+
+    def clean(self):
+        super().clean()
+        if self.variant_id:
+            if self.product_id and self.variant.product_id != self.product_id:
+                raise ValidationError({'variant': 'Variant must belong to the selected product.'})
+            if self.vendor_id and self.variant.product.vendor_id != self.vendor_id:
+                raise ValidationError({'variant': 'Variant must belong to the selected vendor.'})
+
+    def save(self, *args, **kwargs):
+        if self.variant_id:
+            if not self.product_id:
+                self.product_id = self.variant.product_id
+            if not self.vendor_id:
+                self.vendor_id = self.variant.product.vendor_id
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.product.name} / {self.variant.name}: +₦{self.flat_charge}"
 
 
 # --- OrderItemVariant for tracking variant selections in orders ---

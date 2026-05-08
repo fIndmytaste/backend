@@ -515,10 +515,10 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
 
     def _price_with_commission(self, product, base_price):
         """Return base_price + flat service charge for the given product."""
+        if hasattr(product, 'get_price_with_commission'):
+            return product.get_price_with_commission()
         base = Decimal(str(base_price or 0))
-        # For ProductVariant objects, delegate to the parent product's logic
-        target = product.product if hasattr(product, 'product') else product
-        charge = target.get_service_charge(base)
+        charge = product.get_service_charge(base)
         return (base + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def get_images(self, obj):
