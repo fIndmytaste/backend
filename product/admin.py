@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django import forms
 from django.http import JsonResponse
-from django.urls import path
+from django.urls import path, reverse
 from .models import (
     SystemCategory, VendorCategory, Product, ProductImage,
     Order, OrderItem, Rating, UserFavoriteVendor, ProductView, DeliveryTracking,
@@ -283,7 +283,9 @@ class BukaItemServiceChargeAdmin(admin.ModelAdmin):
 
     def get_form(self, request, obj=None, change=False, **kwargs):
         form = super().get_form(request, obj, change, **kwargs)
-        form.base_fields['product'].widget.attrs['data-vendor-products-url'] = 'vendor-products/'
+        form.base_fields['product'].widget.attrs['data-vendor-products-url'] = reverse(
+            'admin:product_bukaitemservicecharge_vendor_products'
+        )
         return form
 
     def get_urls(self):

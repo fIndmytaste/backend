@@ -1,6 +1,7 @@
 import redis
 from django.conf import settings
 from rest_framework import status, generics 
+from django.db import transaction
 from django.db.models import Q, Avg, Sum, Count, Prefetch
 from account.models import Address, Notification, Rider, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
@@ -119,6 +120,39 @@ def _annotate_vendors(vendors, user=None, include_rating_objects=False):
         v._is_marketplace_member = vid in marketplace_vendor_ids
 
     return vendor_list
+
+
+def _request_product_images(request):
+    images = request.FILES.getlist('images')
+    if not images and request.FILES.get('image'):
+        images = [request.FILES['image']]
+    return images
+
+
+def _upload_product_images_or_raise(product, images):
+    for index, img in enumerate(images):
+        upload_result = upload_to_backblaze(
+            file=img,
+            folder=f"products/{product.id}",
+            file_name=f"image_{index + 1}_{img.name}",
+        )
+        download_url = upload_result.get('downloadUrl') if upload_result else ''
+        if not download_url:
+            raise ValueError(f"Storage did not return a download URL for {img.name}.")
+
+        ProductImage.objects.create(
+            product=product,
+            image_url=download_url,
+            is_primary=not ProductImage.objects.filter(product=product, is_primary=True).exists(),
+            is_active=True,
+        )
+
+        logging.info(
+            "Successfully uploaded image %s for product %s: %s",
+            index + 1,
+            product.id,
+            download_url,
+        )
 
 
 # Vendor Views
@@ -439,47 +473,17 @@ class ProductsListCreateView(generics.GenericAPIView):
 
         serializer = self.serializer_class(data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
-        product = serializer.save()
+        images = _request_product_images(request)
 
-        # Handle product images if present in the request
-        images = request.FILES.getlist('images')  # Expecting images as a list of files
-
-        if images:
-            # Iterate over the uploaded images and create ProductImage instances
-            for index, img in enumerate(images):
-                # For the first image, mark it as the primary image
-                is_primary = True if index == 0 else False
-                
-                try:
-                    # Upload file to Backblaze B2 and get the URL
-                    folder_name = f"products/{product.id}"
-                    image_url = upload_to_backblaze(
-                        file=img,
-                        folder=folder_name,
-                        file_name=f"image_{index + 1}_{img.name}"
-                    )
-                    
-                    # Create ProductImage instance with the uploaded image URL
-                    ProductImage.objects.create(
-                        product=product,
-                        image_url=image_url.get('downloadUrl', ''),
-                        is_primary=is_primary,
-                        is_active=True
-                    )
-                    
-                    logging.info(f"Successfully uploaded image {index + 1} for product {product.id}: {image_url.get('downloadUrl', '')}")
-                    
-                except Exception as e:
-                    # Log the error but continue with other images
-                    logging.error(f"Failed to upload image {index + 1} for product {product.id}: {str(e)}")
-                    
-                    # Create ProductImage instance with empty URL as fallback
-                    ProductImage.objects.create(
-                        product=product,
-                        image_url='',
-                        is_primary=is_primary,
-                        is_active=False  # Mark as inactive since upload failed
-                    )
+        try:
+            with transaction.atomic():
+                product = serializer.save()
+                _upload_product_images_or_raise(product, images)
+        except Exception as e:
+            logging.error("Failed to create product with images: %s", str(e))
+            return bad_request_response(
+                message=f"Product image upload failed: {str(e)}"
+            )
 
         # Re-fetch from DB so product_variant reflects the saved variants
         product.refresh_from_db()
@@ -534,7 +538,15 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         product = Product.objects.get(id=product_id)
         serializer = ProductSerializer(product, data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            with transaction.atomic():
+                product = serializer.save()
+                _upload_product_images_or_raise(product, _request_product_images(request))
+        except Exception as e:
+            logging.error("Failed to update product images: %s", str(e))
+            return bad_request_response(
+                message=f"Product image upload failed: {str(e)}"
+            )
         product.refresh_from_db()
         return success_response(ProductSerializer(product, context={'request': request, 'is_vendor': True}).data)
 
@@ -548,7 +560,15 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         product = Product.objects.get(id=product_id)
         serializer = ProductSerializer(product, data=request.data, partial=True, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            with transaction.atomic():
+                product = serializer.save()
+                _upload_product_images_or_raise(product, _request_product_images(request))
+        except Exception as e:
+            logging.error("Failed to update product images: %s", str(e))
+            return bad_request_response(
+                message=f"Product image upload failed: {str(e)}"
+            )
         product.refresh_from_db()
         return success_response(ProductSerializer(product, context={'request': request, 'is_vendor': True}).data)
 

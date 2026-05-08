@@ -626,13 +626,18 @@ class RiderViewSet(viewsets.ModelViewSet):
             )
 
         old_status = order.status
+        update_fields = ['status', 'delivery_status', 'updated_at']
         if new_status in order_statuses:
             order.status = new_status
         if new_status in delivery_statuses:
             order.delivery_status = new_status
-        elif new_status == 'near_delivery':
-            order.delivery_status = 'in_transit'
-        order.save()
+        if new_status == 'picked_up':
+            order.actual_pickup_time = timezone.now()
+            update_fields.append('actual_pickup_time')
+        elif new_status == 'delivered':
+            order.actual_delivery_time = timezone.now()
+            update_fields.append('actual_delivery_time')
+        order.save(update_fields=update_fields)
 
         # Broadcast status update
         try:
@@ -769,9 +774,24 @@ class RiderViewSet(viewsets.ModelViewSet):
 
             # Only mark near delivery when the rider is actually in transit
             # and close enough to the customer's destination.
-            if distance_to_customer <= 1.5 and order.status == 'in_transit':
+            has_delivery_coordinates = bool(
+                order.delivery_latitude and order.delivery_longitude
+            )
+            pickup_grace_elapsed = (
+                order.actual_pickup_time and
+                timezone.now() - order.actual_pickup_time >= timedelta(minutes=3)
+            )
+
+            if (
+                has_delivery_coordinates and
+                distance_to_customer <= 0.2 and
+                order.status == 'in_transit' and
+                order.delivery_status == 'in_transit' and
+                pickup_grace_elapsed
+            ):
                 order.status = 'near_delivery'
-                order.save()
+                order.delivery_status = 'near_delivery'
+                order.save(update_fields=['status', 'delivery_status', 'updated_at'])
 
                 # Send status update
                 async_to_sync(self.channel_layer.group_send)(
@@ -1603,9 +1623,24 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
             else:
                 distance_type = "kilometer"
 
-            if distance_to_customer <= 1.5 and order.status == 'in_transit':
+            has_delivery_coordinates = bool(
+                order.delivery_latitude and order.delivery_longitude
+            )
+            pickup_grace_elapsed = (
+                order.actual_pickup_time and
+                timezone.now() - order.actual_pickup_time >= timedelta(minutes=3)
+            )
+
+            if (
+                has_delivery_coordinates and
+                distance_to_customer <= 0.2 and
+                order.status == 'in_transit' and
+                order.delivery_status == 'in_transit' and
+                pickup_grace_elapsed
+            ):
                 order.status = 'near_delivery'
-                order.save()
+                order.delivery_status = 'near_delivery'
+                order.save(update_fields=['status', 'delivery_status', 'updated_at'])
 
                 # Send status update
                 async_to_sync(self.channel_layer.group_send)(

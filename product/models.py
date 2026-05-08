@@ -573,9 +573,10 @@ class Product(models.Model):
         except BukaItemServiceCharge.DoesNotExist:
             pass
 
-        if self.system_category:
+        effective_category = self.system_category or getattr(self.vendor, 'category', None)
+        if effective_category:
             tier_charge = ServiceChargeTier.get_charge_for(
-                self.system_category,
+                effective_category,
                 base_price,
                 vendor=self.vendor,
             )
@@ -991,22 +992,26 @@ class Order(models.Model):
     def mark_as_picked_up(self):
         """Mark the order as picked up by the rider."""
         self.status = 'picked_up'
+        self.delivery_status = 'picked_up'
         self.actual_pickup_time = timezone.now()
         self.save()
 
     def mark_as_in_transit(self):
         """Mark the order as in transit."""
         self.status = 'in_transit'
+        self.delivery_status = 'in_transit'
         self.save()
 
     def mark_as_near_delivery(self):
         """Mark the order as near the delivery location."""
         self.status = 'near_delivery'
+        self.delivery_status = 'near_delivery'
         self.save()
 
     def mark_as_delivered(self):
         """Mark the order as delivered."""
         self.status = 'delivered'
+        self.delivery_status = 'delivered'
         self.actual_delivery_time = timezone.now()
         self.save()
 

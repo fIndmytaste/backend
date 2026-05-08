@@ -28,6 +28,7 @@ from admin_manager.views.service_charges import (
     AdminServiceChargeTierDetailView,
     AdminBukaServiceChargeListView,
     AdminBukaServiceChargeDetailView,
+    AdminBukaVendorProductListView,
 )
 
 
@@ -138,5 +139,6 @@ urlpatterns = [
     # GET  ?vendor_id=<uuid>  → filter by vendor
     # POST → create/update charge for a product
     path('pricing/buka-service-charges/', AdminBukaServiceChargeListView.as_view(), name='admin-buka-service-charge-list'),
+    path('pricing/buka-service-charges/products/', AdminBukaVendorProductListView.as_view(), name='admin-buka-service-charge-products'),
     path('pricing/buka-service-charges/<uuid:charge_id>/', AdminBukaServiceChargeDetailView.as_view(), name='admin-buka-service-charge-detail'),
 ]

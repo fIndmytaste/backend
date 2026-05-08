@@ -136,9 +136,12 @@ class ProductSerializer(serializers.ModelSerializer):
 
         # --- Images: use prefetched cache if available ---
         if hasattr(instance, '_prefetched_objects_cache') and 'productimage_set' in instance._prefetched_objects_cache:
-            images = instance.productimage_set.all()
+            images = [
+                image for image in instance.productimage_set.all()
+                if image.is_active and image.image_url
+            ]
         else:
-            images = ProductImage.objects.filter(product=instance)
+            images = ProductImage.objects.filter(product=instance, is_active=True).exclude(image_url='')
         data['images'] = ProductImageSerializer(images, many=True, context=self.context).data
 
         product_variant = []
@@ -520,9 +523,12 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
 
     def get_images(self, obj):
         if hasattr(obj, '_prefetched_objects_cache') and 'productimage_set' in obj._prefetched_objects_cache:
-            images = obj.productimage_set.all()
+            images = [
+                image for image in obj.productimage_set.all()
+                if image.is_active and image.image_url
+            ]
         else:
-            images = ProductImage.objects.filter(product=obj, is_active=True)
+            images = ProductImage.objects.filter(product=obj, is_active=True).exclude(image_url='')
         return ProductImageSerializer(images, many=True, context=self.context).data
 
     def get_average_rating(self, obj):

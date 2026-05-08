@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from account.models import Vendor
 from product.models import BukaItemServiceCharge, Product, ServiceChargeTier, SystemCategory
 from helpers.response.response_format import bad_request_response, success_response
 
@@ -16,6 +17,8 @@ def _tier_to_dict(tier):
         "id": str(tier.id),
         "system_category": str(tier.system_category_id),
         "system_category_name": tier.system_category.name,
+        "vendor": str(tier.vendor_id) if tier.vendor_id else None,
+        "vendor_name": tier.vendor.name if tier.vendor_id else None,
         "min_price": str(tier.min_price),
         "max_price": str(tier.max_price) if tier.max_price is not None else None,
         "flat_charge": str(tier.flat_charge),
@@ -28,8 +31,12 @@ def _tier_to_dict(tier):
 def _buka_charge_to_dict(charge):
     return {
         "id": str(charge.id),
+        "vendor_id": str(charge.vendor_id or charge.product.vendor_id),
+        "vendor_name": (charge.vendor.name if charge.vendor_id else charge.product.vendor.name),
         "product_id": str(charge.product_id),
         "product_name": charge.product.name,
+        "base_price": str(charge.product.price),
+        "customer_price": str(charge.product.get_price_with_service_charge()),
         "flat_charge": str(charge.flat_charge),
         "is_active": charge.is_active,
         "updated_at": charge.updated_at.isoformat(),
@@ -49,12 +56,15 @@ class AdminServiceChargeTierListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = ServiceChargeTier.objects.select_related('system_category').order_by(
-            'system_category__name', 'min_price'
+        qs = ServiceChargeTier.objects.select_related('system_category', 'vendor').order_by(
+            'system_category__name', 'vendor__name', 'min_price'
         )
         cat_id = request.query_params.get('category_id')
         if cat_id:
             qs = qs.filter(system_category_id=cat_id)
+        vendor_id = request.query_params.get('vendor_id')
+        if vendor_id:
+            qs = qs.filter(vendor_id=vendor_id)
 
         return success_response(
             message="Service charge tiers retrieved.",
@@ -73,8 +83,16 @@ class AdminServiceChargeTierListCreateView(APIView):
         except SystemCategory.DoesNotExist:
             return bad_request_response(message="System category not found.")
 
+        vendor = None
+        if data.get('vendor_id'):
+            try:
+                vendor = Vendor.objects.get(pk=data['vendor_id'])
+            except Vendor.DoesNotExist:
+                return bad_request_response(message="Vendor not found.")
+
         tier = ServiceChargeTier.objects.create(
             system_category=category,
+            vendor=vendor,
             min_price=Decimal(str(data['min_price'])),
             max_price=Decimal(str(data['max_price'])) if data.get('max_price') else None,
             flat_charge=Decimal(str(data['flat_charge'])),
@@ -96,7 +114,7 @@ class AdminServiceChargeTierDetailView(APIView):
 
     def _get_tier(self, tier_id):
         try:
-            return ServiceChargeTier.objects.select_related('system_category').get(pk=tier_id)
+            return ServiceChargeTier.objects.select_related('system_category', 'vendor').get(pk=tier_id)
         except ServiceChargeTier.DoesNotExist:
             return None
 
@@ -144,10 +162,12 @@ class AdminBukaServiceChargeListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        qs = BukaItemServiceCharge.objects.select_related('product').order_by('product__name')
+        qs = BukaItemServiceCharge.objects.select_related('product', 'vendor', 'product__vendor').order_by(
+            'vendor__name', 'product__name'
+        )
         vendor_id = request.query_params.get('vendor_id')
         if vendor_id:
-            qs = qs.filter(product__vendor_id=vendor_id)
+            qs = qs.filter(vendor_id=vendor_id)
         return success_response(
             message="Buka service charges retrieved.",
             data=[_buka_charge_to_dict(c) for c in qs],
@@ -169,6 +189,7 @@ class AdminBukaServiceChargeListView(APIView):
         charge, created = BukaItemServiceCharge.objects.update_or_create(
             product=product,
             defaults={
+                'vendor': product.vendor,
                 'flat_charge': Decimal(str(flat_charge)),
                 'is_active': data.get('is_active', True),
             },
@@ -183,6 +204,40 @@ class AdminBukaServiceChargeListView(APIView):
         )
 
 
+class AdminBukaVendorProductListView(APIView):
+    """
+    GET /admin-manager/pricing/buka-service-charges/products/?vendor_id=<uuid>
+    Returns products for one vendor so the admin UI can pick vendor first,
+    then product, without listing every product in the system.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        vendor_id = request.query_params.get('vendor_id')
+        if not vendor_id:
+            return bad_request_response(message="vendor_id is required.")
+
+        products = (
+            Product.objects
+            .filter(vendor_id=vendor_id, is_delete=False)
+            .order_by('name')
+        )
+
+        return success_response(
+            message="Vendor products retrieved.",
+            data=[
+                {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "base_price": str(product.price),
+                    "customer_price": str(product.get_price_with_service_charge()),
+                    "has_buka_charge": hasattr(product, 'buka_service_charge'),
+                }
+                for product in products
+            ],
+        )
+
+
 class AdminBukaServiceChargeDetailView(APIView):
     """
     GET   /admin-manager/pricing/buka-service-charges/<charge_id>/
@@ -193,7 +248,7 @@ class AdminBukaServiceChargeDetailView(APIView):
 
     def _get(self, charge_id):
         try:
-            return BukaItemServiceCharge.objects.select_related('product').get(pk=charge_id)
+            return BukaItemServiceCharge.objects.select_related('product', 'vendor', 'product__vendor').get(pk=charge_id)
         except BukaItemServiceCharge.DoesNotExist:
             return None
 

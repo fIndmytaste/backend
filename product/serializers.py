@@ -32,7 +32,8 @@ class BuyerProductSerializer(serializers.ModelSerializer):
         return data
     
     def get_images(self,obj):
-        return ProductImageSerializerClass(obj.productimage_set.all(),many=True).data
+        images = obj.productimage_set.filter(is_active=True).exclude(image_url='')
+        return ProductImageSerializerClass(images, many=True).data
         
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -182,12 +183,12 @@ class OrderSerializer(serializers.ModelSerializer):
         items = list(instance.items.all())
         for item in items:
             product = item.product
-            product_images = list(product.productimage_set.all())
+            product_images = list(product.productimage_set.filter(is_active=True).exclude(image_url=''))
             variant_selections = list(item.variant_selections.all())
 
             if product.parent:
                 parent = product.parent
-                parent_images = list(parent.productimage_set.all())
+                parent_images = list(parent.productimage_set.filter(is_active=True).exclude(image_url=''))
                 variant_categories = list(product.productvariantcategory_set.all())
                 items_list.append({
                     'product': {
