@@ -573,6 +573,9 @@ class Product(models.Model):
         except BukaItemServiceCharge.DoesNotExist:
             pass
 
+        if self.parent_id:
+            return Decimal('0.00')
+
         effective_category = self.system_category or getattr(self.vendor, 'category', None)
         if effective_category:
             tier_charge = ServiceChargeTier.get_charge_for(
@@ -717,7 +720,7 @@ class ProductVariant(models.Model):
     def get_service_charge(self, base_price: Decimal = None) -> Decimal:
         """
         Return the variant-specific flat service charge when configured.
-        Falls back to the parent product's service charge/tier logic.
+        Product-level charges and tier charges do not apply to variants.
         """
         if base_price is None:
             base_price = self.price
@@ -729,7 +732,7 @@ class ProductVariant(models.Model):
         except BukaVariantServiceCharge.DoesNotExist:
             pass
 
-        return self.product.get_service_charge(Decimal(str(base_price)))
+        return Decimal('0.00')
 
     def calculate_commission(self, base_price=None):
         """Backward-compatible alias — delegates to flat-rate service charge."""
