@@ -553,20 +553,9 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
                 except (TypeError, ValueError):
                     order_zone = None
 
-            if not order_zone:
-                return bad_request_response(
-                    message="Customer delivery address is outside active marketplace delivery zones.",
-                    data={"order_id": str(order.id)}
-                )
-
             rider_zone = rider.get_current_zone() or rider.get_home_zone()
-            if not rider_zone:
-                return bad_request_response(
-                    message="Rider has no detected active delivery zone.",
-                    data={"rider_id": str(rider.id), "order_zone": order_zone.name}
-                )
 
-            if rider_zone.id != order_zone.id and not force_zone_override:
+            if order_zone and rider_zone and rider_zone.id != order_zone.id and not force_zone_override:
                 return bad_request_response(
                     message="Rider is outside this order's delivery zone.",
                     data={
@@ -701,8 +690,6 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
             self._zone_for_location(zones, rider.current_latitude, rider.current_longitude) or
             self._zone_for_location(zones, rider.location_latitude, rider.location_longitude)
         )
-        if not rider_zone:
-            return bad_request_response(message="Rider has no detected active delivery zone.")
 
         assigned = []
         skipped = []
@@ -735,10 +722,7 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
                 longitude = order.delivery_longitude or order.location_longitude
                 order_zone = self._zone_for_location(zones, latitude, longitude)
 
-                if not order_zone:
-                    skipped.append({"order_id": str(order.id), "reason": "Order is outside active delivery zones."})
-                    continue
-                if order_zone.id != rider_zone.id and not force_zone_override:
+                if order_zone and rider_zone and order_zone.id != rider_zone.id and not force_zone_override:
                     skipped.append({"order_id": str(order.id), "reason": f"Order zone is {order_zone.name}, rider zone is {rider_zone.name}."})
                     continue
 
@@ -765,7 +749,10 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
             data={
                 "assigned_order_ids": [str(order.id) for order in assigned],
                 "skipped": skipped,
-                "rider_zone": {"id": str(rider_zone.id), "name": rider_zone.name},
+                "rider_zone": (
+                    {"id": str(rider_zone.id), "name": rider_zone.name}
+                    if rider_zone else None
+                ),
             }
         )
 

@@ -376,12 +376,27 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
         vendor = obj.vendor
         if not vendor:
             return None
+        marketplace = vendor.marketplace_set.first()
         return {
             'id': str(vendor.id),
             'name': vendor.name or self._serialize_user(vendor.user).get('name'),
             'email': getattr(vendor, 'email', '') or getattr(vendor.user, 'email', ''),
             'phone_number': getattr(vendor, 'phone_number', '') or getattr(vendor.user, 'phone_number', ''),
             'profile_image': vendor.thumbnail_url or vendor.logo_url or vendor.user.get_profile_image(),
+            'category': (
+                {
+                    'id': str(vendor.category_id),
+                    'name': vendor.category.name,
+                }
+                if vendor.category_id else None
+            ),
+            'marketplace': (
+                {
+                    'id': str(marketplace.id),
+                    'name': marketplace.name,
+                }
+                if marketplace else None
+            ),
         }
 
     def get_rider(self, obj):

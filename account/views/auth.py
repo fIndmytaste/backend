@@ -52,7 +52,7 @@ class LoginAPIView(generics.GenericAPIView):
                     logger = logging.getLogger(__name__)
                     logger.error(f"Failed to send login notification: {e}")
 
-                if user.role == 'admin':
+                if user.role == 'admin' or user.is_staff or user.is_superuser:
                     tokens = TokenManager.get_tokens_for_user(user)
                     response_data = {
                         "tokens": tokens,

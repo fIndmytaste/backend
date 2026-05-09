@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
 from datetime import timedelta
+from uuid import UUID
 
 from account.models import Rider, User, Vendor
 from account.serializers import RiderSerializer
@@ -14,6 +15,14 @@ from drf_yasg import openapi
 
 from product.serializers import AdminOrderListSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
+
+
+def _is_uuid(value):
+    try:
+        UUID(str(value))
+        return True
+    except (TypeError, ValueError):
+        return False
 
 
 class AdminSystemCategoryListView(generics.GenericAPIView):
@@ -436,9 +445,10 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         'user',
         'vendor',
         'vendor__user',
+        'vendor__category',
         'rider',
         'rider__user',
-    ).order_by('-created_at')
+    ).prefetch_related('vendor__marketplace_set').order_by('-created_at')
 
 
     def get_queryset(self):
@@ -446,6 +456,8 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         track_id = self.request.GET.get('track_id')
         search = self.request.GET.get('search')
         status = self.request.GET.get('status')
+        category = self.request.GET.get('category') or self.request.GET.get('category_id')
+        marketplace = self.request.GET.get('marketplace') or self.request.GET.get('marketplace_id')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
@@ -457,11 +469,26 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
                 Q(user__full_name__icontains=search) |
                 Q(user__email__icontains=search) |
                 Q(vendor__name__icontains=search) |
+                Q(vendor__email__icontains=search) |
+                Q(vendor__category__name__icontains=search) |
+                Q(vendor__marketplace__name__icontains=search) |
                 Q(address__icontains=search)
-            )
+            ).distinct()
 
         if status:
             queryset = queryset.filter(status__iexact=status)
+
+        if category:
+            category_filter = Q(vendor__category__name__icontains=category)
+            if _is_uuid(category):
+                category_filter |= Q(vendor__category_id=category)
+            queryset = queryset.filter(category_filter)
+
+        if marketplace:
+            marketplace_filter = Q(vendor__marketplace__name__icontains=marketplace)
+            if _is_uuid(marketplace):
+                marketplace_filter |= Q(vendor__marketplace__id=marketplace)
+            queryset = queryset.filter(marketplace_filter).distinct()
 
         return queryset
 
@@ -543,15 +570,18 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             'user',
             'vendor',
             'vendor__user',
+            'vendor__category',
             'rider',
             'rider__user',
-        )
+        ).prefetch_related('vendor__marketplace_set')
         track_id = self.request.GET.get('track_id')
         search = self.request.GET.get('search')
         status = self.request.GET.get('status')
         assignment_status = self.request.GET.get('assignment_status')
         vendor_id = self.request.GET.get('vendor_id')
         zone_id = self.request.GET.get('zone_id')
+        category = self.request.GET.get('category') or self.request.GET.get('category_id')
+        marketplace = self.request.GET.get('marketplace') or self.request.GET.get('marketplace_id')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
@@ -561,9 +591,12 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
                 Q(track_id__icontains=search) |
                 Q(id__icontains=search) |
                 Q(vendor__name__icontains=search) |
+                Q(vendor__email__icontains=search) |
+                Q(vendor__category__name__icontains=search) |
+                Q(vendor__marketplace__name__icontains=search) |
                 Q(user__full_name__icontains=search) |
                 Q(user__email__icontains=search)
-            )
+            ).distinct()
 
         if status:
             queryset = queryset.filter(status__iexact=status)
@@ -588,6 +621,18 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         
         if vendor_id:
             queryset = queryset.filter(vendor__id=vendor_id)
+
+        if category:
+            category_filter = Q(vendor__category__name__icontains=category)
+            if _is_uuid(category):
+                category_filter |= Q(vendor__category_id=category)
+            queryset = queryset.filter(category_filter)
+
+        if marketplace:
+            marketplace_filter = Q(vendor__marketplace__name__icontains=marketplace)
+            if _is_uuid(marketplace):
+                marketplace_filter |= Q(vendor__marketplace__id=marketplace)
+            queryset = queryset.filter(marketplace_filter).distinct()
 
         if zone_id:
             try:
