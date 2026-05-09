@@ -36,11 +36,13 @@ def _tier_to_dict(tier):
 
 
 def _buka_charge_to_dict(charge):
+    vendor = charge.vendor if charge.vendor_id else charge.product.vendor
     return {
         "id": str(charge.id),
         "target_type": "product",
-        "vendor_id": str(charge.vendor_id or charge.product.vendor_id),
-        "vendor_name": (charge.vendor.name if charge.vendor_id else charge.product.vendor.name),
+        "vendor_id": str(vendor.id),
+        "vendor_name": vendor.name,
+        "vendor_email": vendor.email,
         "product_id": str(charge.product_id),
         "product_name": charge.product.name,
         "variant_id": None,
@@ -54,11 +56,13 @@ def _buka_charge_to_dict(charge):
 
 
 def _buka_variant_charge_to_dict(charge):
+    vendor = charge.vendor if charge.vendor_id else charge.product.vendor
     return {
         "id": str(charge.id),
         "target_type": "variant",
-        "vendor_id": str(charge.vendor_id or charge.product.vendor_id),
-        "vendor_name": (charge.vendor.name if charge.vendor_id else charge.product.vendor.name),
+        "vendor_id": str(vendor.id),
+        "vendor_name": vendor.name,
+        "vendor_email": vendor.email,
         "product_id": str(charge.product_id),
         "product_name": charge.product.name,
         "variant_id": str(charge.variant_id),
