@@ -573,7 +573,12 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
             locked_order.delivery_status = 'rider_assigned'
             locked_order.save()
             order = locked_order
-        notify_rider_order_assignment(order, rider)
+
+        try:
+            notify_rider_order_assignment(order, rider)
+        except Exception as notification_error:
+            print(f"Rider assignment notification error for {order.id}: {notification_error}")
+
         return success_response(
             message="Order assigned to rider successfully.",
             data={
