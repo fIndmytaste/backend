@@ -579,16 +579,18 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
         except Exception as notification_error:
             print(f"Rider assignment notification error for {order.id}: {notification_error}")
 
+        delivery_zone_data = None
+        if is_marketplace_order:
+            order_zone = locals().get('order_zone')
+            if order_zone:
+                delivery_zone_data = {"id": str(order_zone.id), "name": order_zone.name}
+
         return success_response(
             message="Order assigned to rider successfully.",
             data={
                 "order_id": str(order.id),
                 "rider_id": str(rider.id),
-                "delivery_zone": (
-                    {"id": str(order_zone.id), "name": order_zone.name}
-                    if is_marketplace_order and 'order_zone' in locals()
-                    else None
-                ),
+                "delivery_zone": delivery_zone_data,
             }
         )
 
