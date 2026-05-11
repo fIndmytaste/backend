@@ -29,6 +29,8 @@ from admin_manager.views.service_charges import (
     AdminBukaServiceChargeListView,
     AdminBukaServiceChargeDetailView,
     AdminBukaVendorProductListView,
+    AdminDeliveryZonePricingListView,
+    AdminDeliveryZonePricingDetailView,
 )
 
 
@@ -134,6 +136,10 @@ urlpatterns = [
     # POST → create tier
     path('pricing/service-charge-tiers/', AdminServiceChargeTierListCreateView.as_view(), name='admin-service-charge-tier-list'),
     path('pricing/service-charge-tiers/<uuid:tier_id>/', AdminServiceChargeTierDetailView.as_view(), name='admin-service-charge-tier-detail'),
+
+    # Delivery zone item pricing
+    path('pricing/delivery-zones/', AdminDeliveryZonePricingListView.as_view(), name='admin-delivery-zone-pricing-list'),
+    path('pricing/delivery-zones/<uuid:zone_id>/', AdminDeliveryZonePricingDetailView.as_view(), name='admin-delivery-zone-pricing-detail'),
 
     # Buka per-item charges
     # GET  ?vendor_id=<uuid>  → filter by vendor

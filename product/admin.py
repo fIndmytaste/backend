@@ -217,9 +217,22 @@ class PlatformSettingsAdmin(admin.ModelAdmin):
 
 @admin.register(DeliveryZone)
 class DeliveryZoneAdmin(admin.ModelAdmin):
-    list_display = ('name', 'fixed_fee', 'is_active', 'created_at')
+    list_display = ('name', 'fixed_fee', 'second_item_fee', 'additional_item_fee', 'is_active', 'created_at')
+    list_editable = ('fixed_fee', 'second_item_fee', 'additional_item_fee', 'is_active')
     list_filter = ('is_active',)
     search_fields = ('name',)
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'boundary', 'is_active'),
+        }),
+        ('Delivery Pricing', {
+            'description': (
+                'Zone pricing: item 1 = fixed_fee, item 2 = fixed_fee + second_item_fee, '
+                'item 3+ = base_for_two + (additional_item_fee × extra items).'
+            ),
+            'fields': ('fixed_fee', 'second_item_fee', 'additional_item_fee'),
+        }),
+    )
 
 @admin.register(EstateGatePass)
 class EstateGatePassAdmin(admin.ModelAdmin):

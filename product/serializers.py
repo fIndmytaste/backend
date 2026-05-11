@@ -100,6 +100,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "id": str(zone.id),
             "name": zone.name,
             "fixed_fee": float(zone.fixed_fee),
+            "second_item_fee": float(zone.second_item_fee),
+            "additional_item_fee": float(zone.additional_item_fee),
         }
 
     class Meta:
@@ -342,6 +344,8 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'id': str(zone.id),
             'name': zone.name,
             'fixed_fee': float(zone.fixed_fee),
+            'second_item_fee': float(zone.second_item_fee),
+            'additional_item_fee': float(zone.additional_item_fee),
         }
 
     def get_total_amount(self, obj):

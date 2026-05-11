@@ -53,6 +53,8 @@ class AdminDeliveryZoneListView(generics.GenericAPIView):
                 "id": str(zone.id),
                 "name": zone.name,
                 "fixed_fee": float(zone.fixed_fee),
+                "second_item_fee": float(zone.second_item_fee),
+                "additional_item_fee": float(zone.additional_item_fee),
             }
             for zone in zones
         ])

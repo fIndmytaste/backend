@@ -495,11 +495,16 @@ class Vendor(models.Model):
                     marketplace.id, vendor_base_fee,
                     delivery_zone.id if delivery_zone else None,
                     self.marketplace_delivery_fee,
-                    marketplace.second_item_fee, marketplace.additional_item_fee,
+                    delivery_zone.second_item_fee if delivery_zone else marketplace.second_item_fee,
+                    delivery_zone.additional_item_fee if delivery_zone else marketplace.additional_item_fee,
                     marketplace.special_category_discount_percentage, is_special_category,
                 )
                 if delivery_zone is not None:
-                    delivery_fee = Decimal(vendor_base_fee).quantize(Decimal('0.01'))
+                    delivery_fee = delivery_zone.calculate_fee(
+                        item_count=item_count,
+                        is_special_category=is_special_category,
+                        special_discount_percentage=marketplace.special_category_discount_percentage,
+                    )
                 elif is_special_category:
                     # SPECIAL PRICING: First item full price, additional items discounted
                     base_fee = vendor_base_fee

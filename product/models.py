@@ -269,6 +269,20 @@ class DeliveryZone(models.Model):
         help_text="Fixed delivery fee for this zone. Example: 1500.00"
     )
 
+    second_item_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Extra delivery fee for the second item in this zone."
+    )
+
+    additional_item_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Extra delivery fee per item from the third item onwards in this zone."
+    )
+
     is_active = models.BooleanField(
         default=True,
         help_text="Indicates whether this delivery zone is currently active."
@@ -284,6 +298,30 @@ class DeliveryZone(models.Model):
 
     def __str__(self):
         return self.name
+
+    def calculate_fee(self, item_count=1, is_special_category=False, special_discount_percentage=0):
+        from decimal import Decimal
+
+        item_count = max(int(item_count or 0), 0)
+        if item_count <= 0:
+            return Decimal("0.00")
+
+        base_fee = Decimal(self.fixed_fee)
+        if is_special_category:
+            discount = Decimal(special_discount_percentage or 0) / Decimal("100")
+            if item_count == 1:
+                return base_fee.quantize(Decimal("0.01"))
+            discounted_fee = base_fee * (Decimal("1") - discount)
+            return (base_fee + (discounted_fee * (item_count - 1))).quantize(Decimal("0.01"))
+
+        if item_count == 1:
+            return base_fee.quantize(Decimal("0.01"))
+        if item_count == 2:
+            return (base_fee + Decimal(self.second_item_fee)).quantize(Decimal("0.01"))
+
+        base_for_two = base_fee + Decimal(self.second_item_fee)
+        additional_items = item_count - 2
+        return (base_for_two + (Decimal(self.additional_item_fee) * additional_items)).quantize(Decimal("0.01"))
 
     def contains_location(self, latitude, longitude):
         """

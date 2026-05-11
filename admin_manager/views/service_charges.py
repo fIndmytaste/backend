@@ -9,6 +9,7 @@ from account.models import Vendor
 from product.models import (
     BukaItemServiceCharge,
     BukaVariantServiceCharge,
+    DeliveryZone,
     Product,
     ProductVariant,
     ServiceChargeTier,
@@ -73,6 +74,59 @@ def _buka_variant_charge_to_dict(charge):
         "is_active": charge.is_active,
         "updated_at": charge.updated_at.isoformat(),
     }
+
+
+def _delivery_zone_to_dict(zone):
+    return {
+        "id": str(zone.id),
+        "name": zone.name,
+        "fixed_fee": str(zone.fixed_fee),
+        "second_item_fee": str(zone.second_item_fee),
+        "additional_item_fee": str(zone.additional_item_fee),
+        "is_active": zone.is_active,
+        "updated_at": zone.updated_at.isoformat(),
+    }
+
+
+class AdminDeliveryZonePricingListView(APIView):
+    """
+    GET /admin-manager/pricing/delivery-zones/
+    Return delivery-zone pricing for the custom admin pricing screen.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        zones = DeliveryZone.objects.order_by('name')
+        return success_response(
+            message="Delivery zone pricing retrieved.",
+            data=[_delivery_zone_to_dict(zone) for zone in zones],
+        )
+
+
+class AdminDeliveryZonePricingDetailView(APIView):
+    """
+    PATCH /admin-manager/pricing/delivery-zones/<zone_id>/
+    Update zone delivery fees and active status.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, zone_id):
+        try:
+            zone = DeliveryZone.objects.get(pk=zone_id)
+        except DeliveryZone.DoesNotExist:
+            return bad_request_response(message="Delivery zone not found.")
+
+        data = request.data
+        if 'fixed_fee' in data:
+            zone.fixed_fee = Decimal(str(data['fixed_fee']))
+        if 'second_item_fee' in data:
+            zone.second_item_fee = Decimal(str(data['second_item_fee']))
+        if 'additional_item_fee' in data:
+            zone.additional_item_fee = Decimal(str(data['additional_item_fee']))
+        if 'is_active' in data:
+            zone.is_active = bool(data['is_active'])
+        zone.save()
+        return success_response(message="Delivery zone pricing updated.", data=_delivery_zone_to_dict(zone))
 
 
 # ── Service Charge Tier views ─────────────────────────────────────────────
