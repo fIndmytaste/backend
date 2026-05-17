@@ -9,6 +9,7 @@ from helpers.order_utils import get_distance_between_two_location
 from helpers.vendor_discovery import (
     approved_vendor_queryset,
     apply_vendor_search,
+    local_vendor_queryset,
     filter_and_sort_vendors_by_distance,
     nearest_first_vendors,
     resolve_request_coordinates,
@@ -970,7 +971,7 @@ class HotPickVendorsView(generics.GenericAPIView):
         user_lat, user_lon = resolve_request_coordinates(self.request)
         # Exclude marketplace vendors — they don't have a physical local presence
         queryset = approved_vendor_queryset(
-            Vendor.objects.filter(is_marketplace=False),
+            local_vendor_queryset(),
             require_products=True,
             require_location=True,
         )
@@ -981,7 +982,7 @@ class HotPickVendorsView(generics.GenericAPIView):
             queryset,
             user_lat,
             user_lon,
-            enforce_delivery_radius=False,
+            enforce_delivery_radius=True,
             # BROWSE_RADIUS_KM (10km) — only show vendors near the user
         )
 
@@ -1096,7 +1097,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
 
         # Exclude marketplace vendors — featured is a local browsing section
         featured_queryset = approved_vendor_queryset(
-            Vendor.objects.filter(is_featured=True, is_marketplace=False),
+            local_vendor_queryset(Vendor.objects.filter(is_featured=True)),
             require_products=True,
             require_location=user_lat is not None and user_lon is not None,
         )
@@ -1110,7 +1111,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
             featured_queryset,
             user_lat,
             user_lon,
-            enforce_delivery_radius=False,
+            enforce_delivery_radius=True,
         )
         if featured_candidates:
             # Nearest first, rating as tiebreaker
@@ -1121,7 +1122,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
 
         # No featured vendors within 10km — fall back to top-rated nearby non-marketplace vendors
         auto_queryset = approved_vendor_queryset(
-            Vendor.objects.filter(is_marketplace=False),
+            local_vendor_queryset(),
             require_products=True,
             require_location=True,
         )
@@ -1130,7 +1131,7 @@ class FeaturedVendorsView(generics.GenericAPIView):
             auto_queryset,
             user_lat,
             user_lon,
-            enforce_delivery_radius=False,
+            enforce_delivery_radius=True,
         )
         auto_candidates.sort(
             key=lambda item: (-(float(item[0].rating or 0)), item[1], item[0].name or '')
@@ -1209,7 +1210,7 @@ class AllVendorsView(generics.GenericAPIView):
 
         # Non-marketplace vendors only for the main listing
         regular_qs = approved_vendor_queryset(
-            Vendor.objects.filter(is_marketplace=False),
+            local_vendor_queryset(),
             require_products=True,
             require_location=True,
         )
@@ -1219,28 +1220,12 @@ class AllVendorsView(generics.GenericAPIView):
             # Browsing (no search): 10km — only vendors near the user
             # Searching (keyword): 500km — relevance drives results, not distance
             radius = SEARCH_RADIUS_KM if search else None  # None = default BROWSE_RADIUS_KM
-            kwargs = dict(enforce_delivery_radius=False)
+            kwargs = dict(enforce_delivery_radius=True)
             if radius:
                 kwargs['radius_km'] = radius
             regular_vendors = nearest_first_vendors(regular_qs, user_lat, user_lon, **kwargs)
         else:
             regular_vendors = list(regular_qs.order_by('-rating', 'name'))
-
-        # Marketplace vendors: only appended when user is searching (no location filter)
-        if search:
-            marketplace_qs = approved_vendor_queryset(
-                Vendor.objects.filter(is_marketplace=True),
-                require_products=True,
-                require_location=False,
-            )
-            marketplace_qs = apply_vendor_search(marketplace_qs, search)
-            marketplace_vendors = list(marketplace_qs.order_by('-rating', 'name'))
-
-            seen_ids = {v.id for v in regular_vendors}
-            for v in marketplace_vendors:
-                if v.id not in seen_ids:
-                    regular_vendors.append(v)
-                    seen_ids.add(v.id)
 
         regular_vendors = _annotate_vendors(
             regular_vendors,
@@ -1473,7 +1458,7 @@ class AllVendorsNewCachedView(generics.GenericAPIView):
 
         # Exclude marketplace vendors — they don't belong in the local feed
         queryset = approved_vendor_queryset(
-            Vendor.objects.filter(is_marketplace=False),
+            local_vendor_queryset(),
             require_products=True,
             require_location=True,
         )
@@ -1485,7 +1470,7 @@ class AllVendorsNewCachedView(generics.GenericAPIView):
             vendors = list(queryset.order_by('-rating', 'name'))
         else:
             radius = SEARCH_RADIUS_KM if search else None
-            kwargs = dict(enforce_delivery_radius=False)
+            kwargs = dict(enforce_delivery_radius=True)
             if radius:
                 kwargs['radius_km'] = radius
             vendors = nearest_first_vendors(queryset, user_lat, user_lon, **kwargs)

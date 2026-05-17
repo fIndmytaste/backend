@@ -1,5 +1,6 @@
 # --- New View: CustomerCreateOrderWithVariantsView ---
 
+from collections import Counter
 from decimal import Decimal, ROUND_HALF_UP
 import traceback
 
@@ -46,6 +47,7 @@ from helpers.order_utils import apply_promo_code, calculate_delivery_fee, get_di
 from helpers.vendor_discovery import (
     approved_vendor_queryset,
     apply_vendor_search,
+    local_vendor_queryset,
     nearest_first_vendors,
     resolve_request_coordinates,
 )
@@ -70,6 +72,94 @@ _PRODUCT_PREFETCH_RELATED = [
     'variants',
     'ratings',
 ]
+
+
+def _positive_item_quantity(value, *, label="Quantity"):
+    try:
+        quantity = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{label} must be a valid quantity.")
+    if quantity <= 0:
+        raise ValidationError(f"{label} must be greater than zero.")
+    return quantity
+
+
+def _is_stock_managed_product(product):
+    category = (
+        getattr(product, 'system_category', None)
+        or getattr(getattr(product, 'parent', None), 'system_category', None)
+        or getattr(getattr(product, 'vendor', None), 'category', None)
+    )
+    return bool(category and getattr(category, 'is_stock', False))
+
+
+def reserve_order_stock(product_quantities=None, variant_quantities=None):
+    """
+    Atomically reserve stock for stock-managed categories.
+
+    Non-stock categories keep their current behavior, so regular food vendors with
+    stock=0 are not accidentally blocked.
+    """
+    product_quantities = Counter(product_quantities or {})
+    variant_quantities = Counter(variant_quantities or {})
+
+    product_ids = [product_id for product_id, quantity in product_quantities.items() if quantity > 0]
+    products = {
+        product.id: product
+        for product in Product.objects.select_for_update()
+        .select_related('system_category', 'parent__system_category', 'vendor__category')
+        .filter(id__in=product_ids)
+    }
+
+    for product_id, quantity in product_quantities.items():
+        if quantity <= 0:
+            continue
+        product = products.get(product_id)
+        if not product:
+            raise ValidationError("One of the selected products is no longer available.")
+        if not _is_stock_managed_product(product):
+            continue
+        if product.stock < quantity:
+            raise ValidationError(
+                f"{product.name} has only {product.stock} unit(s) left in stock."
+            )
+
+    for product_id, quantity in product_quantities.items():
+        product = products.get(product_id)
+        if product and quantity > 0 and _is_stock_managed_product(product):
+            Product.objects.filter(id=product.id).update(
+                stock=F('stock') - quantity,
+                purchases=F('purchases') + quantity,
+            )
+
+    if not variant_quantities:
+        return
+
+    variant_ids = [variant_id for variant_id, quantity in variant_quantities.items() if quantity > 0]
+    variants = {
+        variant.id: variant
+        for variant in ProductVariant.objects.select_for_update()
+        .select_related('product__system_category', 'product__parent__system_category', 'product__vendor__category')
+        .filter(id__in=variant_ids)
+    }
+
+    for variant_id, quantity in variant_quantities.items():
+        if quantity <= 0:
+            continue
+        variant = variants.get(variant_id)
+        if not variant:
+            raise ValidationError("One of the selected variants is no longer available.")
+        if not _is_stock_managed_product(variant.product):
+            continue
+        if variant.stock < quantity:
+            raise ValidationError(
+                f"{variant.name} has only {variant.stock} unit(s) left in stock."
+            )
+
+    for variant_id, quantity in variant_quantities.items():
+        variant = variants.get(variant_id)
+        if variant and quantity > 0 and _is_stock_managed_product(variant.product):
+            ProductVariant.objects.filter(id=variant.id).update(stock=F('stock') - quantity)
 
 
 class InternalProductListView(generics.GenericAPIView):
@@ -214,14 +304,17 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 # Validate all items/variants first, then bulk-insert to avoid per-row round-trips
                 order_items_to_create = []
                 variants_by_item = []  # list of (item_index, list of OrderItemVariant kwargs)
+                product_stock_quantities = Counter()
+                variant_stock_quantities = Counter()
 
                 for item in items_data:
                     main_product = product_map.get(item['product'])
                     if not main_product:
                         raise ValidationError(f"Product with ID {item['product']} not found.")
 
-                    item_qty = item.get('quantity', 1)
+                    item_qty = _positive_item_quantity(item.get('quantity', 1))
                     item_count += item_qty
+                    product_stock_quantities[main_product.id] += item_qty
                     # Use the same price the customer sees: float→Decimal round-trip matches serializer output
                     item_price = Decimal(str(float(main_product.get_price_with_commission())))
                     order_items_to_create.append(
@@ -237,15 +330,18 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                             raise ValidationError(f"Variant {variant_obj.name} does not belong to product {main_product.name}.")
                         if not variant_obj.is_active:
                             raise ValidationError(f"Variant {variant_obj.name} is not active.")
+                        variant_qty = _positive_item_quantity(variant['quantity'], label=f"{variant_obj.name} quantity")
                         variant_price = Decimal(str(float(variant_obj.get_price_with_commission())))
                         item_variants.append(dict(
                             variant=variant_obj,
-                            quantity=variant['quantity'],
+                            quantity=variant_qty,
                             price_at_purchase=variant_price,
                         ))
-                        item_count += variant['quantity']
+                        item_count += variant_qty
+                        variant_stock_quantities[variant_obj.id] += variant_qty * item_qty
                     variants_by_item.append(item_variants)
 
+                reserve_order_stock(product_stock_quantities, variant_stock_quantities)
                 created_items = OrderItem.objects.bulk_create(order_items_to_create)
 
                 all_item_variants = []
@@ -619,7 +715,7 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
             ).values_list('vendors', flat=True)
             base_queryset = Vendor.objects.filter(id__in=marketplace_vendor_ids)
         else:
-            base_queryset = Vendor.objects.filter(category=system_category)
+            base_queryset = local_vendor_queryset(Vendor.objects.filter(category=system_category))
 
         search = self.request.query_params.get('search')
 
@@ -639,7 +735,7 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
         if user_lat is None or user_lon is None:
             return queryset.order_by('-rating', 'name')
 
-        return nearest_first_vendors(queryset, user_lat, user_lon, enforce_delivery_radius=False)
+        return nearest_first_vendors(queryset, user_lat, user_lon, enforce_delivery_radius=True)
 
 
 
@@ -1244,6 +1340,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             with transaction.atomic():
                 
                 order = Order.objects.create(user=user, vendor=vendor)
+                product_stock_quantities = Counter()
 
                 # Process each item
                 for item in items_data:
@@ -1267,24 +1364,33 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                             if variant_product.vendor.id != vendor.id:
                                 raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
 
+                            variant_qty = _positive_item_quantity(
+                                variant['quantity'],
+                                label=f"{variant_product.name} quantity",
+                            )
                             OrderItem.objects.create(
                                 order=order,
                                 product=variant_product,
-                                quantity=variant['quantity'],
+                                quantity=variant_qty,
                                 price=variant_product.get_price_with_commission()
                             )
-                            item_count += variant['quantity']
+                            item_count += variant_qty
+                            product_stock_quantities[variant_product.id] += variant_qty
                             print(
-                                f"Created item: {variant_product.name} x {variant['quantity']} @ {variant_product.price}"
+                                f"Created item: {variant_product.name} x {variant_qty} @ {variant_product.price}"
                             )
                     else:
+                        item_qty = _positive_item_quantity(item['quantity'])
                         OrderItem.objects.create(
                             order=order,
                             product=main_product,
-                            quantity=item['quantity'],
+                            quantity=item_qty,
                             price=main_product.get_price_with_commission()
                         )
-                        item_count += item['quantity']
+                        item_count += item_qty
+                        product_stock_quantities[main_product.id] += item_qty
+
+                reserve_order_stock(product_stock_quantities)
 
                 # Calculate delivery and finalize order
                 # delivery_fee = calculate_delivery_fee(
@@ -1466,6 +1572,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
             with transaction.atomic():
                 
                 order = Order.objects.create(user=user, vendor=vendor)
+                product_stock_quantities = Counter()
 
                 # Process each item
                 for item in items_data:
@@ -1488,30 +1595,41 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                             if variant_product.vendor.id != vendor.id:
                                 raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
 
+                            variant_qty = _positive_item_quantity(
+                                variant['quantity'],
+                                label=f"{variant_product.name} quantity",
+                            )
                             OrderItem.objects.create(
                                 order=order,
                                 product=variant_product,
-                                quantity=variant['quantity'],
+                                quantity=variant_qty,
                                 price=variant_product.get_price_with_commission()
                             )
-                            item_count += variant['quantity']
+                            item_count += variant_qty
+                            product_stock_quantities[variant_product.id] += variant_qty
 
                         if item.get('quantity') and item['quantity'] > 0:
+                            item_qty = _positive_item_quantity(item['quantity'])
                             OrderItem.objects.create(
                                 order=order,
                                 product=main_product,
-                                quantity=item['quantity'],
+                                quantity=item_qty,
                                 price=main_product.get_price_with_commission()
                             )
-                            item_count += item['quantity']
+                            item_count += item_qty
+                            product_stock_quantities[main_product.id] += item_qty
                     else:
+                        item_qty = _positive_item_quantity(item['quantity'])
                         OrderItem.objects.create(
                             order=order,
                             product=main_product,
-                            quantity=item['quantity'],
+                            quantity=item_qty,
                             price=main_product.get_price_with_commission()
                         )
-                        item_count += item['quantity']
+                        item_count += item_qty
+                        product_stock_quantities[main_product.id] += item_qty
+
+                reserve_order_stock(product_stock_quantities)
 
                 # if vendor.is_marketplace:
                 #     # get the marketplace the vendor belongs to

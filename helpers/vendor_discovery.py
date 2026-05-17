@@ -31,11 +31,32 @@ def approved_vendor_queryset(queryset=None, *, require_products=True, require_lo
         )
 
     if require_products:
-        queryset = queryset.annotate(product_count=Count('product')).filter(
+        stock_managed_product = (
+            Q(product__system_category__is_stock=True)
+            | Q(product__system_category__isnull=True, category__is_stock=True)
+        )
+        sellable_product = (
+            Q(product__is_active=True, product__is_delete=False)
+            & (Q(product__stock__gt=0) | ~stock_managed_product)
+        )
+        queryset = queryset.annotate(product_count=Count('product', filter=sellable_product)).filter(
             product_count__gt=0,
         )
 
     return queryset.distinct()
+
+
+def local_vendor_queryset(queryset=None):
+    """
+    Vendors that can appear in the normal local discovery feeds.
+
+    Marketplace vendors are identified two ways in this codebase:
+      - Vendor.is_marketplace
+      - active MarketPlace.vendors membership
+    Treat either one as marketplace-only so they do not leak into local feeds.
+    """
+    queryset = queryset if queryset is not None else Vendor.objects.all()
+    return queryset.exclude(Q(is_marketplace=True) | Q(marketplace__is_active=True))
 
 
 def apply_vendor_search(queryset, search):
