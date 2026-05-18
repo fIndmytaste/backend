@@ -106,9 +106,7 @@ def reserve_order_stock(product_quantities=None, variant_quantities=None):
     product_ids = [product_id for product_id, quantity in product_quantities.items() if quantity > 0]
     products = {
         product.id: product
-        for product in Product.objects.select_for_update()
-        .select_related('system_category', 'parent__system_category', 'vendor__category')
-        .filter(id__in=product_ids)
+        for product in Product.objects.select_for_update().filter(id__in=product_ids)
     }
 
     for product_id, quantity in product_quantities.items():
@@ -138,9 +136,7 @@ def reserve_order_stock(product_quantities=None, variant_quantities=None):
     variant_ids = [variant_id for variant_id, quantity in variant_quantities.items() if quantity > 0]
     variants = {
         variant.id: variant
-        for variant in ProductVariant.objects.select_for_update()
-        .select_related('product__system_category', 'product__parent__system_category', 'product__vendor__category')
-        .filter(id__in=variant_ids)
+        for variant in ProductVariant.objects.select_for_update().filter(id__in=variant_ids)
     }
 
     for variant_id, quantity in variant_quantities.items():
