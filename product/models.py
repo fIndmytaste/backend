@@ -737,6 +737,10 @@ class ProductVariant(models.Model):
         max_digits=10, decimal_places=2, help_text="Price for this variant option.")
     stock = models.PositiveIntegerField(
         default=0, help_text="Stock for this variant option.")
+    track_stock = models.BooleanField(
+        default=False,
+        help_text="When enabled, this variant option is blocked at checkout if stock is 0.",
+    )
     is_active = models.BooleanField(
         default=True, help_text="Is this variant option active?")
     created_at = models.DateTimeField(auto_now_add=True)

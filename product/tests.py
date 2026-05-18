@@ -102,6 +102,7 @@ class ReserveOrderStockTests(TestCase):
             name="Beef",
             price=50,
             stock=3,
+            track_stock=True,
         )
 
         reserve_order_stock({product.id: 2}, {variant.id: 2})
@@ -111,3 +112,88 @@ class ReserveOrderStockTests(TestCase):
         self.assertEqual(product.stock, 3)
         self.assertEqual(product.purchases, 2)
         self.assertEqual(variant.stock, 1)
+
+    def test_allows_untracked_stock_managed_variant_option_with_zero_stock(self):
+        product = Product.objects.create(
+            name="Soup Bowl",
+            description="With options",
+            price=100,
+            stock=5,
+            vendor=self.vendor,
+            system_category=self.stock_category,
+        )
+        category = ProductVariantCategory.objects.create(
+            category_name="Protein",
+            parent_product=product,
+        )
+        variant = ProductVariant.objects.create(
+            category=category,
+            product=product,
+            name="Beef",
+            price=50,
+            stock=0,
+        )
+
+        reserve_order_stock({product.id: 1}, {variant.id: 1})
+
+        product.refresh_from_db()
+        variant.refresh_from_db()
+        self.assertEqual(product.stock, 4)
+        self.assertEqual(product.purchases, 1)
+        self.assertEqual(variant.stock, 0)
+
+    def test_rejects_tracked_stock_managed_variant_option_without_stock(self):
+        product = Product.objects.create(
+            name="Soup Bowl",
+            description="With options",
+            price=100,
+            stock=5,
+            vendor=self.vendor,
+            system_category=self.stock_category,
+        )
+        category = ProductVariantCategory.objects.create(
+            category_name="Protein",
+            parent_product=product,
+        )
+        variant = ProductVariant.objects.create(
+            category=category,
+            product=product,
+            name="Beef",
+            price=50,
+            stock=0,
+            track_stock=True,
+        )
+
+        with self.assertRaises(ValidationError):
+            reserve_order_stock({product.id: 1}, {variant.id: 1})
+
+        product.refresh_from_db()
+        variant.refresh_from_db()
+        self.assertEqual(product.stock, 5)
+        self.assertEqual(product.purchases, 0)
+        self.assertEqual(variant.stock, 0)
+
+    def test_decrements_child_product_variants(self):
+        parent = Product.objects.create(
+            name="Rice",
+            description="Parent",
+            price=100,
+            stock=5,
+            vendor=self.vendor,
+            system_category=self.stock_category,
+        )
+        child_variant = Product.objects.create(
+            name="Large Rice",
+            description="Variant",
+            price=150,
+            stock=3,
+            vendor=self.vendor,
+            system_category=self.stock_category,
+            parent=parent,
+        )
+
+        reserve_order_stock({child_variant.id: 2})
+
+        child_variant.refresh_from_db()
+        self.assertEqual(child_variant.stock, 1)
+        self.assertEqual(child_variant.purchases, 2)

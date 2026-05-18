@@ -103,6 +103,13 @@ class ProductVariantSerializer(serializers.ModelSerializer):
         exclude = ['parent', 'vendor', 'views', 'purchases', 'created_at', 'updated_at']
 
 
+def _variant_stock_value(data):
+    try:
+        return max(0, int(data.get('stock', 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 class ProductSerializer(serializers.ModelSerializer):
     discounted_price = serializers.SerializerMethodField()
     price_with_commission = serializers.SerializerMethodField()
@@ -169,6 +176,9 @@ class ProductSerializer(serializers.ModelSerializer):
                         "id": prod.id,
                         "name": prod.name,
                         "price": float(prod.price) if is_vendor else float(prod.get_price_with_commission()),
+                        "stock": prod.stock,
+                        "track_stock": prod.track_stock,
+                        "is_available": (not prod.track_stock) or prod.stock > 0,
                     }
                     for prod in child_products
                 ]
@@ -200,6 +210,7 @@ class ProductSerializer(serializers.ModelSerializer):
                     "id": variant.id,
                     "name": variant.name,
                     "price": price,
+                    "stock": variant.stock,
                 })
 
             product_variant = [
@@ -348,6 +359,7 @@ class ProductSerializer(serializers.ModelSerializer):
                         continue
                 vname = v.get('name', '').strip()
                 vprice = v.get('price', 0)
+                vstock = _variant_stock_value(v)
                 if not vname:
                     continue
                 ProductVariant.objects.create(
@@ -355,6 +367,8 @@ class ProductSerializer(serializers.ModelSerializer):
                     category=category,
                     name=vname,
                     price=vprice,
+                    stock=vstock,
+                    track_stock=vstock > 0,
                 )
 
     def update(self, instance, validated_data):
@@ -436,6 +450,8 @@ class ProductSerializer(serializers.ModelSerializer):
                 variant_name = (v.get('name') or '').strip()
                 variant_price = v.get('price', 0)
                 variant_id = v.get('id', '')
+                variant_stock_provided = 'stock' in v
+                variant_stock = _variant_stock_value(v)
 
                 if not variant_name:
                     continue
@@ -457,6 +473,9 @@ class ProductSerializer(serializers.ModelSerializer):
                     variant.price = variant_price
                     variant.category = category
                     variant.is_active = True
+                    if variant_stock_provided:
+                        variant.stock = variant_stock
+                        variant.track_stock = variant_stock > 0
                     variant.save()
                 else:
                     variant = ProductVariant.objects.create(
@@ -464,6 +483,8 @@ class ProductSerializer(serializers.ModelSerializer):
                         category=category,
                         name=variant_name,
                         price=variant_price,
+                        stock=variant_stock,
+                        track_stock=variant_stock > 0,
                     )
 
                 processed_variant_ids.append(variant.id)
@@ -580,6 +601,9 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
                             "id": prod.id,
                             "name": prod.name,
                             "price": float(prod.price) if is_vendor else float(self._price_with_commission(prod, prod.price)),
+                            "stock": prod.stock,
+                            "track_stock": prod.track_stock,
+                            "is_available": (not prod.track_stock) or prod.stock > 0,
                         }
                         for prod in child_products
                     ]
@@ -690,6 +714,8 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
                     category=category,
                     name=prod['name'],
                     price=prod['price'],
+                    stock=_variant_stock_value(prod),
+                    track_stock=_variant_stock_value(prod) > 0,
                 )
 
         return product
@@ -774,6 +800,8 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
                         variant_name = prod.get('name')
                         variant_price = prod.get('price', 0)
                         variant_id = prod.get('id')
+                        variant_stock_provided = 'stock' in prod
+                        variant_stock = _variant_stock_value(prod)
                         
                         if not variant_name:
                             continue
@@ -793,6 +821,9 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
                             variant.price = variant_price
                             variant.category = category
                             variant.is_active = True
+                            if variant_stock_provided:
+                                variant.stock = variant_stock
+                                variant.track_stock = variant_stock > 0
                             variant.save()
                         else:
                             variant = ProductVariant.objects.create(
@@ -800,6 +831,8 @@ class BuyerVendorProductSerializer(serializers.ModelSerializer):
                                 category=category,
                                 name=variant_name,
                                 price=variant_price,
+                                stock=variant_stock,
+                                track_stock=variant_stock > 0,
                             )
                         
                         processed_variant_ids.append(variant.id)

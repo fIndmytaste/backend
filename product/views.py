@@ -147,6 +147,8 @@ def reserve_order_stock(product_quantities=None, variant_quantities=None):
             raise ValidationError("One of the selected variants is no longer available.")
         if not _is_stock_managed_product(variant.product):
             continue
+        if not variant.track_stock:
+            continue
         if variant.stock < quantity:
             raise ValidationError(
                 f"{variant.name} has only {variant.stock} unit(s) left in stock."
@@ -154,7 +156,12 @@ def reserve_order_stock(product_quantities=None, variant_quantities=None):
 
     for variant_id, quantity in variant_quantities.items():
         variant = variants.get(variant_id)
-        if variant and quantity > 0 and _is_stock_managed_product(variant.product):
+        if (
+            variant
+            and quantity > 0
+            and variant.track_stock
+            and _is_stock_managed_product(variant.product)
+        ):
             ProductVariant.objects.filter(id=variant.id).update(stock=F('stock') - quantity)
 
 
