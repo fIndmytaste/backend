@@ -1312,7 +1312,9 @@ class RiderViewSet(viewsets.ModelViewSet):
         order.delivery_status = 'delivered'
         order.delivery_otp = None
         order.delivery_otp_expiry = None
-        order.delivered_at = timezone.now()
+        delivered_at = timezone.now()
+        order.delivered_at = delivered_at
+        order.actual_delivery_time = delivered_at
 
         gross_order_amount = order.calculate_vendor_settlement_amount()
         if gross_order_amount <= 0:
