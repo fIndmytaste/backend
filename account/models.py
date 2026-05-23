@@ -1038,6 +1038,7 @@ class StaffPagePermission(models.Model):
         ('insights', 'Insights'),
         ('marketplace', 'Marketplace Management'),
         ('transactions', 'Transactions'),
+        ('push-notifications', 'Push Notifications'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
