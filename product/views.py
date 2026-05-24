@@ -267,19 +267,19 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             address = query_address
 
         print('Vendor location:', vendor.location_latitude, vendor.location_longitude )
+        try:
+            distance_in_km = get_distance_between_two_location(
+                lat1=float(location_latitude),
+                lon1=float(location_longitude),
+                lat2=float(vendor.location_latitude),
+                lon2=float(vendor.location_longitude),
+            )
+        except Exception as e:
+            print(e)
+            return bad_request_response(message=f"Failed to calculate delivery fee. {str(e)}")
+
         is_in_marketplace = MarketPlace.objects.filter(vendors=vendor).exists()
         if not is_in_marketplace:
-            try:
-                distance_in_km = get_distance_between_two_location(
-                    lat1=float(location_latitude),
-                    lon1=float(location_longitude),
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude),
-                )
-            except Exception as e:
-                print(e)
-                return bad_request_response(message=f"Failed to calculate delivery fee. {str(e)}")
-
             if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
                 return bad_request_response(message="This vendor cannot deliver to your location (distance too far).")
 
@@ -418,15 +418,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 order.original_delivery_fee = original_delivery_fee
                 
                 
-                dist = 0.0
-                try:
-                    dist = get_distance_between_two_location(
-                        lat1=float(vendor.location_latitude),
-                        lon1=float(vendor.location_longitude),
-                        lat2=float(location_latitude),
-                        lon2=float(location_longitude),
-                    )
-                except: pass
+                dist = distance_in_km or 0.0
                 order.rider_earning = max(
                     Decimal(str(calculate_rider_fare(dist))),
                     Decimal(str(delivery_fee or 0)),
