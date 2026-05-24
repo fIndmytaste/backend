@@ -305,8 +305,8 @@ class NotificationHelper:
                 )
                 
                 return {
-                    "user": user_obj.username,
-                    "user_id": user_obj.id,
+                    "user": user_obj.email,
+                    "user_id": str(user_obj.id),
                     **result
                 }
             except Exception as e:
@@ -585,4 +585,3 @@ def send_login_notification(user: Union[User, int, str], callback: Optional[Call
     except Exception as e:
         logger.error(f"Error in send_login_notification: {str(e)}")
         return None
-
