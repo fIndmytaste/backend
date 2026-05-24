@@ -57,6 +57,7 @@ class PromoCode(models.Model):
         ('fixed_amount', 'Fixed Amount Discount'),
         ('percentage', 'Percentage Discount'),
         ('free_delivery', 'Free Delivery'),
+        ('discounted_delivery', 'Discounted Delivery'),
     ), default='none')
     referrer_reward_value = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="The value of the reward for the referrer")
 

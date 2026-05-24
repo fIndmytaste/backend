@@ -73,7 +73,7 @@ def grant_reward(referrer, promo, referee, order):
                 logger.info(f"Granted {reward_value} wallet credit to {referrer.email} for referral.")
 
               
-            elif reward_type in ['fixed_amount', 'percentage', 'free_delivery']:
+            elif reward_type in ['fixed_amount', 'percentage', 'free_delivery', 'discounted_delivery']:
                 print(f"Creating promo code reward for referrer {referrer.email} with type {reward_type} and value {reward_value}.")
                 # Generate a one-time promo code for the referrer
                 # We use a unique code to avoid collisions
