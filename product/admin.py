@@ -262,9 +262,9 @@ class PromoCodeAdmin(admin.ModelAdmin):
         ('Conditions', {
             'fields': ('min_order_value', 'max_discount', 'max_distance_km', 'usage_limit_per_user', 'total_usage_limit')
         }),
-        ('Targets', {
+        ('Where this promo can be used (optional)', {
             'fields': ('applicable_zones', 'applicable_vendors', 'applicable_categories', 'applicable_customers'),
-            'classes': ('collapse',)
+            'description': 'Leave these blank for the promo to work everywhere. Select vendors, system categories, zones, or customers here to restrict where the code can be used.'
         }),
         ('Scheduling & Status', {
             'fields': ('start_date', 'end_date', 'is_active')

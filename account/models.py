@@ -401,7 +401,7 @@ class Vendor(models.Model):
         settings = PlatformSettings.get_settings()
         return settings.default_commission_percentage
 
-    def calculate_delivery_fee_by_vendor(self, item_count=1, dest_lat=None, dest_lon=None, user=None, promo_code=None, order_value=0.0):
+    def calculate_delivery_fee_by_vendor(self, item_count=1, dest_lat=None, dest_lon=None, user=None, promo_code=None, order_value=0.0, categories=None):
         """
         Calculate delivery fee based on marketplace settings and category type, applying delivery_percentage_off logic.
         """
@@ -427,8 +427,11 @@ class Vendor(models.Model):
                 dest_lon=float(dest_lon),
                 item_count=item_count,
                 user_id=str(user.id) if user else None,
+                customer_id=str(user.id) if user else None,
                 promo_code=promo_code,
-                order_value=order_value
+                order_value=order_value,
+                vendor_id=str(self.id),
+                categories=categories,
             )
             delivery_fee = delivery_fee_info['total_fee']
             original_delivery_fee = delivery_fee_info['original_fee']
@@ -453,8 +456,11 @@ class Vendor(models.Model):
                     dest_lon=float(dest_lon),
                     item_count=item_count,
                     user_id=str(user.id) if user else None,
+                    customer_id=str(user.id) if user else None,
                     promo_code=promo_code,
-                    order_value=order_value
+                    order_value=order_value,
+                    vendor_id=str(self.id),
+                    categories=categories,
                 )
                 delivery_fee = delivery_fee_info['total_fee']
                 original_delivery_fee = delivery_fee_info['original_fee']
@@ -585,6 +591,7 @@ class Vendor(models.Model):
                         distance_km=distance_km,
                         vendor_obj=self,
                         current_fee=float(delivery_fee),
+                        categories=categories,
                     )
                 except Exception:
                     promo_info = {"is_applied": False, "affects_delivery": False, "discount_amount": 0}

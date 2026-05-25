@@ -72,7 +72,7 @@ class PromoCode(models.Model):
     def __str__(self):
         return f"{self.code} ({self.get_promo_type_display()})"
 
-    def is_valid_for_calculation(self, user=None, order_value=0, distance=None, vendor=None, zone=None):
+    def is_valid_for_calculation(self, user=None, order_value=0, distance=None, vendor=None, zone=None, categories=None):
         """
         Check if the promo is valid for a given set of parameters.
         This is a preliminary check before applying.
@@ -119,6 +119,23 @@ class PromoCode(models.Model):
         # Check vendor
         if vendor and self.applicable_vendors.exists() and not self.applicable_vendors.filter(id=vendor.id).exists():
             return False, "Promo is not applicable for this vendor"
+
+        # Check system category. Product categories are preferred when the
+        # order context has them; vendor category is a safe fallback.
+        if self.applicable_categories.exists():
+            category_ids = set()
+            if categories:
+                for category in categories:
+                    category_id = getattr(category, 'id', category)
+                    if category_id:
+                        category_ids.add(category_id)
+
+            vendor_category_id = getattr(vendor, 'category_id', None) if vendor else None
+            if vendor_category_id:
+                category_ids.add(vendor_category_id)
+
+            if not category_ids or not self.applicable_categories.filter(id__in=category_ids).exists():
+                return False, "Promo is not applicable for this category"
             
         # Check zone
         if zone and self.applicable_zones.exists() and not self.applicable_zones.filter(id=zone.id).exists():

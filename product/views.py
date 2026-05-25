@@ -287,6 +287,10 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
         main_product_ids = [item['product'] for item in items_data]
         main_products = Product.objects.filter(id__in=main_product_ids, vendor=vendor)
         product_map = {str(product.id): product for product in main_products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         # Collect all variant IDs
         variant_ids = []
@@ -383,7 +387,8 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         dest_lon=float(location_longitude),
                         user=user,
                         promo_code=promo_code,
-                        order_value=float(order_total_price)
+                        order_value=float(order_total_price),
+                        categories=promo_category_ids,
                     )
                     delivery_fee = delivery_fee_response["total_fee"]
                     original_delivery_fee = delivery_fee_response["original_fee"]
@@ -399,7 +404,8 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         order_total_price_without_delivery_fee, 
                         distance_in_km, 
                         order.vendor, 
-                        delivery_fee
+                        delivery_fee,
+                        categories=promo_category_ids,
                     )
 
                 print(promo_info)
@@ -1207,7 +1213,9 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                 item_count=item_count,
                 promo_code=promo_code,
                 order_value=order_value,
-                user_id=str(user.id) if user else None
+                user_id=str(user.id) if user else None,
+                customer_id=str(user.id) if user else None,
+                vendor_id=str(vendor.id),
             )
             delivery_fee = delivery_fee_info['total_fee']
             promo_details = delivery_fee_info.get('promo_details')
@@ -1328,6 +1336,10 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
         product_map = {str(product.id): product for product in products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         item_count = 0
 
@@ -1402,7 +1414,8 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                     dest_lon=float(location_longitude),
                     user=user,
                     promo_code=promo_code,
-                    order_value=float(order.total_price)
+                    order_value=float(order.total_price),
+                    categories=promo_category_ids,
                 )
                 delivery_fee = delivery_fee_response["total_fee"]
                 original_delivery_fee = delivery_fee_response["original_fee"]
@@ -1560,6 +1573,10 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
         product_map = {str(product.id): product for product in products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         item_count = 0
 
@@ -1651,7 +1668,8 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                     dest_lon=float(location_longitude),
                     user=user,
                     promo_code=promo_code,
-                    order_value=float(order.total_price)
+                    order_value=float(order.total_price),
+                    categories=promo_category_ids,
                 )
                         
                 delivery_fee = delivery_fee_response["total_fee"]
@@ -2030,6 +2048,10 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
 
         products = Product.objects.filter(id__in=product_ids).select_related('vendor', 'parent')
         product_map = {str(product.id): product for product in products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         item_count = 0
 
@@ -2088,8 +2110,11 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                     dest_lon=location_longitude,
                     item_count=item_count,
                     user_id=str(user.id) if user else None,
+                    customer_id=str(user.id) if user else None,
                     promo_code=promo_code,
-                    order_value=float(order.total_price)
+                    order_value=float(order.total_price),
+                    vendor_id=str(vendor.id),
+                    categories=promo_category_ids,
                 )
                 delivery_fee = delivery_fee_info['total_fee']
                 original_delivery_fee = delivery_fee_info['original_fee']

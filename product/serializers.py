@@ -489,49 +489,68 @@ class PromoCodeSerializer(serializers.ModelSerializer):
             'validation_message',
         ]
         read_only_fields = ['id', 'code', 'is_active', 'is_automatic']
-    
-    def get_is_valid(self, obj):
-        """Check if the promo code is currently valid based on context."""
+
+    def _validation_context(self):
         request = self.context.get('request')
         user = request.user if request and request.user.is_authenticated else None
-        
-        # Get optional validation context from the request
+
         order_value = float(request.query_params.get('order_value', 0)) if request else 0
         distance = float(request.query_params.get('distance', 0)) if request else None
         vendor_id = request.query_params.get('vendor_id') if request else None
-        
+
         vendor = None
         if vendor_id:
             from account.models import Vendor
             vendor = Vendor.objects.filter(id=vendor_id).first()
+
+        category_ids = []
+        if request:
+            for key in ('category_id', 'category_ids'):
+                values = request.query_params.getlist(key)
+                for value in values:
+                    category_ids.extend([item.strip() for item in str(value).split(',') if item.strip()])
+
+            product_ids = []
+            for key in ('product_id', 'product_ids'):
+                values = request.query_params.getlist(key)
+                for value in values:
+                    product_ids.extend([item.strip() for item in str(value).split(',') if item.strip()])
+
+            if product_ids:
+                try:
+                    from product.models import Product
+                    category_ids.extend(
+                        Product.objects.filter(id__in=product_ids)
+                        .exclude(system_category_id__isnull=True)
+                        .values_list('system_category_id', flat=True)
+                    )
+                except Exception:
+                    pass
+
+        return user, order_value, distance, vendor, category_ids
+    
+    def get_is_valid(self, obj):
+        """Check if the promo code is currently valid based on context."""
+        user, order_value, distance, vendor, category_ids = self._validation_context()
         
         is_valid, message = obj.is_valid_for_calculation(
             user=user,
             order_value=order_value,
             distance=distance,
-            vendor=vendor
+            vendor=vendor,
+            categories=category_ids,
         )
         return is_valid
     
     def get_validation_message(self, obj):
         """Get validation message for the promo code."""
-        request = self.context.get('request')
-        user = request.user if request and request.user.is_authenticated else None
-        
-        # Get optional validation context from the request
-        order_value = float(request.query_params.get('order_value', 0)) if request else 0
-        distance = float(request.query_params.get('distance', 0)) if request else None
-        vendor_id = request.query_params.get('vendor_id') if request else None
-        
-        vendor = None
-        if vendor_id:
-            from account.models import Vendor
-            vendor = Vendor.objects.filter(id=vendor_id).first()
+        user, order_value, distance, vendor, category_ids = self._validation_context()
         
         is_valid, message = obj.is_valid_for_calculation(
             user=user,
             order_value=order_value,
             distance=distance,
-            vendor=vendor
+            vendor=vendor,
+            categories=category_ids,
         )
         return message

@@ -1084,6 +1084,7 @@ def apply_promo_code(
     vendor_obj: Any = None,
     delivery_fee: float = 0.0,
     current_fee: float = None,
+    categories: Any = None,
 ) -> Dict[str, Any]:
     """
     Standalone helper to apply a promo code and return the discount and metadata.
@@ -1132,7 +1133,8 @@ def apply_promo_code(
             user=user_obj,
             order_value=order_value,
             distance=distance_km,
-            vendor=vendor_obj
+            vendor=vendor_obj,
+            categories=categories,
         )
 
         if is_valid:
@@ -1447,7 +1449,8 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
             order_value=order_value,
             distance_km=distance_km,
             vendor_obj=vendor_obj,
-            current_fee=final_fee
+            current_fee=final_fee,
+            categories=kwargs.get('category_ids') or kwargs.get('categories'),
         )
 
         if promo_info["is_applied"] and promo_info["affects_delivery"]:
