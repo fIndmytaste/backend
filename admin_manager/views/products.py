@@ -13,7 +13,8 @@ from product.models import DeliveryZone, Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
-from product.serializers import AdminOrderListSerializer, OrderSerializer, RatingSerializer
+from product.promo_models import PromoUsage
+from product.serializers import AdminOrderListSerializer, AdminPromoOrderSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
 
 
@@ -555,6 +556,47 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
             extra_serializer_context={'active_delivery_zones': active_delivery_zones}
         )
     
+
+
+class AdminPromoOrdersAPIView(generics.GenericAPIView):
+    serializer_class = AdminPromoOrderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = PromoUsage.objects.select_related(
+            'promo',
+            'user',
+            'order',
+            'order__user',
+            'order__vendor',
+        ).order_by('-used_at')
+
+        search = self.request.GET.get('search')
+        promo_code = self.request.GET.get('promo_code')
+
+        if search:
+            queryset = queryset.filter(
+                Q(order__track_id__icontains=search) |
+                Q(order__id__icontains=search) |
+                Q(promo__code__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(order__vendor__name__icontains=search) |
+                Q(order__vendor__email__icontains=search)
+            ).distinct()
+
+        if promo_code:
+            queryset = queryset.filter(promo__code__icontains=promo_code)
+
+        return queryset
+
+    def get(self, request):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):

@@ -1,6 +1,8 @@
 from rest_framework import serializers
+from decimal import Decimal
 from vendor.serializers import VendorSerializer
 from .models import DeliveryZone, ProductVariantCategory, UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
+from .promo_models import PromoUsage
 
 
 
@@ -176,6 +178,23 @@ class OrderSerializer(serializers.ModelSerializer):
             return 0.0
         return float(instance.calculate_net_rider_earning())
 
+    def _order_item_pricing(self, product, unit_price, quantity):
+        vendor_unit_price = Decimal(str(getattr(product, 'price', 0) or 0))
+        customer_unit_price = Decimal(str(unit_price or 0))
+        platform_unit_commission = max(customer_unit_price - vendor_unit_price, Decimal('0.00'))
+        vendor_unit_after_commission = customer_unit_price - platform_unit_commission
+        quantity_decimal = Decimal(str(quantity or 0))
+
+        return {
+            'vendor_set_price': float(vendor_unit_price),
+            'customer_unit_price': float(customer_unit_price),
+            'platform_unit_commission': float(platform_unit_commission),
+            'vendor_unit_price_after_commission': float(vendor_unit_after_commission),
+            'customer_total_price': float(customer_unit_price * quantity_decimal),
+            'vendor_total_after_commission': float(vendor_unit_after_commission * quantity_decimal),
+            'platform_total_commission': float(platform_unit_commission * quantity_decimal),
+        }
+
     def to_representation(self, instance: Order):
         rep = super().to_representation(instance)
         context = self.context or {}
@@ -197,11 +216,13 @@ class OrderSerializer(serializers.ModelSerializer):
                         'id': parent.id,
                         'name': parent.name,
                         'price': float(item.price),
+                        'vendor_set_price': float(product.price or 0),
                         'images': ProductImageSerializerClass(parent_images, many=True).data,
                     },
                     'price': float(item.price),
                     'unit_price': float(item.price),
                     'quantity': item.quantity,
+                    **self._order_item_pricing(product, item.price, item.quantity),
                     'variants': [{
                         'id': product.id,
                         'variant_category_name': (
@@ -210,6 +231,7 @@ class OrderSerializer(serializers.ModelSerializer):
                         'name': product.name,
                         'price': float(item.price),
                         'quantity': item.quantity,
+                        **self._order_item_pricing(product, item.price, item.quantity),
                         'images': ProductImageSerializerClass(product_images, many=True).data,
                     }],
                 })
@@ -223,17 +245,24 @@ class OrderSerializer(serializers.ModelSerializer):
                         'name': variant_obj.name,
                         'price': float(variant_selection.price_at_purchase),
                         'quantity': variant_selection.quantity,
+                        **self._order_item_pricing(
+                            variant_obj,
+                            variant_selection.price_at_purchase,
+                            variant_selection.quantity,
+                        ),
                     })
                 items_list.append({
                     'product': {
                         'id': product.id,
                         'name': product.name,
                         'price': float(item.price),
+                        'vendor_set_price': float(product.price or 0),
                         'images': ProductImageSerializerClass(product_images, many=True).data,
                     },
                     'price': float(item.price),
                     'unit_price': float(item.price),
                     'quantity': item.quantity,
+                    **self._order_item_pricing(product, item.price, item.quantity),
                     'variants': variants_data,
                 })
 
@@ -411,6 +440,105 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'id': str(obj.rider.id),
             **user_data,
         }
+
+
+class AdminPromoOrderSerializer(serializers.ModelSerializer):
+    order_id = serializers.SerializerMethodField()
+    track_id = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField(source='used_at')
+    customer = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
+    promo = serializers.SerializerMethodField()
+    order_status = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
+    items_total = serializers.SerializerMethodField()
+    delivery_fee = serializers.SerializerMethodField()
+    paid_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PromoUsage
+        fields = [
+            'id',
+            'order_id',
+            'track_id',
+            'created_at',
+            'customer',
+            'vendor',
+            'promo',
+            'order_status',
+            'payment_status',
+            'items_total',
+            'delivery_fee',
+            'original_amount',
+            'discount_amount',
+            'final_amount',
+            'paid_amount',
+            'distance_at_usage',
+        ]
+
+    def _money(self, value):
+        return float(value or 0)
+
+    def _serialize_user(self, user):
+        if not user:
+            return None
+        return {
+            'id': str(user.id),
+            'name': user.full_name or f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            'email': user.email,
+            'phone_number': user.phone_number,
+        }
+
+    def get_order_id(self, obj):
+        return str(obj.order_id)
+
+    def get_track_id(self, obj):
+        return getattr(obj.order, 'track_id', None)
+
+    def get_customer(self, obj):
+        return self._serialize_user(obj.user or getattr(obj.order, 'user', None))
+
+    def get_vendor(self, obj):
+        vendor = getattr(obj.order, 'vendor', None)
+        if not vendor:
+            return None
+        return {
+            'id': str(vendor.id),
+            'name': vendor.name,
+            'email': getattr(vendor, 'email', ''),
+            'phone_number': getattr(vendor, 'phone_number', ''),
+        }
+
+    def get_promo(self, obj):
+        promo = obj.promo
+        return {
+            'id': str(promo.id),
+            'code': promo.code,
+            'type': promo.promo_type,
+            'type_display': promo.get_promo_type_display(),
+            'value': float(promo.value or 0),
+        }
+
+    def get_order_status(self, obj):
+        return getattr(obj.order, 'status', None)
+
+    def get_payment_status(self, obj):
+        return getattr(obj.order, 'payment_status', None)
+
+    def get_items_total(self, obj):
+        return self._money(getattr(obj.order, 'total_amount', 0))
+
+    def get_delivery_fee(self, obj):
+        return self._money(getattr(obj.order, 'delivery_fee', 0))
+
+    def get_paid_amount(self, obj):
+        order = obj.order
+        return max(
+            0.0,
+            self._money(getattr(order, 'total_amount', 0)) +
+            self._money(getattr(order, 'delivery_fee', 0)) -
+            self._money(getattr(order, 'promo_discount_amount', 0))
+        )
 
 
 class CreateOrderSerializer(serializers.Serializer): 

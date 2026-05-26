@@ -1038,6 +1038,7 @@ class StaffPagePermission(models.Model):
     PAGE_CHOICES = [
         ('overview', 'Overview'),
         ('orders', 'Order Management'),
+        ('promo-orders', 'Promo Orders'),
         ('vendor', 'Vendor Management'),
         ('riders', 'Rider Management'),
         ('rider-verification', 'Rider Verification'),

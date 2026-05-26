@@ -69,6 +69,7 @@ urlpatterns = [
 
     # orders
     path('orders/', admin_product_view.AdminGetAllOrdersAPIView.as_view(), name='admin-orders-list'),
+    path('promo-orders/', admin_product_view.AdminPromoOrdersAPIView.as_view(), name='admin-promo-orders-list'),
     path('orders/<uuid:id>/', admin_product_view.AdminOrderDetailAPIView.as_view(), name='admin-order-detail'),
     path('orders/<uuid:id>/parties/', admin_product_view.AdminOrderDetailVendorRiderAPIView.as_view(), name='admin-users-detail'),
 
