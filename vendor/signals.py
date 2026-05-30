@@ -36,3 +36,31 @@ def sync_vendor_geo(sender, instance: Vendor, **kwargs):
     except Exception:
         # Never let a Redis failure crash a vendor save
         pass
+
+
+@receiver(post_save, sender='product.BukaItemServiceCharge')
+def lock_vendor_on_first_admin_pricing(sender, instance, created, **kwargs):
+    """
+    Auto-lock a vendor from creating new products once the admin sets
+    pricing on any of their products, but only if the vendor's category
+    is configured to lock after approval (e.g. Eatery, Buka).
+
+    Idempotent: only flips the lock when it is currently False.
+    """
+    if not created:
+        return
+
+    vendor = instance.vendor or getattr(instance.product, 'vendor', None)
+    if vendor is None:
+        return
+
+    category = vendor.category
+    if category is None or not category.lock_products_after_approval:
+        return
+
+    if vendor.product_creation_locked:
+        return
+
+    Vendor.objects.filter(pk=vendor.pk, product_creation_locked=False).update(
+        product_creation_locked=True
+    )

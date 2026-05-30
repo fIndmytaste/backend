@@ -27,6 +27,7 @@ class StaffPagePermissionsView(generics.GenericAPIView):
             return success_response(data={
                 'is_superuser': True,
                 'pages': pages,
+                'marketplaces': [],
             })
 
         # Non-staff users have no access
@@ -34,6 +35,7 @@ class StaffPagePermissionsView(generics.GenericAPIView):
             return success_response(data={
                 'is_superuser': False,
                 'pages': [],
+                'marketplaces': [],
             })
 
         # Staff user — return only explicitly granted pages
@@ -41,7 +43,15 @@ class StaffPagePermissionsView(generics.GenericAPIView):
             StaffPagePermission.objects.filter(user=user)
             .values_list('page', flat=True)
         )
+        marketplaces = [
+            {
+                'id': str(assignment.marketplace_id),
+                'name': assignment.marketplace.name,
+            }
+            for assignment in user.marketplace_assignments.select_related('marketplace')
+        ]
         return success_response(data={
             'is_superuser': False,
             'pages': list(granted),
+            'marketplaces': marketplaces,
         })

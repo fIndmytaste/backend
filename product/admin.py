@@ -91,11 +91,11 @@ class ProductImageInline(admin.TabularInline):
 # SystemCategory Admin
 @admin.register(SystemCategory)
 class SystemCategoryAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_special_pricing', 'commission_percentage', 'created_at', 'updated_at')
+    list_display = ('name', 'is_special_pricing', 'commission_percentage', 'lock_products_after_approval', 'created_at', 'updated_at')
     search_fields = ('name',)
-    list_filter = ('is_special_pricing',)
+    list_filter = ('is_special_pricing', 'lock_products_after_approval')
     ordering = ('-created_at',)
-    
+
     fieldsets = (
         ('Basic Information', {
             'fields': ('name', 'name_key', 'logo', 'description')
@@ -106,6 +106,14 @@ class SystemCategoryAdmin(admin.ModelAdmin):
         }),
         ('Stock Settings', {
             'fields': ('is_stock',)
+        }),
+        ('Product Creation Lock', {
+            'fields': ('lock_products_after_approval',),
+            'description': (
+                "When enabled, vendors in this category get auto-locked from "
+                "creating new products the first time admin pricing is set. "
+                "Use for Eatery / Buka categories."
+            ),
         }),
     )
 

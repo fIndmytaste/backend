@@ -484,6 +484,16 @@ class SystemCategory(models.Model):
         blank=True,
         help_text="Delivery discount for this category (%)"
     )
+    lock_products_after_approval = models.BooleanField(
+        default=False,
+        help_text=(
+            "When True, vendors in this category are blocked from adding new "
+            "products once the admin has configured pricing for at least one "
+            "of their products. The vendor must contact support to request "
+            "additional product-creation grants. Intended for categories like "
+            "Eatery/Buka where admin sets prices and commissions."
+        ),
+    )
 
     def __str__(self):
         return self.name
@@ -1010,6 +1020,19 @@ class Order(models.Model):
         null=True, blank=True, help_text="Actual time when the rider picked up the order.")
     actual_delivery_time = models.DateTimeField(
         null=True, blank=True, help_text="Actual time when the order was delivered.")
+    pickup_confirmed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='confirmed_marketplace_pickups',
+        help_text="Marketplace staff/admin user who confirmed item pickup."
+    )
+    pickup_confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when marketplace pickup was confirmed."
+    )
 
     payment_method = models.CharField(max_length=20, choices=ORDER_PAYMENT_METHOD_CHOICES,
                                       default='wallet', help_text="The payment method of the order.")
@@ -1111,6 +1134,57 @@ class Order(models.Model):
         self.delivery_status = 'picked_up'
         self.actual_pickup_time = timezone.now()
         self.save()
+
+    def get_pickup_confirmed_by_name(self):
+        if not self.pickup_confirmed_by:
+            return None
+        return (
+            self.pickup_confirmed_by.full_name
+            or f"{self.pickup_confirmed_by.first_name or ''} {self.pickup_confirmed_by.last_name or ''}".strip()
+            or self.pickup_confirmed_by.email
+        )
+
+    def credit_vendor_earning_once(self, description=None):
+        """Credit vendor earning for this order once, regardless of caller."""
+        from decimal import Decimal
+        from wallet.models import Wallet, WalletTransaction
+
+        if not self.vendor or not self.vendor.user:
+            return None
+
+        existing = WalletTransaction.objects.filter(
+            order=self,
+            user=self.vendor.user,
+            transaction_type='earning',
+            status='completed',
+        ).first()
+        if existing:
+            return existing
+
+        vendor_earning = self.calculate_vendor_settlement_amount()
+        if vendor_earning <= 0:
+            vendor_earning = Decimal(str(self.vendor_amount or 0)).quantize(Decimal('0.01'))
+        if vendor_earning <= 0:
+            return None
+
+        self.vendor_amount = vendor_earning
+        self.platform_amount = max(
+            Decimal('0.00'),
+            (Decimal(str(self.get_total_price() or 0)) - vendor_earning).quantize(Decimal('0.01')),
+        )
+        self.save(update_fields=['vendor_amount', 'platform_amount', 'updated_at'])
+
+        vendor_wallet, _ = Wallet.objects.get_or_create(user=self.vendor.user)
+        vendor_wallet.deposit(vendor_earning)
+        return WalletTransaction.objects.create(
+            wallet=vendor_wallet,
+            user=self.vendor.user,
+            amount=vendor_earning,
+            transaction_type='earning',
+            status='completed',
+            description=description or f"Earning from Order #{self.track_id}",
+            order=self,
+        )
 
     def mark_as_in_transit(self):
         """Mark the order as in transit."""

@@ -468,8 +468,26 @@ class ProductsListCreateView(generics.GenericAPIView):
         #     )
 
         if not user.is_verified:
-            return bad_request_response( 
+            return bad_request_response(
                 message="You must be verified to create a product."
+            )
+
+        vendor_for_check = Vendor.objects.filter(user=user).first()
+        used_grant = False
+        if vendor_for_check is not None:
+            allowed, reason = vendor_for_check.can_create_products()
+            if not allowed:
+                return bad_request_response(
+                    message=(
+                        "New product creation is currently restricted for this "
+                        "store. Please contact support to request access."
+                    ),
+                    group='PRODUCT_CREATION_RESTRICTED',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+            used_grant = (
+                vendor_for_check.product_creation_locked
+                and vendor_for_check.product_creation_grant_count > 0
             )
 
         serializer = self.serializer_class(data=request.data, context={'request': request, 'is_vendor': True})
@@ -485,6 +503,9 @@ class ProductsListCreateView(generics.GenericAPIView):
             return bad_request_response(
                 message=f"Product image upload failed: {str(e)}"
             )
+
+        if used_grant and vendor_for_check is not None:
+            vendor_for_check.consume_product_creation_grant()
 
         # Re-fetch from DB so product_variant reflects the saved variants
         product.refresh_from_db()

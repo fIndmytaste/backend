@@ -1316,30 +1316,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         order.delivered_at = delivered_at
         order.actual_delivery_time = delivered_at
 
-        gross_order_amount = order.calculate_vendor_settlement_amount()
-        if gross_order_amount <= 0:
-            gross_order_amount = Decimal(str(order.vendor_amount or 0))
-
-        order.vendor_amount = gross_order_amount
-        order.platform_amount = max(
-            Decimal('0.00'),
-            Decimal(str(order.get_total_price() or 0)) - gross_order_amount,
-        )
-
-        # update vendor wallet and create transaction record for vendor earning
-        vendor_wallet, _ = Wallet.objects.get_or_create(user=order.vendor.user)
-        vendor_earning = order.vendor_amount or Decimal('0.00')
-        vendor_wallet.deposit(vendor_earning)
-
-        WalletTransaction.objects.create(
-            wallet=vendor_wallet,
-            user=order.vendor.user,
-            amount=vendor_earning,
-            transaction_type='earning',
-            status='completed',
-            description=f"Earning from Order #{order.track_id}",
-            order=order
-        )
+        order.credit_vendor_earning_once(description=f"Earning from Order #{order.track_id}")
 
         gross_earning_amount = order.calculate_rider_earning_amount()
         try:

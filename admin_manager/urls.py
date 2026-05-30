@@ -22,6 +22,13 @@ from admin_manager.views.announcements import (
     admin_publish_announcement
 )
 from admin_manager.views.notifications import AdminBulkPushNotificationView
+from admin_manager.views.product_creation_lock import (
+    AdminCategoryProductLockSettingView,
+    AdminVendorGrantProductCreationView,
+    AdminVendorProductCreationStatusView,
+    AdminVendorResetProductCreationGrantsView,
+    AdminVendorToggleProductCreationLockView,
+)
 from admin_manager.views.staff_permissions import StaffPagePermissionsView
 from admin_manager.views.service_charges import (
     AdminServiceChargeTierListCreateView,
@@ -65,13 +72,21 @@ urlpatterns = [
     path('vendor/<uuid:vendor_id>/delete/', admin_vendor_view.AdminVendorDeleteView.as_view(), name='admin_product_view-vendor_delete'),
     path('vendor/<uuid:vendor_id>/ratings/', admin_vendor_view.AdminVendorRatingListView.as_view(), name='admin_vendor-ratings-list'),
 
+    # product creation lock (per-vendor)
+    path('vendor/<uuid:vendor_id>/product-creation/', AdminVendorProductCreationStatusView.as_view(), name='admin-vendor-product-creation-status'),
+    path('vendor/<uuid:vendor_id>/grant-product-creation/', AdminVendorGrantProductCreationView.as_view(), name='admin-vendor-grant-product-creation'),
+    path('vendor/<uuid:vendor_id>/reset-product-creation-grants/', AdminVendorResetProductCreationGrantsView.as_view(), name='admin-vendor-reset-product-creation-grants'),
+    path('vendor/<uuid:vendor_id>/product-creation-lock/', AdminVendorToggleProductCreationLockView.as_view(), name='admin-vendor-product-creation-lock'),
 
+    # product creation lock (per-category)
+    path('system-categories/<uuid:category_id>/product-lock/', AdminCategoryProductLockSettingView.as_view(), name='admin-category-product-lock'),
 
     # orders
     path('orders/', admin_product_view.AdminGetAllOrdersAPIView.as_view(), name='admin-orders-list'),
     path('promo-orders/', admin_product_view.AdminPromoOrdersAPIView.as_view(), name='admin-promo-orders-list'),
     path('orders/<uuid:id>/', admin_product_view.AdminOrderDetailAPIView.as_view(), name='admin-order-detail'),
     path('orders/<uuid:id>/parties/', admin_product_view.AdminOrderDetailVendorRiderAPIView.as_view(), name='admin-users-detail'),
+    path('orders/<uuid:id>/confirm-pickup/', admin_product_view.AdminMarketplaceConfirmPickupAPIView.as_view(), name='admin-marketplace-confirm-pickup'),
 
     # riders
     path('riders/', admin_riders_view.AdminRiderListView.as_view(), name='admin_riders-list'),

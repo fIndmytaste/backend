@@ -2,8 +2,8 @@ from django.contrib import admin
 from django import forms
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
-    FCMToken, PushNotificationLog, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
-    VerificationCode, Notification, StaffPagePermission
+    FCMToken, PushNotificationLog, ProductCreationGrant, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
+    VerificationCode, Notification, StaffPagePermission, StaffMarketplaceAssignment
 )
 from .models import Guarantor, Address
 from product.models import BukaItemServiceCharge, Product, ServiceChargeTier
@@ -266,6 +266,15 @@ class VendorAdmin(admin.ModelAdmin):
             'fields': ('is_active', 'is_featured', 'rating',
                        'approval_status', 'approval_comment'),
         }),
+        ('Product creation lock', {
+            'description': (
+                "Vendors are auto-locked the first time admin pricing is set "
+                "on one of their products if the category has "
+                "lock_products_after_approval enabled. Grants let a locked "
+                "vendor add N more products before re-locking."
+            ),
+            'fields': ('product_creation_locked', 'product_creation_grant_count'),
+        }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
         }),
@@ -368,6 +377,27 @@ class StaffPagePermissionInline(admin.TabularInline):
         formset.save_m2m()
 
 
+class StaffMarketplaceAssignmentInline(admin.TabularInline):
+    model = StaffMarketplaceAssignment
+    fk_name = 'user'
+    extra = 2
+    fields = ('marketplace',)
+    autocomplete_fields = ('marketplace',)
+    verbose_name = 'Marketplace Access'
+    verbose_name_plural = 'Assigned Marketplaces'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user', 'marketplace')
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for obj in instances:
+            if not obj.pk:
+                obj.assigned_by = request.user
+            obj.save()
+        formset.save_m2m()
+
+
 @admin.register(StaffPagePermission)
 class StaffPagePermissionAdmin(admin.ModelAdmin):
     list_display = ('user_email', 'user_full_name', 'page_display', 'granted_by_email', 'created_at')
@@ -412,6 +442,50 @@ class StaffPagePermissionAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('user', 'granted_by')
 
 
+@admin.register(StaffMarketplaceAssignment)
+class StaffMarketplaceAssignmentAdmin(admin.ModelAdmin):
+    list_display = ('user_email', 'user_full_name', 'marketplace_name', 'assigned_by_email', 'created_at')
+    list_filter = ('marketplace',)
+    search_fields = ('user__email', 'user__full_name', 'marketplace__name')
+    readonly_fields = ('assigned_by', 'created_at', 'updated_at')
+    autocomplete_fields = ('user', 'marketplace')
+
+    fieldsets = (
+        (None, {
+            'fields': ('user', 'marketplace'),
+            'description': (
+                'Assign marketplace staff to one or more marketplaces. '
+                'Grant the same user only the Marketplace Management page permission for custom admin access.'
+            ),
+        }),
+        ('Audit', {'fields': ('assigned_by', 'created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.assigned_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description='User email', ordering='user__email')
+    def user_email(self, obj):
+        return obj.user.email
+
+    @admin.display(description='Full name', ordering='user__full_name')
+    def user_full_name(self, obj):
+        return obj.user.full_name or '—'
+
+    @admin.display(description='Marketplace', ordering='marketplace__name')
+    def marketplace_name(self, obj):
+        return obj.marketplace.name
+
+    @admin.display(description='Assigned by', ordering='assigned_by__email')
+    def assigned_by_email(self, obj):
+        return obj.assigned_by.email if obj.assigned_by else '—'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user', 'marketplace', 'assigned_by')
+
+
 # ---------------------------------------------------------------------------
 # Extend UserAdmin with page-permission inline + promote-to-staff action
 # ---------------------------------------------------------------------------
@@ -422,7 +496,7 @@ admin.site.unregister(User)
 
 @admin.register(User)
 class UserAdminWithPermissions(UserAdmin):
-    inlines = [StaffPagePermissionInline]
+    inlines = [StaffPagePermissionInline, StaffMarketplaceAssignmentInline]
     actions = [
         'set_delivery_percentage_off_for_selected',
         'send_bulk_notification_to_selected',
@@ -463,3 +537,21 @@ class UserAdminWithPermissions(UserAdmin):
         self.message_user(request, f"Revoked {deleted} page permission(s).")
 
     revoke_all_pages.short_description = "Revoke ALL page access from selected staff users"
+
+
+@admin.register(ProductCreationGrant)
+class ProductCreationGrantAdmin(admin.ModelAdmin):
+    list_display = ('vendor', 'action', 'count', 'balance_after', 'granted_by', 'created_at')
+    list_filter = ('action',)
+    search_fields = ('vendor__name', 'vendor__email', 'granted_by__email', 'note')
+    readonly_fields = ('vendor', 'action', 'count', 'balance_after', 'granted_by', 'note', 'created_at')
+    ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser

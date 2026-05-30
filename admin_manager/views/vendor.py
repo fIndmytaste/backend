@@ -2,7 +2,7 @@ from datetime import timedelta, timezone
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 
-from account.models import Vendor, VendorRating
+from account.models import StaffPagePermission, Vendor, VendorRating
 from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
 from admin_manager.serializers.lists import AdminVendorListSerializer
@@ -13,6 +13,41 @@ from drf_yasg import openapi
 from product.models import Order, Product
 from vendor.models import MarketPlace
 from vendor.serializers import ProductSerializer, VendorSerializer
+
+
+def _is_limited_marketplace_staff(user):
+    return (
+        user.is_authenticated
+        and user.is_staff
+        and not user.is_superuser
+        and not user.is_admin
+    )
+
+
+def _staff_marketplace_ids(user):
+    if not _is_limited_marketplace_staff(user):
+        return None
+    if not StaffPagePermission.objects.filter(user=user, page='marketplace').exists():
+        return []
+    return list(user.marketplace_assignments.values_list('marketplace_id', flat=True))
+
+
+def _filter_marketplaces_for_staff(queryset, user):
+    marketplace_ids = _staff_marketplace_ids(user)
+    if marketplace_ids is None:
+        return queryset
+    if not marketplace_ids:
+        return queryset.none()
+    return queryset.filter(id__in=marketplace_ids)
+
+
+def _filter_vendors_for_staff_marketplaces(queryset, user):
+    marketplace_ids = _staff_marketplace_ids(user)
+    if marketplace_ids is None:
+        return queryset
+    if not marketplace_ids:
+        return queryset.none()
+    return queryset.filter(marketplace__id__in=marketplace_ids).distinct()
 
 
 
@@ -83,6 +118,7 @@ class AdminMarketPlaceVendorListView(generics.ListAPIView):
         vendors = self.get_queryset().filter(
             Q(is_marketplace=True) | Q(marketplace__isnull=False)
         ).distinct()
+        vendors = _filter_vendors_for_staff_marketplaces(vendors, request.user)
 
         if category:
             vendors = vendors.filter(category__name__icontains=category)
@@ -143,7 +179,10 @@ class AdminVendorDetailView(generics.GenericAPIView):
     )
     def get(self, request, vendor_id):
         try:
-            vendor = Vendor.objects.get(id=vendor_id)
+            vendor = _filter_vendors_for_staff_marketplaces(
+                Vendor.objects.all(),
+                request.user,
+            ).get(id=vendor_id)
             serializer = self.serializer_class(vendor)
             return success_response(serializer.data)
         except Vendor.DoesNotExist:
@@ -161,6 +200,8 @@ class AdminVendorDetailView(generics.GenericAPIView):
         }
     )
     def put(self, request, vendor_id):
+        if _is_limited_marketplace_staff(request.user):
+            return bad_request_response(message="You do not have permission to update vendors.", status_code=403)
         try:
             vendor = Vendor.objects.get(id=vendor_id)
             serializer = self.serializer_class(vendor, data=request.data, partial=True)
@@ -417,7 +458,7 @@ class AdminMarketPlaceListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        marketplaces = MarketPlace.objects.all()
+        marketplaces = _filter_marketplaces_for_staff(MarketPlace.objects.all(), request.user)
         data = []
         for mp in marketplaces:
             data.append({
@@ -447,7 +488,7 @@ class AdminMarketPlaceDetailView(generics.GenericAPIView):
 
     def get(self, request, marketplace_id):
         try:
-            mp = MarketPlace.objects.get(id=marketplace_id)
+            mp = _filter_marketplaces_for_staff(MarketPlace.objects.all(), request.user).get(id=marketplace_id)
         except MarketPlace.DoesNotExist:
             return bad_request_response(message="Marketplace not found")
 
@@ -465,6 +506,8 @@ class AdminMarketPlaceDetailView(generics.GenericAPIView):
         })
 
     def patch(self, request, marketplace_id):
+        if _is_limited_marketplace_staff(request.user):
+            return bad_request_response(message="You do not have permission to update marketplace settings.", status_code=403)
         try:
             mp = MarketPlace.objects.get(id=marketplace_id)
         except MarketPlace.DoesNotExist:

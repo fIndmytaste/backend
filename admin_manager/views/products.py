@@ -1,11 +1,12 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
+from django.db import transaction
 from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
 from datetime import timedelta
 from uuid import UUID
 
-from account.models import Rider, User, Vendor
+from account.models import Rider, StaffPagePermission, User, Vendor
 from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
@@ -24,6 +25,38 @@ def _is_uuid(value):
         return True
     except (TypeError, ValueError):
         return False
+
+
+def _is_limited_marketplace_staff(user):
+    return (
+        user.is_authenticated
+        and user.is_staff
+        and not user.is_superuser
+        and not user.is_admin
+    )
+
+
+def _staff_marketplace_ids(user):
+    if not _is_limited_marketplace_staff(user):
+        return None
+    has_marketplace_page = StaffPagePermission.objects.filter(
+        user=user,
+        page='marketplace',
+    ).exists()
+    if not has_marketplace_page:
+        return []
+    return list(
+        user.marketplace_assignments.values_list('marketplace_id', flat=True)
+    )
+
+
+def _filter_for_staff_marketplaces(queryset, user):
+    marketplace_ids = _staff_marketplace_ids(user)
+    if marketplace_ids is None:
+        return queryset
+    if not marketplace_ids:
+        return queryset.none()
+    return queryset.filter(vendor__marketplace__id__in=marketplace_ids).distinct()
 
 
 class AdminSystemCategoryListView(generics.GenericAPIView):
@@ -368,7 +401,16 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
 
 
     def get_queryset(self,vendor_id):
-        queryset = Order.objects.filter(vendor__id=vendor_id).order_by('-created_at')
+        queryset = Order.objects.filter(vendor__id=vendor_id).select_related(
+            'user',
+            'vendor',
+            'vendor__user',
+            'vendor__category',
+            'rider',
+            'rider__user',
+            'pickup_confirmed_by',
+        ).prefetch_related('vendor__marketplace_set').order_by('-created_at')
+        queryset = _filter_for_staff_marketplaces(queryset, self.request.user)
         track_id = self.request.GET.get('track_id')
         status = self.request.GET.get('status')
 
@@ -430,11 +472,16 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self,request,vendor_id):
+        limited_staff = _is_limited_marketplace_staff(request.user)
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             self.get_queryset(vendor_id),
-            page_size=int(request.GET.get('page_size',20))
+            page_size=int(request.GET.get('page_size',20)),
+            extra_serializer_context={
+                'marketplace_staff_limited': limited_staff,
+                'include_delivery_info': not limited_staff,
+            },
         )
 
 
@@ -451,11 +498,12 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         'vendor__category',
         'rider',
         'rider__user',
+        'pickup_confirmed_by',
     ).prefetch_related('vendor__marketplace_set').order_by('-created_at')
 
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = _filter_for_staff_marketplaces(super().get_queryset(), self.request.user)
         track_id = self.request.GET.get('track_id')
         search = self.request.GET.get('search')
         status = self.request.GET.get('status')
@@ -543,6 +591,7 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self,request):
+        limited_staff = _is_limited_marketplace_staff(request.user)
         addition_serializer_data = {
             'is_vendor':True
         }
@@ -553,7 +602,10 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
             self.get_queryset(),
             page_size=int(request.GET.get('page_size',20)),
             addition_serializer_data=addition_serializer_data,
-            extra_serializer_context={'active_delivery_zones': active_delivery_zones}
+            extra_serializer_context={
+                'active_delivery_zones': active_delivery_zones,
+                'marketplace_staff_limited': limited_staff,
+            }
         )
     
 
@@ -617,7 +669,9 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             'vendor__category',
             'rider',
             'rider__user',
+            'pickup_confirmed_by',
         ).prefetch_related('vendor__marketplace_set')
+        queryset = _filter_for_staff_marketplaces(queryset, self.request.user)
         track_id = self.request.GET.get('track_id')
         search = self.request.GET.get('search')
         status = self.request.GET.get('status')
@@ -774,6 +828,7 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self, request):
+        limited_staff = _is_limited_marketplace_staff(request.user)
         addition_serializer_data = {
             'is_vendor': True
         }
@@ -785,6 +840,7 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             addition_serializer_data=addition_serializer_data,
             extra_serializer_context={
                 "active_delivery_zones": self.get_active_delivery_zones(),
+                "marketplace_staff_limited": limited_staff,
             },
         )
 
@@ -799,7 +855,9 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
         'vendor__user',
         'rider',
         'rider__user',
+        'pickup_confirmed_by',
     ).prefetch_related(
+        'vendor__marketplace_set',
         'items',
         'items__product',
         'items__product__parent',
@@ -816,6 +874,9 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
         context = super().get_serializer_context()
         context["active_delivery_zones"] = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
         return context
+
+    def get_queryset(self):
+        return _filter_for_staff_marketplaces(super().get_queryset(), self.request.user)
 
     @swagger_auto_schema(
         operation_description="Retrieve detailed information of a specific order by ID.",
@@ -838,9 +899,11 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         try:
             order = self.get_object()
+            limited_staff = _is_limited_marketplace_staff(request.user)
             serializer = self.get_serializer(order, context={
                 **self.get_serializer_context(),
-                "include_delivery_info": True,
+                "include_delivery_info": not limited_staff,
+                "marketplace_staff_limited": limited_staff,
             })
             return success_response(serializer.data)
         except Order.DoesNotExist:
@@ -853,7 +916,10 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
 class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.select_related('user', 'vendor', 'vendor__user', 'rider', 'rider__user')
+    queryset = Order.objects.select_related('user', 'vendor', 'vendor__user', 'rider', 'rider__user', 'pickup_confirmed_by')
+
+    def get_queryset(self):
+        return _filter_for_staff_marketplaces(super().get_queryset(), self.request.user)
 
     def get(self, request, *args, **kwargs):
         try:
@@ -861,10 +927,12 @@ class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
             response = {
                 'user': None,
                 'vendor': None,
-                'rider': None
+                'rider': None,
+                'picked_up_by': None,
 
             }
-            if order.user:
+            limited_staff = _is_limited_marketplace_staff(request.user)
+            if order.user and not limited_staff:
                 response['user'] = dict(
                     id=order.user.id,
                     name=order.user.full_name or f"{order.user.first_name or ''} {order.user.last_name or ''}".strip() or order.user.email,
@@ -881,7 +949,7 @@ class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
                     phone_number=getattr(order.vendor, 'phone_number', '') or order.vendor.user.phone_number,
                     email=getattr(order.vendor, 'email', '') or order.vendor.user.email,
                 )
-            if order.rider:
+            if order.rider and not limited_staff:
                 response['rider'] = dict(
                     id=order.rider.id,
                     name=order.rider.user.full_name or f"{order.rider.user.first_name or ''} {order.rider.user.last_name or ''}".strip() or order.rider.user.email,
@@ -889,6 +957,83 @@ class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
                     phone_number=order.rider.user.phone_number,
                     email=order.rider.user.email,
                 )
+            if order.pickup_confirmed_by:
+                response['picked_up_by'] = dict(
+                    id=order.pickup_confirmed_by.id,
+                    name=order.get_pickup_confirmed_by_name(),
+                    profile_image=order.pickup_confirmed_by.get_profile_image(),
+                    email=order.pickup_confirmed_by.email,
+                )
             return success_response(response)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found.")
+
+
+class AdminMarketplaceConfirmPickupAPIView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+
+    def post(self, request, id):
+        queryset = Order.objects.select_related(
+            'vendor',
+            'vendor__user',
+            'pickup_confirmed_by',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__variant_selections',
+            'items__variant_selections__variant',
+        ).filter(
+            Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False),
+            id=id,
+        )
+        queryset = _filter_for_staff_marketplaces(queryset, request.user)
+        order = queryset.first()
+        if not order:
+            return bad_request_response(message="Order not found or not allowed.", status_code=404)
+
+        if order.pickup_confirmed_at:
+            return success_response(
+                data={
+                    'order_id': str(order.id),
+                    'track_id': order.track_id,
+                    'pickup_confirmed_at': order.pickup_confirmed_at,
+                    'pickup_confirmed_by': order.get_pickup_confirmed_by_name(),
+                    'already_confirmed': True,
+                },
+                message="Pickup already confirmed.",
+            )
+
+        with transaction.atomic():
+            order = Order.objects.select_for_update().get(id=order.id)
+            if not order.pickup_confirmed_at:
+                now = timezone.now()
+                order.pickup_confirmed_by = request.user
+                order.pickup_confirmed_at = now
+                order.actual_pickup_time = order.actual_pickup_time or now
+                update_fields = [
+                    'pickup_confirmed_by',
+                    'pickup_confirmed_at',
+                    'actual_pickup_time',
+                    'updated_at',
+                ]
+                if order.status not in ['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']:
+                    order.status = 'picked_up'
+                    update_fields.append('status')
+                if order.delivery_status not in ['delivered', 'canceled']:
+                    order.delivery_status = 'picked_up'
+                    update_fields.append('delivery_status')
+                order.save(update_fields=update_fields)
+                order.credit_vendor_earning_once(
+                    description=f"Marketplace pickup earning from Order #{order.track_id}"
+                )
+
+        return success_response(
+            data={
+                'order_id': str(order.id),
+                'track_id': order.track_id,
+                'pickup_confirmed_at': order.pickup_confirmed_at,
+                'pickup_confirmed_by': order.get_pickup_confirmed_by_name(),
+            },
+            message="Pickup confirmed and vendor earning credited.",
+        )

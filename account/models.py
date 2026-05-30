@@ -296,6 +296,25 @@ class Vendor(models.Model):
         blank=True,
         help_text="Override base delivery fee for this vendor when in a marketplace. Leave blank to use marketplace default."
     )
+    product_creation_locked = models.BooleanField(
+        default=False,
+        help_text=(
+            "When True, this vendor cannot create new products without an "
+            "admin-issued grant. Set automatically the first time the admin "
+            "configures pricing for one of the vendor's products if the "
+            "vendor's category has lock_products_after_approval enabled. "
+            "Can be toggled manually by admins."
+        ),
+    )
+    product_creation_grant_count = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Number of additional products this vendor may create while "
+            "locked. Decremented by 1 on each successful product creation. "
+            "When 0 and product_creation_locked is True, the vendor must "
+            "contact support."
+        ),
+    )
 
     class Meta:
         indexes = [
@@ -378,6 +397,31 @@ class Vendor(models.Model):
             return f"{self.name} is currently closed. Opens {self.open_day} {open_label} - {self.close_day} {close_label}."
 
         return f"{self.name} is currently closed."
+
+    def can_create_products(self):
+        """
+        Determine whether this vendor may create a new product right now.
+
+        Returns:
+            tuple[bool, str]: (allowed, reason). reason is a machine-readable
+            code: 'OK', 'VENDOR_LOCKED', or 'CATEGORY_LOCKED'.
+        """
+        if self.product_creation_locked:
+            if self.product_creation_grant_count > 0:
+                return True, 'OK'
+            return False, 'VENDOR_LOCKED'
+        return True, 'OK'
+
+    def consume_product_creation_grant(self):
+        """
+        Decrement the grant counter by 1 if positive. Called after a
+        successful product creation that relied on a grant.
+        """
+        if self.product_creation_grant_count > 0:
+            Vendor.objects.filter(pk=self.pk).update(
+                product_creation_grant_count=models.F('product_creation_grant_count') - 1
+            )
+            self.refresh_from_db(fields=['product_creation_grant_count'])
 
     def get_commission_rate(self):
         """
@@ -1075,3 +1119,98 @@ class StaffPagePermission(models.Model):
     def __str__(self):
         return f"{self.user.email} → {self.get_page_display()}"
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class StaffMarketplaceAssignment(models.Model):
+    """
+    Assigns custom-admin staff users to the marketplaces they are allowed to
+    operate. These assignments are used to scope marketplace order access.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='marketplace_assignments',
+        limit_choices_to={'is_staff': True},
+    )
+    marketplace = models.ForeignKey(
+        MarketPlace,
+        on_delete=models.CASCADE,
+        related_name='staff_assignments',
+    )
+    assigned_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_marketplace_staff',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'marketplace')
+        ordering = ['user__email', 'marketplace__name']
+        verbose_name = 'Staff Marketplace Assignment'
+        verbose_name_plural = 'Staff Marketplace Assignments'
+
+    def __str__(self):
+        return f"{self.user.email} → {self.marketplace.name}"
+
+
+class ProductCreationGrant(models.Model):
+    """
+    Audit log of product-creation grants issued to a locked vendor.
+
+    Each row records that an admin allowed `count` additional product
+    creations for a vendor. The vendor's current remaining grant balance
+    lives on Vendor.product_creation_grant_count; this table is the
+    immutable history of who granted what and why.
+
+    ACTION_CHOICES distinguishes positive grants from resets/revocations
+    so the audit trail captures both.
+    """
+
+    ACTION_CHOICES = [
+        ('grant', 'Grant'),
+        ('reset', 'Reset to zero'),
+        ('lock', 'Manually locked'),
+        ('unlock', 'Manually unlocked'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(
+        Vendor,
+        on_delete=models.CASCADE,
+        related_name='product_creation_grants',
+    )
+    action = models.CharField(max_length=16, choices=ACTION_CHOICES, default='grant')
+    count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of product creations granted by this action (0 for reset/lock/unlock).",
+    )
+    balance_after = models.PositiveIntegerField(
+        default=0,
+        help_text="Vendor's grant balance immediately after this action was applied.",
+    )
+    granted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='issued_product_creation_grants',
+    )
+    note = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Product Creation Grant'
+        verbose_name_plural = 'Product Creation Grants'
+        indexes = [
+            models.Index(fields=['vendor', '-created_at'], name='pcg_vendor_recent_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.vendor.name} {self.action} {self.count} → {self.balance_after}"

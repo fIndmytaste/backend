@@ -131,6 +131,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "delivery_status",
             "delivery_zone",
             "delivered_at",
+            "pickup_confirmed_at",
+            "pickup_confirmed_by",
             'created_at', 
             'updated_at'
         ]
@@ -322,6 +324,74 @@ class OrderSerializer(serializers.ModelSerializer):
             estimated_dropoff_time = (now + instance.new_estimated_delivery_time).isoformat()
         rep['estimated_pickup_time'] = estimated_pickup_time
         rep['estimated_dropoff_time'] = estimated_dropoff_time
+        rep['pickup_confirmed_by'] = (
+            {
+                'id': str(instance.pickup_confirmed_by_id),
+                'name': instance.get_pickup_confirmed_by_name(),
+                'email': instance.pickup_confirmed_by.email,
+            }
+            if instance.pickup_confirmed_by_id else None
+        )
+
+        if context.get('marketplace_staff_limited'):
+            vendor = instance.vendor
+            vendor_data = None
+            if vendor:
+                marketplace = vendor.marketplace_set.first()
+                vendor_data = {
+                    'id': str(vendor.id),
+                    'name': vendor.name,
+                    'email': vendor.email,
+                    'phone_number': vendor.phone_number,
+                    'profile_image': vendor.thumbnail_url or vendor.logo_url or vendor.user.get_profile_image(),
+                    'marketplace': (
+                        {
+                            'id': str(marketplace.id),
+                            'name': marketplace.name,
+                        }
+                        if marketplace else None
+                    ),
+                }
+            limited_items = []
+            for item in items_list:
+                limited_item = {
+                    'product': {
+                        'id': item['product']['id'],
+                        'name': item['product']['name'],
+                        'vendor_set_price': item['product'].get('vendor_set_price'),
+                        'images': item['product'].get('images', []),
+                    },
+                    'quantity': item['quantity'],
+                    'vendor_set_price': item.get('vendor_set_price'),
+                    'vendor_total_after_commission': item.get('vendor_total_after_commission'),
+                    'variants': [
+                        {
+                            'id': variant.get('id'),
+                            'variant_category_name': variant.get('variant_category_name'),
+                            'name': variant.get('name'),
+                            'quantity': variant.get('quantity'),
+                            'vendor_set_price': variant.get('vendor_set_price'),
+                            'vendor_total_after_commission': variant.get('vendor_total_after_commission'),
+                        }
+                        for variant in item.get('variants', [])
+                    ],
+                }
+                limited_items.append(limited_item)
+
+            return {
+                'id': rep.get('id'),
+                'track_id': rep.get('track_id'),
+                'items': limited_items,
+                'vendor': vendor_data,
+                'actual_pickup_time': rep.get('actual_pickup_time'),
+                'estimated_pickup_time': rep.get('estimated_pickup_time'),
+                'pickup_confirmed_at': rep.get('pickup_confirmed_at'),
+                'pickup_confirmed_by': rep.get('pickup_confirmed_by'),
+                'status': rep.get('status'),
+                'delivery_status': rep.get('delivery_status'),
+                'created_at': rep.get('created_at'),
+                'updated_at': rep.get('updated_at'),
+            }
 
         return rep
 
@@ -333,6 +403,9 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
     customer = serializers.SerializerMethodField()
     vendor = serializers.SerializerMethodField()
     rider = serializers.SerializerMethodField()
+    picked_up_by = serializers.SerializerMethodField()
+    pickup_time = serializers.SerializerMethodField()
+    vendor_item_total = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -348,6 +421,9 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'customer',
             'vendor',
             'rider',
+            'picked_up_by',
+            'pickup_time',
+            'vendor_item_total',
             'created_at',
             'updated_at',
         ]
@@ -378,6 +454,8 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
         }
 
     def get_total_amount(self, obj):
+        if (self.context or {}).get('marketplace_staff_limited'):
+            return self.get_vendor_item_total(obj)
         return self._money(obj.total_amount) + self._money(obj.delivery_fee) - self._money(obj.promo_discount_amount)
 
     def get_delivery_fee(self, obj):
@@ -439,6 +517,44 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
         return {
             'id': str(obj.rider.id),
             **user_data,
+        }
+
+    def get_picked_up_by(self, obj):
+        if not obj.pickup_confirmed_by_id:
+            return None
+        return {
+            'id': str(obj.pickup_confirmed_by_id),
+            'name': obj.get_pickup_confirmed_by_name(),
+            'email': obj.pickup_confirmed_by.email,
+        }
+
+    def get_pickup_time(self, obj):
+        return obj.pickup_confirmed_at or obj.actual_pickup_time or obj.estimated_pickup_time
+
+    def get_vendor_item_total(self, obj):
+        if obj.vendor_amount:
+            return self._money(obj.vendor_amount)
+        try:
+            return float(obj.calculate_vendor_settlement_amount())
+        except Exception:
+            return 0.0
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if not (self.context or {}).get('marketplace_staff_limited'):
+            return rep
+        return {
+            'id': rep.get('id'),
+            'track_id': rep.get('track_id'),
+            'status': rep.get('status'),
+            'delivery_status': rep.get('delivery_status'),
+            'total_amount': rep.get('vendor_item_total'),
+            'vendor_item_total': rep.get('vendor_item_total'),
+            'vendor': rep.get('vendor'),
+            'picked_up_by': rep.get('picked_up_by'),
+            'pickup_time': rep.get('pickup_time'),
+            'created_at': rep.get('created_at'),
+            'updated_at': rep.get('updated_at'),
         }
 
 
