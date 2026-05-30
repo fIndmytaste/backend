@@ -28,11 +28,18 @@ def _is_uuid(value):
 
 
 def _is_limited_marketplace_staff(user):
+    """
+    Limited marketplace staff = any authenticated, is_staff user who is not
+    a superuser. We intentionally ignore the legacy `is_admin` flag here;
+    full-platform admins must be superusers. This way, any future staff
+    user accidentally created with is_admin=True still gets scoped to
+    their marketplace assignments instead of silently bypassing every
+    filter.
+    """
     return (
         user.is_authenticated
         and user.is_staff
         and not user.is_superuser
-        and not user.is_admin
     )
 
 
@@ -73,6 +80,20 @@ class AdminSystemCategoryListView(generics.GenericAPIView):
     )
     def get(self, request):
         categories = SystemCategory.objects.all()
+
+        marketplace_ids = _staff_marketplace_ids(request.user)
+        if marketplace_ids is not None:
+            # Limited marketplace staff — only show categories actually
+            # used by vendors in their assigned marketplaces.
+            if not marketplace_ids:
+                categories = categories.none()
+            else:
+                relevant_category_ids = Vendor.objects.filter(
+                    marketplace__id__in=marketplace_ids,
+                    category__isnull=False,
+                ).values_list('category_id', flat=True).distinct()
+                categories = categories.filter(id__in=relevant_category_ids)
+
         serializer = self.serializer_class(categories, many=True)
         return success_response(serializer.data)
 
@@ -81,7 +102,39 @@ class AdminDeliveryZoneListView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        zones = DeliveryZone.objects.filter(is_active=True).order_by('name')
+        zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+
+        marketplace_ids = _staff_marketplace_ids(request.user)
+        if marketplace_ids is not None:
+            # Limited marketplace staff — only show zones that contain at
+            # least one of their orders' delivery (or pickup) coordinates.
+            if not marketplace_ids:
+                zones = []
+            else:
+                order_locations = Order.objects.filter(
+                    Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False),
+                    vendor__marketplace__id__in=marketplace_ids,
+                ).values(
+                    'delivery_latitude',
+                    'delivery_longitude',
+                    'location_latitude',
+                    'location_longitude',
+                )
+                relevant_zone_ids = set()
+                remaining = {z.id for z in zones}
+                for loc in order_locations:
+                    if not remaining:
+                        break
+                    lat = loc['delivery_latitude'] or loc['location_latitude']
+                    lon = loc['delivery_longitude'] or loc['location_longitude']
+                    if lat is None or lon is None:
+                        continue
+                    for zone in zones:
+                        if zone.id in remaining and zone.contains_location(lat, lon):
+                            relevant_zone_ids.add(zone.id)
+                            remaining.discard(zone.id)
+                zones = [z for z in zones if z.id in relevant_zone_ids]
+
         return success_response([
             {
                 "id": str(zone.id),
