@@ -1089,8 +1089,10 @@ class StaffPagePermission(models.Model):
         ('customer', 'Customer Management'),
         ('insights', 'Insights'),
         ('marketplace', 'Marketplace Management'),
+        ('marketplace-staff', 'Marketplace Staff (limited)'),
         ('transactions', 'Transactions'),
         ('push-notifications', 'Push Notifications'),
+        ('pricing', 'Pricing'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -455,7 +455,8 @@ class StaffMarketplaceAssignmentAdmin(admin.ModelAdmin):
             'fields': ('user', 'marketplace'),
             'description': (
                 'Assign marketplace staff to one or more marketplaces. '
-                'Grant the same user only the Marketplace Management page permission for custom admin access.'
+                'Grant the same user the <strong>Marketplace Staff (limited)</strong> '
+                'page permission for the dedicated pickup-confirmation page.'
             ),
         }),
         ('Audit', {'fields': ('assigned_by', 'created_at', 'updated_at'), 'classes': ('collapse',)}),

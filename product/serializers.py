@@ -58,6 +58,18 @@ class OrderSerializer(serializers.ModelSerializer):
     promo_discount_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     payment_status = serializers.ChoiceField(choices=Order.PAYMENT_STATUS_CHOICES)
     delivery_zone = serializers.SerializerMethodField()
+    promo = serializers.SerializerMethodField()
+
+    def get_promo(self, obj):
+        promo = obj.promo_code
+        if not promo:
+            return None
+        return {
+            'id': str(promo.id),
+            'code': promo.code,
+            'promo_type': promo.promo_type,
+            'promo_type_display': promo.get_promo_type_display(),
+        }
     
     def get_total_commission(self, obj):
         """Get the total commission for the order."""
@@ -114,9 +126,10 @@ class OrderSerializer(serializers.ModelSerializer):
             'status', 
             'total_amount',
             'total_commission',
-            'whole_price', 
+            'whole_price',
             'promo_discount_amount',
-            'payment_status', 
+            'promo',
+            'payment_status',
             'payment_method',
             'items',  
             'note',
@@ -406,6 +419,7 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
     picked_up_by = serializers.SerializerMethodField()
     pickup_time = serializers.SerializerMethodField()
     vendor_item_total = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -424,9 +438,29 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'picked_up_by',
             'pickup_time',
             'vendor_item_total',
+            'items',
             'created_at',
             'updated_at',
         ]
+
+    def get_items(self, obj):
+        items = list(obj.items.all())
+        result = []
+        for item in items:
+            product = item.product
+            primary_image = None
+            if product:
+                imgs = list(product.productimage_set.filter(is_active=True).exclude(image_url='').order_by('-is_primary'))
+                if imgs:
+                    primary_image = imgs[0].get_image_url()
+            result.append({
+                'id': str(item.id),
+                'name': getattr(product, 'name', '') if product else '',
+                'image': primary_image,
+                'quantity': item.quantity,
+                'vendor_price': float(getattr(product, 'price', 0) or 0) if product else 0,
+            })
+        return result
 
     def _money(self, value):
         return float(value or 0)
@@ -551,6 +585,7 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'total_amount': rep.get('vendor_item_total'),
             'vendor_item_total': rep.get('vendor_item_total'),
             'vendor': rep.get('vendor'),
+            'items': rep.get('items'),
             'picked_up_by': rep.get('picked_up_by'),
             'pickup_time': rep.get('pickup_time'),
             'created_at': rep.get('created_at'),

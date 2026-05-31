@@ -31,9 +31,25 @@ class VendorImageUploadSerializer(serializers.Serializer):
         return value
 
 class SystemCategorySerializer(serializers.ModelSerializer):
+    vendor_count = serializers.SerializerMethodField()
+    has_vendors = serializers.SerializerMethodField()
+
     class Meta:
         model = SystemCategory
         fields = '__all__'
+
+    def _count_vendors(self, obj):
+        from account.models import Vendor
+        return Vendor.objects.filter(
+            category_id=obj.id,
+            is_active=True,
+        ).count()
+
+    def get_vendor_count(self, obj):
+        return self._count_vendors(obj)
+
+    def get_has_vendors(self, obj):
+        return self._count_vendors(obj) > 0
 
 
 class VendorCategorySerializer(serializers.ModelSerializer):

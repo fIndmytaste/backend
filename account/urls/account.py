@@ -1,8 +1,10 @@
 from django.urls import path
 from account.views.account import (
-    MyVirtualAccountNumberView, NotificationListView, PasswordChangeView, ProfileImageUploadView, RegisterFCMTokenView, 
+    MyVirtualAccountNumberView, NotificationListView,
+    NotificationUnreadCountView, NotificationMarkReadView,
+    PasswordChangeView, ProfileImageUploadView, RegisterFCMTokenView,
     UserAddressUpdateView, UserDetailView, RiderAddressUpdateView,
-    UpdateVenderBankAccount, GetAcceptedBanks, VendorOpeningHoursUpdateView, VendorProfileUpdateView, VendorStatusUpdateView, 
+    UpdateVenderBankAccount, GetAcceptedBanks, VendorOpeningHoursUpdateView, VendorProfileUpdateView, VendorStatusUpdateView,
     VendorAddressUpdateView, AccountWithdrawalInitiate, unregister_fcm_token, DeleteAccountView
 )
 
@@ -14,6 +16,8 @@ urlpatterns = [
     path('delivery-address/', UserAddressUpdateView.as_view(), name='current-user-address'),
     path('password/change/', PasswordChangeView.as_view(), name='password-change'),
     path('notification/', NotificationListView.as_view(), name='notification-list'),
+    path('notification/unread-count/', NotificationUnreadCountView.as_view(), name='notification-unread-count'),
+    path('notification/mark-read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
     path('bank-account/', UpdateVenderBankAccount.as_view(), name='update-vendor-bank-account'),
     path('banks/', GetAcceptedBanks.as_view(), name='get-accepted-banks'),
     path('virtual-account/', MyVirtualAccountNumberView.as_view(), name='virtual-account'),

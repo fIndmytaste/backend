@@ -29,29 +29,21 @@ def _is_uuid(value):
 
 def _is_limited_marketplace_staff(user):
     """
-    Limited marketplace staff = any authenticated, is_staff user who is not
-    a superuser. We intentionally ignore the legacy `is_admin` flag here;
-    full-platform admins must be superusers. This way, any future staff
-    user accidentally created with is_admin=True still gets scoped to
-    their marketplace assignments instead of silently bypassing every
-    filter.
+    True when the user is a marketplace-scoped staff member: an is_staff
+    (non-superuser) user who has been granted the 'marketplace-staff' page
+    permission. These users only see orders for their assigned marketplaces
+    and receive a stripped-down serializer.
     """
-    return (
-        user.is_authenticated
-        and user.is_staff
-        and not user.is_superuser
-    )
+    if not (user.is_authenticated and user.is_staff and not user.is_superuser):
+        return False
+    return StaffPagePermission.objects.filter(
+        user=user, page='marketplace-staff',
+    ).exists()
 
 
 def _staff_marketplace_ids(user):
     if not _is_limited_marketplace_staff(user):
         return None
-    has_marketplace_page = StaffPagePermission.objects.filter(
-        user=user,
-        page='marketplace',
-    ).exists()
-    if not has_marketplace_page:
-        return []
     return list(
         user.marketplace_assignments.values_list('marketplace_id', flat=True)
     )
@@ -723,7 +715,12 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             'rider',
             'rider__user',
             'pickup_confirmed_by',
-        ).prefetch_related('vendor__marketplace_set')
+        ).prefetch_related(
+            'vendor__marketplace_set',
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+        )
         queryset = _filter_for_staff_marketplaces(queryset, self.request.user)
         track_id = self.request.GET.get('track_id')
         search = self.request.GET.get('search')

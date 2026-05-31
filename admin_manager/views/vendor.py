@@ -17,25 +17,20 @@ from vendor.serializers import ProductSerializer, VendorSerializer
 
 def _is_limited_marketplace_staff(user):
     """
-    Limited marketplace staff = any authenticated, is_staff user who is not
-    a superuser. We intentionally ignore the legacy `is_admin` flag here;
-    full-platform admins must be superusers. This way, any future staff
-    user accidentally created with is_admin=True still gets scoped to
-    their marketplace assignments instead of silently bypassing every
-    filter.
+    True when the user is a marketplace-scoped staff member: an is_staff
+    (non-superuser) user who has been granted the 'marketplace-staff' page
+    permission.
     """
-    return (
-        user.is_authenticated
-        and user.is_staff
-        and not user.is_superuser
-    )
+    if not (user.is_authenticated and user.is_staff and not user.is_superuser):
+        return False
+    return StaffPagePermission.objects.filter(
+        user=user, page='marketplace-staff',
+    ).exists()
 
 
 def _staff_marketplace_ids(user):
     if not _is_limited_marketplace_staff(user):
         return None
-    if not StaffPagePermission.objects.filter(user=user, page='marketplace').exists():
-        return []
     return list(user.marketplace_assignments.values_list('marketplace_id', flat=True))
 
 
