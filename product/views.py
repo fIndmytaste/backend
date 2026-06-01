@@ -193,7 +193,16 @@ class SystemCategoryListView(generics.GenericAPIView):
         }
     )
     def get(self, request):
-        categories = SystemCategory.objects.all()
+        # Annotate active vendor count once at the DB layer so the serializer
+        # doesn't run a COUNT(*) per category.
+        from django.db.models import Count, Q
+        categories = SystemCategory.objects.annotate(
+            active_vendor_count=Count(
+                'vendor',
+                filter=Q(vendor__is_active=True),
+                distinct=True,
+            ),
+        )
         serializer = self.serializer_class(categories, many=True)
         return success_response(serializer.data)
 

@@ -248,23 +248,39 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             openapi.Parameter(
                 'time_range',
                 openapi.IN_QUERY,
-                description="Time range filter (week, month, year). Defaults to 'week'.",
+                description="Time range filter (day, week, month, year). Defaults to 'week'.",
                 type=openapi.TYPE_STRING,
-                enum=['week', 'month', 'year'],
+                enum=['day', 'week', 'month', 'year'],
                 required=False
             )
         ],
         responses={200: "Dashboard metrics", 401: "Unauthorized"}
     )
     def get(self, request):
-        time_range = request.query_params.get('time_range', 'week')
+        # Accept both `time_range` (existing) and `period` (frontend dropdown).
+        raw = (
+            request.query_params.get('time_range')
+            or request.query_params.get('period')
+            or 'week'
+        ).lower()
+        # Map adjective forms ("daily", "weekly", ...) to bare nouns.
+        adjective_map = {
+            'daily': 'day',
+            'weekly': 'week',
+            'monthly': 'month',
+            'yearly': 'year',
+        }
+        time_range = adjective_map.get(raw, raw)
 
         today = timezone.now()
-        if time_range == 'month':
+        if time_range == 'day':
+            delta = timedelta(days=1)
+        elif time_range == 'month':
             delta = timedelta(days=30)
         elif time_range == 'year':
             delta = timedelta(days=365)
         else:
+            time_range = 'week'
             delta = timedelta(days=7)
 
         start_date = today - delta
@@ -322,6 +338,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         user_growth = active_users > 0 if prev_active_users == 0 else (active_users > prev_active_users)
 
         return success_response(data={
+            "period": time_range,
             "order_overview": {
                 "total_orders": {"value": order_agg['total'], "growth": order_growth},
                 "active_orders": {"value": order_agg['active']},

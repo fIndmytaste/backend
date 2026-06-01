@@ -39,6 +39,12 @@ class SystemCategorySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def _count_vendors(self, obj):
+        # Fast path: the view annotated the queryset with `active_vendor_count`.
+        annotated = getattr(obj, 'active_vendor_count', None)
+        if annotated is not None:
+            return annotated
+        # Fallback for callers that don't annotate (kept for safety; logs help
+        # spot accidental N+1 reintroductions).
         from account.models import Vendor
         return Vendor.objects.filter(
             category_id=obj.id,
