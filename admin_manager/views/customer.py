@@ -10,6 +10,7 @@ from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
 from account.serializers import UserSerializer
+from admin_manager.serializers.lists import AdminUserListSerializer
 from product.models import Order
 from product.serializers import OrderSerializer
 
@@ -17,12 +18,26 @@ from product.serializers import OrderSerializer
 # You'll need to adapt this to your actual User model
 
 class AdminCustomerListView(generics.ListAPIView):
-    serializer_class = UserSerializer  # Assuming you have a UserSerializer
+    serializer_class = AdminUserListSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         # Filter users with 'buyer' role
-        return User.objects.filter(role='buyer')
+        return User.objects.filter(role='buyer').only(
+            'id',
+            'email',
+            'full_name',
+            'first_name',
+            'last_name',
+            'is_active',
+            'role',
+            'phone_number',
+            'profile_image_url',
+            'is_verified',
+            'is_banned',
+            'created_at',
+            'updated_at',
+        ).order_by('-created_at')
     
     @swagger_auto_schema(
         operation_description="Get a list of all customers (users with buyer role).",
@@ -61,6 +76,9 @@ class AdminCustomerListView(generics.ListAPIView):
         if search:
             queryset = queryset.filter(
                 Q(username__icontains=search) | 
+                Q(full_name__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
                 Q(email__icontains=search) | 
                 Q(phone_number__icontains=search)
             )
@@ -358,4 +376,3 @@ class AdminCustomerOrdersOverviewView(generics.ListAPIView):
         except Exception as e:
             print(e)
             return internal_server_error_response()
-

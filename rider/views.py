@@ -4,19 +4,29 @@ import math
 import random
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from helpers.websocket_notification import send_order_accepted_notification_customer
+from helpers.websocket_notification import (
+    get_order_dispatch_radius_km,
+    is_order_visible_to_rider,
+    notify_rider_order_assignment,
+    notify_order_unavailable_to_riders,
+    send_order_accepted_notification_customer,
+)
+from django.db import transaction
+from django.db.models import Sum, Q
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from datetime import timedelta
-from account.models import Guarantor, Rider, RiderRating, User, MODE_OF_TRANSPORTATION
+from account.models import Guarantor, Notification, Rider, RiderRating, User, MODE_OF_TRANSPORTATION
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import DeliveryTracking, Order, DeclinedOrder
 from wallet.models import Wallet, WalletTransaction
+from wallet.serializers import get_minimum_withdrawal_for_user
 from .serializers import (
     AcceptOrderSerializer,
     OrderSerializer,
@@ -40,16 +50,20 @@ class OrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # Filter orders based on user role
+        base_qs = (
+            Order.objects
+            .select_related('vendor__user', 'rider__user', 'user')
+            .prefetch_related(
+                'items__product__productimage_set',
+                'items__variant_selections__variant__category',
+            )
+        )
         if hasattr(user, 'rider'):
-            # If user is a rider, show assigned orders
-            return Order.objects.filter(rider=user.rider)
+            return base_qs.filter(rider=user.rider)
         elif hasattr(user, 'vendor'):
-            # If user is a vendor, show their orders
-            return Order.objects.filter(vendor=user.vendor)
+            return base_qs.filter(vendor=user.vendor)
         else:
-            # Regular customer sees their own orders
-            return Order.objects.filter(user=user)
+            return base_qs.filter(user=user)
 
     @action(detail=True, methods=['post'])
     def assign_rider(self, request, pk=None):
@@ -62,6 +76,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         try:
             rider = Rider.objects.get(id=rider_id)
             order.assign_rider(rider)
+            notify_rider_order_assignment(order, rider)
             return Response({'status': 'Rider assigned successfully'})
         except Rider.DoesNotExist:
             return Response({'error': 'Rider not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -216,67 +231,204 @@ class MakeOrderPayment(generics.GenericAPIView):
 class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
     permission_classes = []
 
+    def _mark_order_payment_failed(self, transaction, response_payload=None, reference=None):
+        if not transaction:
+            return None
+
+        order = transaction.order
+        if order:
+            should_notify = order.status != 'failed' or order.payment_status != Order.FAILED
+            order.payment_status = Order.FAILED
+            order.status = 'failed'
+            order.save(update_fields=['payment_status', 'status', 'updated_at'])
+
+            if should_notify:
+                Notification.objects.create(
+                    user=order.user,
+                    title="Payment Verification Failed",
+                    content=f"Payment for order #{order.track_id} could not be verified. The order has been moved to your history as failed.",
+                )
+
+                try:
+                    notification_helper.send_to_user_async(
+                        user=order.user,
+                        title="Payment Verification Failed",
+                        body=f"Payment for order #{order.track_id} could not be verified.",
+                        data={
+                            "type": "order_status_update",
+                            "order_id": str(order.id),
+                            "status": "failed",
+                            "order_status": order.status,
+                            "track_id": str(order.track_id),
+                        },
+                    )
+                except Exception as exc:
+                    print(f"Customer payment failure notification error: {exc}")
+
+        transaction.status = 'failed'
+        transaction.response_data = response_payload
+        if reference:
+            transaction.external_reference = reference
+        transaction.description = 'Order Payment Failed'
+        transaction.save()
+        return order
+
+    def _find_transaction(self, reference):
+        if not reference:
+            return None
+
+        return WalletTransaction.objects.filter(
+            external_reference=reference
+        ).select_related('order').first()
+
+    def _find_transaction_from_metadata(self, metadata):
+        transaction_ref = metadata.get('reference')
+        if transaction_ref:
+            transaction = WalletTransaction.objects.filter(
+                id=transaction_ref
+            ).select_related('order').first()
+            if transaction:
+                return transaction
+
+        order_ref = (
+            metadata.get('order_id')
+            or metadata.get('order_reference')
+            or metadata.get('reference_code')
+        )
+        if order_ref:
+            transaction = WalletTransaction.objects.filter(
+                order_id=order_ref
+            ).select_related('order').first()
+            if transaction:
+                return transaction
+
+        custom_fields = metadata.get('custom_fields') or []
+        for field in custom_fields:
+            variable_name = field.get('variable_name')
+            value = field.get('value')
+            if variable_name in {'order_id', 'order_reference'} and value:
+                transaction = WalletTransaction.objects.filter(
+                    order_id=value
+                ).select_related('order').first()
+                if transaction:
+                    return transaction
+
+        return None
+
     def post(self, request):
         data = request.data
         try:
-            reference = data.get('reference')
+            reference = data.get('reference')          # order UUID (used to find WalletTransaction)
+            trxref = data.get('trxref') or reference   # Paystack tx reference (used to verify with Paystack)
+            transaction_reference = data.get('transaction_reference')
+            trx_extist = self._find_transaction(trxref)
+            if not trx_extist:
+                trx_extist = self._find_transaction(reference)
+            if not trx_extist and transaction_reference:
+                trx_extist = WalletTransaction.objects.filter(
+                    id=transaction_reference
+                ).select_related('order').first()
+            if not trx_extist and reference:
+                trx_extist = WalletTransaction.objects.filter(
+                    order_id=reference
+                ).select_related('order').first()
 
-            # verify transaction with paytsack
+            # verify transaction with paystack using the Paystack-issued reference (trxref)
             klass = PaystackManager()
-            success, response = klass.verify_transaction(reference)
+            success, response = klass.verify_transaction(trxref)
             if not success:
-                # print(response)
+                import logging
+                logging.getLogger(__name__).error(
+                    f"[confirm-payment] paystack verify failed: trxref={trxref} reference={reference} "
+                    f"transaction_reference={transaction_reference} response={response}"
+                )
+                failed_order = self._mark_order_payment_failed(
+                    trx_extist,
+                    response_payload=response,
+                    reference=reference,
+                )
                 return bad_request_response(
-                    message="Transaction not doest exist"
+                    message="Payment verification failed",
+                    data=OrderSerializer(failed_order).data if failed_order else None,
                 )
 
             metadata = response.get('data', {}).get('metadata', {})
-            # print(json.dumps(response.get('data',{})))
-            print(response.get('data', {}).get('metadata', {}))
+            trx_extist = trx_extist or self._find_transaction_from_metadata(metadata)
             if not metadata:
+                failed_order = self._mark_order_payment_failed(
+                    trx_extist,
+                    response_payload=response,
+                    reference=reference,
+                )
                 return bad_request_response(
-                    message="Transaction doest not exist"
+                    message="Transaction does not exist",
+                    data=OrderSerializer(failed_order).data if failed_order else None,
                 )
 
             transaction_ref = metadata.get('reference')
+            if transaction_ref:
+                try:
+                    trx_extist = WalletTransaction.objects.get(id=transaction_ref)
+                except:
+                    trx_extist = trx_extist or self._find_transaction_from_metadata(metadata)
 
-            try:
-
-                trx_extist = WalletTransaction.objects.get(id=transaction_ref)
-            except:
+            if not trx_extist:
+                failed_order = self._mark_order_payment_failed(
+                    trx_extist,
+                    response_payload=response,
+                    reference=reference,
+                )
                 return bad_request_response(
-                    message="Transaction doest not exist"
+                    message="Transaction does not exist",
+                    data=OrderSerializer(failed_order).data if failed_order else None,
                 )
 
             if trx_extist.external_reference:
-                if trx_extist.external_reference != reference:
+                if trx_extist.external_reference != trxref:
+                    failed_order = self._mark_order_payment_failed(
+                        trx_extist,
+                        response_payload=response,
+                        reference=reference,
+                    )
                     return bad_request_response(
-                        message="Transaction doest not exist"
+                        message="Transaction does not exist",
+                        data=OrderSerializer(failed_order).data if failed_order else None,
                     )
 
 
             if response['data'].get('status') == 'success':
                 #  confirm the amount paid
-                amount_paid = (response['data']['amount']) / 100
-                if float(amount_paid) != float(trx_extist.amount):
+                order = trx_extist.order
+                amount_paid = round((response['data']['amount']) / 100, 2)
+                if round(float(trx_extist.amount), 2) != amount_paid:
+                    import logging
+                    logging.getLogger(__name__).error(
+                        f"[confirm-payment] amount mismatch: paid={amount_paid} expected={trx_extist.amount} "
+                        f"trxref={trxref} reference={reference} trx_id={trx_extist.id}"
+                    )
+                    failed_order = self._mark_order_payment_failed(
+                        trx_extist,
+                        response_payload=response,
+                        reference=reference,
+                    )
                     return bad_request_response(
-                        message="Transaction not doest exist. Amount paid does not match"
+                        message="Transaction does not exist. Amount paid does not match",
+                        data=OrderSerializer(failed_order).data if failed_order else None,
                     )
 
                 if trx_extist.status != 'completed':
-                    order = trx_extist.order
                     order.payment_status = Order.PAID
                     order.save()
 
                     # save order and other commission details
                     order.save_vendor_and_commision()
-                    
+
                     # Process referral reward if applicable
                     process_referral_reward(order)
 
                     trx_extist.status = "completed"
                     trx_extist.response_data = response
-                    trx_extist.external_reference = reference
+                    trx_extist.external_reference = trxref
                     trx_extist.description = 'Order Payment'
                     trx_extist.save()
 
@@ -292,6 +444,7 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                                 'type': 'new_order_notification',
                                 'data': {
                                     'order_id': str(order.id),
+                                    'track_id': str(order.track_id),
                                     'customer': {
                                         'name': order.user.full_name,
                                         'phone': order.user.phone_number
@@ -331,11 +484,15 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                         result = notification_helper.send_to_users_with_executor(
                             users=[order.user],
                             title="Payment Successful!",
-                            body=f"Your payment for Order #{order.track_id} was successful!",
+                            body=(
+                                f"Your payment for Order #{order.track_id} was successful! "
+                                f"Delivery code: {order.delivery_otp}."
+                            ),
                             data={
                                 "event": "payment_success",
                                 "order_id": str(order.id),
-                                "order_status": order.status
+                                "order_status": order.status,
+                                "delivery_code": order.delivery_otp or "",
                             }
                         )
                         print(
@@ -347,15 +504,25 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     message="Transaction processed successfully",
                     data=OrderSerializer(order).data
                 )
-
-        except:
-            return bad_request_response(
-                message='Transaction not doest exist',
-                status_code=404
+            failed_order = self._mark_order_payment_failed(
+                trx_extist,
+                response_payload=response,
+                reference=reference,
             )
-        return bad_request_response(
-            message="Transaction not doest exist"
-        )
+            return bad_request_response(
+                message="Payment failed",
+                data=OrderSerializer(failed_order).data if failed_order else None,
+            )
+
+        except Exception as e:
+            import traceback
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[confirm-payment] Unhandled exception: {e}\nrequest data: {request.data}\n{traceback.format_exc()}")
+            return bad_request_response(
+                message=f'Error processing payment: {str(e)}',
+                status_code=400
+            )
 
 
 class OrderPaymentWebhookView(generics.GenericAPIView):
@@ -450,16 +617,27 @@ class RiderViewSet(viewsets.ModelViewSet):
         if order.rider != rider:
             return bad_request_response(message="Order not found")
 
-        # Update order status
-        valid_statuses = [choice[0]
-                          for choice in Order.DELIVERY_STATUS_CHOICES]
+        order_statuses = [choice[0] for choice in Order.ORDER_STATUS_CHOICES]
+        delivery_statuses = [choice[0] for choice in Order.DELIVERY_STATUS_CHOICES]
+        valid_statuses = sorted(set(order_statuses + delivery_statuses))
         if new_status not in valid_statuses:
             return bad_request_response(
                 message=f"Invalid status: '{new_status}'. Must be one of: {', '.join(valid_statuses)}"
             )
-        old_status = order.delivery_status
-        order.delivery_status = new_status
-        order.save()
+
+        old_status = order.status
+        update_fields = ['status', 'delivery_status', 'updated_at']
+        if new_status in order_statuses:
+            order.status = new_status
+        if new_status in delivery_statuses:
+            order.delivery_status = new_status
+        if new_status == 'picked_up':
+            order.actual_pickup_time = timezone.now()
+            update_fields.append('actual_pickup_time')
+        elif new_status == 'delivered':
+            order.actual_delivery_time = timezone.now()
+            update_fields.append('actual_delivery_time')
+        order.save(update_fields=update_fields)
 
         # Broadcast status update
         try:
@@ -487,6 +665,12 @@ class RiderViewSet(viewsets.ModelViewSet):
         try:
             customer_group_name = f'customer_{order.user.id}'
             channel_layer = get_channel_layer()
+            status_message = {
+                'picked_up': 'Your rider has picked up your order.',
+                'in_transit': 'Your order is on the way.',
+                'near_delivery': 'Your rider is outside and waiting for you.',
+                'delivered': 'Your order has been delivered.',
+            }.get(order.status, 'Order status updated!')
 
             async_to_sync(channel_layer.group_send)(
                 customer_group_name,
@@ -494,32 +678,37 @@ class RiderViewSet(viewsets.ModelViewSet):
                     'type': 'order_status_update',
                     'data': {
                         'order_id': str(order.id),
-                        'status': new_status,
-                        'message': 'Order status updated!'
+                        'status': order.status,
+                        'message': status_message
                     }
                 }
             )
         except Exception as e:
             print(f"WebSocket notification to customer error: {e}")
 
-        if new_status == 'picked_up':
-            order.status = 'in_transit'
-            order.save()
+        if new_status == 'near_delivery':
             try:
-
-                async_to_sync(channel_layer.group_send)(
-                    customer_group_name,
-                    {
-                        'type': 'order_status_update',
-                        'data': {
-                            'order_id': str(order.id),
-                            'status': 'in_transit',
-                            'message': 'Order status updated!'
-                        }
+                send_order_status_update_notification(
+                    order,
+                    'near_delivery',
+                    message='Your rider is outside and waiting for you.',
+                )
+            except Exception as e:
+                print(f"Push notification to customer error: {e}")
+            try:
+                notification_helper.send_to_users_with_executor(
+                    users=[order.user],
+                    title="Your rider is outside 📍",
+                    body="Your rider is outside and waiting for you.",
+                    data={
+                        "event": "near_delivery",
+                        "type": "order_status_update",
+                        "order_id": str(order.id),
+                        "status": "near_delivery",
                     }
                 )
             except Exception as e:
-                print(f"WebSocket notification to customer error: {e}")
+                print(f"Direct near-delivery push error: {e}")
 
         return success_response(
             message=f'Order status updated to {new_status}',
@@ -583,11 +772,26 @@ class RiderViewSet(viewsets.ModelViewSet):
             else:
                 distance_type = "kilometer"
 
-            # if True:  # 500m threshold
-            # 1500m threshold
-            if distance_to_customer <= 1.5 and order.status in ['in_transit', 'picked_up']:
+            # Only mark near delivery when the rider is actually in transit
+            # and close enough to the customer's destination.
+            has_delivery_coordinates = bool(
+                order.delivery_latitude and order.delivery_longitude
+            )
+            pickup_grace_elapsed = (
+                order.actual_pickup_time and
+                timezone.now() - order.actual_pickup_time >= timedelta(minutes=3)
+            )
+
+            if (
+                has_delivery_coordinates and
+                distance_to_customer <= 0.2 and
+                order.status == 'in_transit' and
+                order.delivery_status == 'in_transit' and
+                pickup_grace_elapsed
+            ):
                 order.status = 'near_delivery'
-                order.save()
+                order.delivery_status = 'near_delivery'
+                order.save(update_fields=['status', 'delivery_status', 'updated_at'])
 
                 # Send status update
                 async_to_sync(self.channel_layer.group_send)(
@@ -605,6 +809,50 @@ class RiderViewSet(viewsets.ModelViewSet):
                         })
                     }
                 )
+
+                try:
+                    customer_group_name = f'customer_{order.user.id}'
+                    async_to_sync(self.channel_layer.group_send)(
+                        customer_group_name,
+                        {
+                            'type': 'order_status_update',
+                            'data': convert_decimals({
+                                'order_id': str(order.id),
+                                'status': 'near_delivery',
+                                'distance_to_customer': round(distance_value, 3),
+                                'distance_to_customer_type': distance_type,
+                                'estimated_arrival': self.calculate_eta(distance_value if distance_type == "kilometer" else distance_value / 1000),
+                                'estimated_arrival_type': "minutes",
+                                'message': 'Your rider is outside and waiting for you.',
+                                'updated_at': order.updated_at.isoformat()
+                            })
+                        }
+                    )
+                except Exception as e:
+                    print(f"WebSocket near-delivery notification to customer error: {e}")
+
+                try:
+                    send_order_status_update_notification(
+                        order,
+                        'near_delivery',
+                        message='Your rider is outside and waiting for you.',
+                    )
+                except Exception as e:
+                    print(f"Push near-delivery notification error: {e}")
+                try:
+                    notification_helper.send_to_users_with_executor(
+                        users=[order.user],
+                        title="Your rider is outside 📍",
+                        body="Your rider is outside and waiting for you.",
+                        data={
+                            "event": "near_delivery",
+                            "type": "order_status_update",
+                            "order_id": str(order.id),
+                            "status": "near_delivery",
+                        }
+                    )
+                except Exception as e:
+                    print(f"Direct broadcast near-delivery push error: {e}")
 
             try:
                 # Send location update
@@ -636,8 +884,9 @@ class RiderViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def request_withdrawal(self, request):
-
-        rider = self.get_object()
+        rider = Rider.objects.filter(user=request.user).first()
+        if not rider:
+            return bad_request_response(message='Rider profile not found', status_code=404)
         wallet, _ = Wallet.objects.get_or_create(user=rider.user)
 
         amount = request.data.get('amount')
@@ -658,6 +907,12 @@ class RiderViewSet(viewsets.ModelViewSet):
                 message='Withdrawal amount must be positive.'
             )
 
+        minimum_amount = get_minimum_withdrawal_for_user(request.user)
+        if amount < minimum_amount:
+            return bad_request_response(
+                message=f'Minimum withdrawal amount is NGN {minimum_amount}.'
+            )
+
         if wallet.balance < amount:
             return bad_request_response(
                 message='Insufficient balance.'
@@ -666,6 +921,7 @@ class RiderViewSet(viewsets.ModelViewSet):
         # Create a pending withdrawal transaction
         transaction = WalletTransaction.objects.create(
             wallet=wallet,
+            user=rider.user,
             amount=amount,
             transaction_type='withdrawal',
             status='pending',
@@ -683,6 +939,13 @@ class RiderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def available_order(self, request, pk=None):
         rider = self.get_object()
+        if rider.is_in_house_rider:
+            return paginate_success_response_with_serializer(
+                self.request,
+                OrderSerializer,
+                Order.objects.none(),
+                page_size=10
+            )
 
         query_location_latitude = self.request.GET.get('latitude')
         query_location_longitude = self.request.GET.get('longitude')
@@ -709,37 +972,33 @@ class RiderViewSet(viewsets.ModelViewSet):
         declined_order_ids = rider.declined_orders.values_list(
             'order_id', flat=True)
 
-        # Get all available orders
-        queryset = Order.objects.filter(
+        # Fetch candidate orders with all relations needed by is_order_visible_to_rider
+        # and by the serializer — one DB round-trip for the loop, no N+1 after.
+        candidate_qs = Order.objects.filter(
             rider=None,
             status__in=['looking_for_rider', 'awaiting_rider'],
-        ).exclude(id__in=declined_order_ids)
-        # print(queryset)
+        ).exclude(
+            id__in=declined_order_ids
+        ).exclude(
+            Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False)
+        ).select_related(
+            'vendor', 'vendor__user',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+        )
 
-        # Filter orders within 5-10km range
         nearby_orders = []
-        for order in queryset:
-            # print(rider_lat, rider_lon, order.location_latitude, order.location_longitude)
-            try:
-                distance = get_distance_between_two_location(
-                    lat1=float(rider_lat),
-                    lon1=float(rider_lon),
-                    lat2=float(order.vendor.location_latitude),
-                    lon2=float(order.vendor.location_longitude)
-                )
+        for order in candidate_qs:
+            if is_order_visible_to_rider(
+                order,
+                rider,
+                latitude=float(rider_lat),
+                longitude=float(rider_lon),
+            ):
+                nearby_orders.append(order)
 
-                # Filter orders within 5-10km range
-                if distance is not None and distance <= 10:
-                    nearby_orders.append(order)
-
-            except (ValueError, TypeError) as e:
-                print(f"Error calculating distance for order {order.id}: {e}")
-                # Skip orders with invalid coordinates
-                continue
-
-        # # Convert to queryset for pagination
-        # order_ids = [order.id for order in nearby_orders]
-        # queryset = Order.objects.filter(id__in=order_ids)
         from django.db.models import Case, When
 
         order_ids = [order.id for order in nearby_orders]
@@ -748,8 +1007,13 @@ class RiderViewSet(viewsets.ModelViewSet):
             *[When(id=pk, then=pos) for pos, pk in enumerate(order_ids)]
         )
 
-        queryset = Order.objects.filter(id__in=order_ids).order_by(
-            preserved_order).order_by('-created_at')
+        queryset = Order.objects.filter(id__in=order_ids).select_related(
+            'vendor', 'vendor__user',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+        ).order_by(preserved_order).order_by('-created_at')
 
         return paginate_success_response_with_serializer(
             self.request,
@@ -761,6 +1025,10 @@ class RiderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def accept_order(self, request, pk=None):
         rider = self.get_object()
+        if rider.is_in_house_rider:
+            return bad_request_response(
+                message="Marketplace riders receive assigned orders from admin and cannot accept public available orders."
+            )
 
         from product.models import PlatformSettings
         settings = PlatformSettings.get_settings()
@@ -775,7 +1043,18 @@ class RiderViewSet(viewsets.ModelViewSet):
 
         order_id = request.data.get('order_id')
         try:
-            order = Order.objects.get(id=order_id)
+            with transaction.atomic():
+                order = (
+                    Order.objects.select_for_update()
+                    .get(id=order_id)
+                )
+
+                if order.rider:
+                    return bad_request_response(
+                        message="Order already assigned to a rider",
+                    )
+
+                order.assign_rider(rider)
 
         except Order.DoesNotExist:
             return bad_request_response(
@@ -783,50 +1062,48 @@ class RiderViewSet(viewsets.ModelViewSet):
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        if order.rider:
-            return bad_request_response(
-                message="Order already assigned to a rider",
-            )
-
-        order.assign_rider(rider)
-
         # send push notification to customer about order acceptance
         try:
             result = notification_helper.send_to_users_with_executor(
                 users=[order.user],
-                title="Order Accepted!",
+                title="Order Accepted! ✅",
                 body=f"Your order #{str(order.track_id)} has been accepted by a rider and is being prepared for pickup.",
                 data={
                     "event": "order_accepted",
                     "order_id": str(order.id),
                     "order_status": order.status,
+                    "rider_id": str(rider.id),
+                    "rider_name": rider.user.full_name or '',
+                    "rider_phone": rider.user.phone_number or '',
                 }
             )
             print(f"Customer order acceptance notification result: {result}")
         except Exception as e:
             print(f"Customer order acceptance notification error: {e}")
 
-        # send push notification to rider about new order assignment
         try:
-            result = notification_helper.send_to_users_with_executor(
-                users=[rider.user],
-                title="New Order Assigned!",
-                body=f"You have accepted order #{str(order.track_id)}. Please proceed to the vendor to pick up the order.",
-                data={
-                    "event": "order_assigned",
-                    "order_id": str(order.id),
-                }
+            notify_rider_order_assignment(
+                order,
+                rider,
+                message=(
+                    f"You have accepted order #{str(order.track_id)}. "
+                    "Please proceed to the vendor to pick up the order."
+                ),
             )
-            print(f"Rider order acceptance notification result: {result}")
         except Exception as e:
             print(f"Rider order acceptance notification error: {e}")
+
+        try:
+            notify_order_unavailable_to_riders(order, accepted_rider=rider)
+        except Exception as e:
+            print(f"Other rider cleanup notification error: {e}")
 
 
         # send a notification to vendor about order acceptance
         try:
             result = notification_helper.send_to_users_with_executor(
                 users=[order.vendor.user],
-                title="Order Accepted by Rider!",
+                title="Order Accepted by Rider! ✅",
                 body=f"Your order #{str(order.track_id)} has been accepted by a rider and is being prepared for pickup.",
                 data={
                     "event": "order_accepted_by_rider",
@@ -859,44 +1136,6 @@ class RiderViewSet(viewsets.ModelViewSet):
         except Exception as e:
             print("WebSocket error:", e)
 
-        # Notify the rider group that the order has been accepted
-        try:
-            channel_layer = get_channel_layer()
-            rider_group_name = 'riders_group'
-
-            async_to_sync(channel_layer.group_send)(
-                rider_group_name,
-                {
-                    'type': 'order_accepted_notification',
-                    'data': {
-                        'order_id': str(order.id),
-                        'vendor': {
-                            'name': order.vendor.name,
-                            'location': {
-                                'latitude': order.vendor.location_latitude,
-                                'longitude': order.vendor.location_longitude
-                            }
-                        },
-                        'customer': {
-                            'name': order.user.full_name,
-                            'location': {
-                                'latitude': order.delivery_latitude,
-                                'longitude': order.delivery_longitude
-                            }
-                        },
-                        'rider': {
-                            'id': str(rider.id),
-                            'phone': rider.user.phone_number,
-                        },
-                        'accepted_at': timezone.now().isoformat(),
-                        'status': 'accepted',
-                        'message': 'An order has been accepted!'
-                    }
-                }
-            )
-        except Exception as e:
-            print(f"WebSocket notification to riders error: {e}")
-
         try:
             customer_group_name = f'customer_{order.user.id}'
             channel_layer = get_channel_layer()
@@ -908,7 +1147,12 @@ class RiderViewSet(viewsets.ModelViewSet):
                     'data': {
                         'order_id': str(order.id),
                         'status': 'rider_assigned',
-                        'message': 'Order status updated!'
+                        'message': f'A rider has been assigned to your order #{order.track_id}!',
+                        'rider': {
+                            'id': str(rider.id),
+                            'name': rider.user.full_name,
+                            'phone': rider.user.phone_number,
+                        },
                     }
                 }
             )
@@ -924,22 +1168,25 @@ class RiderViewSet(viewsets.ModelViewSet):
         rider = self.get_object()
         go_online = request.data.get('online', False)
 
-        if go_online:
-            rider.go_online()
-            return success_response(
-                message='Rider is now online'
-            )
-        else:
-            rider.go_offline()
-            return success_response(
-                message='Rider is now offline'
-            )
+        try:
+            if go_online:
+                rider.go_online()
+                return success_response(
+                    message='Rider is now online'
+                )
+            else:
+                rider.go_offline()
+                return success_response(
+                    message='Rider is now offline'
+                )
+        except ValueError as exc:
+            return bad_request_response(message=str(exc))
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def active_orders(self, request, pk=None):
         rider = self.get_object()
         active_orders = rider.orders.filter(
-            status__in=['confirmed', 'ready_for_pickup',
+            status__in=['rider_assigned', 'confirmed', 'ready_for_pickup',
                         'picked_up', 'in_transit', 'near_delivery']
         )
         return paginate_success_response_with_serializer(
@@ -1014,13 +1261,34 @@ class RiderViewSet(viewsets.ModelViewSet):
         rider = self.get_object()
 
         orders = Order.objects.filter(rider=rider)
+        delivered_orders = orders.filter(status='delivered')
+        date_from = request.GET.get('date_from')
+        date_to = request.GET.get('date_to')
+
+        if date_from:
+            parsed_from = parse_date(date_from)
+            if parsed_from:
+                orders = orders.filter(created_at__date__gte=parsed_from)
+                delivered_orders = delivered_orders.filter(
+                    delivered_at__date__gte=parsed_from
+                )
+
+        if date_to:
+            parsed_to = parse_date(date_to)
+            if parsed_to:
+                orders = orders.filter(created_at__date__lte=parsed_to)
+                delivered_orders = delivered_orders.filter(
+                    delivered_at__date__lte=parsed_to
+                )
+
         total_orders = orders.count()
-        total_earnings = 0
-        # total_earnings = orders.aggregate(Sum('total_cost'))['total_cost__sum']
+        total_earnings = 0 if rider.is_in_house_rider else (
+            delivered_orders.aggregate(total=Sum('rider_earning'))['total'] or 0
+        )
         total_pending_delivery = orders.filter(
-            status__in=['picked_up', 'in_transit']).count()
-        total_completed_delivery = orders.filter(
-            status__in=['delivered']).count()
+            status__in=['rider_assigned', 'confirmed', 'picked_up', 'in_transit', 'near_delivery']
+        ).count()
+        total_completed_delivery = delivered_orders.count()
         total_rejected_delivery = 0
         response = {
             'total_orders': total_orders,
@@ -1034,6 +1302,182 @@ class RiderViewSet(viewsets.ModelViewSet):
         return success_response(
             data=response
         )
+
+    def _complete_delivery(self, order: Order, rider: Rider):
+        from helpers.order_utils import calculate_rider_fare, get_distance_between_two_location
+        from wallet.models import Wallet, WalletTransaction
+        from decimal import Decimal
+
+        order.status = 'delivered'
+        order.delivery_status = 'delivered'
+        order.delivery_otp = None
+        order.delivery_otp_expiry = None
+        delivered_at = timezone.now()
+        order.delivered_at = delivered_at
+        order.actual_delivery_time = delivered_at
+
+        order.credit_vendor_earning_once(description=f"Earning from Order #{order.track_id}")
+
+        gross_earning_amount = order.calculate_rider_earning_amount()
+        try:
+            dist = 0.5
+            vendor_lat = getattr(order.vendor, 'location_latitude', None)
+            vendor_lng = getattr(order.vendor, 'location_longitude', None)
+            user_address = getattr(order, 'user_address', None)
+            if vendor_lat and vendor_lng and user_address:
+                dist = get_distance_between_two_location(
+                    float(vendor_lat),
+                    float(vendor_lng),
+                    float(user_address.latitude),
+                    float(user_address.longitude)
+                ) or 0.5
+            gross_earning_amount = max(
+                order.calculate_rider_earning_amount(),
+                Decimal(str(calculate_rider_fare(dist))),
+            )
+        except Exception as earning_error:
+            print(f"Error calculating rider earning for {order.track_id}: {earning_error}")
+
+        if rider.is_in_house_rider:
+            rider_earning_amount = Decimal('0.00')
+            order.rider_earning = rider_earning_amount
+        else:
+            # Apply platform commission to get net amount credited to rider
+            rider_earning_amount = order.calculate_net_rider_earning(gross_earning_amount)
+            order.rider_earning = rider_earning_amount
+
+            try:
+                wallet, _ = Wallet.objects.get_or_create(user=rider.user)
+                wallet.deposit(rider_earning_amount)
+
+                WalletTransaction.objects.create(
+                    wallet=wallet,
+                    user=rider.user,
+                    amount=rider_earning_amount,
+                    transaction_type='earning',
+                    status='completed',
+                    description=f"Earning from Order #{order.track_id}",
+                    order=order
+                )
+            except Exception as earning_error:
+                print(f"Error recording rider earning for {order.track_id}: {earning_error}")
+
+        order.save()
+
+        # send push notification to rider about delivery confirmation
+        try:
+            notification_helper.send_to_users_with_executor(
+                users=[rider.user],
+                title="Delivery Confirmed! 🎉",
+                body=(
+                    f"Order #{order.track_id} has been marked as delivered."
+                    if rider.is_in_house_rider
+                    else f"Order #{order.track_id} has been marked as delivered. Your earnings have been updated."
+                ),
+                data={
+                    "event": "delivery_confirmed",
+                    "order_id": str(order.id),
+                    "rider_earning": str(order.rider_earning)
+                }
+            )
+        except Exception as e:
+            print(f"Rider delivery confirmation notification error: {e}")
+
+        # send push notification to customer about delivery confirmation
+        try:
+            notification_helper.send_to_users_with_executor(
+                users=[order.user],
+                title="Your Order has been Delivered! 🎉",
+                body=f"Order #{order.track_id} has been delivered. Thank you for using our service!",
+                data={
+                    "event": "order_delivered",
+                    "type": "order_status_update",
+                    "order_id": str(order.id),
+                    "status": "delivered",
+                    "delivery_status": "delivered",
+                }
+            )
+        except Exception as e:
+            print(f"Customer delivery confirmation notification error: {e}")
+
+        # send push notification to vendor about delivery confirmation
+        try:
+            notification_helper.send_to_users_with_executor(
+                users=[order.vendor.user],
+                title="Order has been delivered ✅",
+                body=f"Order #{order.track_id} has been delivered.",
+                data={
+                    "event": "order_delivered",
+                    "order_id": str(order.id),
+                    "order_status": "delivered"
+                }
+            )
+        except Exception:
+            print()
+
+        try:
+            channel_layer = get_channel_layer()
+            vendor_group_name = f'vendor_{order.vendor.user.id}'
+            async_to_sync(channel_layer.group_send)(
+                vendor_group_name,
+                {
+                    'type': 'order_delivered_notification',
+                    'data': {
+                        'order_id': str(order.id),
+                        'status': order.status,
+                        'delivered_at': order.delivered_at.isoformat(),
+                        'rider': {
+                            'id': rider.id,
+                            'name': rider.user.get_full_name(),
+                            'phone': rider.user.phone_number
+                        }
+                    }
+                }
+            )
+        except Exception as e:
+            print("WebSocket error:", e)
+
+        try:
+            channel_layer = get_channel_layer()
+            customer_group_name = f'customer_{order.user.id}'
+            async_to_sync(channel_layer.group_send)(
+                customer_group_name,
+                {
+                    'type': 'order_status_update',
+                    'data': {
+                        'order_id': str(order.id),
+                        'track_id': str(order.track_id),
+                        'status': 'delivered',
+                        'delivery_status': 'delivered',
+                        'delivered_at': order.delivered_at.isoformat(),
+                        'message': 'Your order has been delivered. Enjoy your meal!',
+                    }
+                }
+            )
+        except Exception as e:
+            print("Customer WebSocket notification error:", e)
+
+        try:
+            channel_layer = get_channel_layer()
+            rider_group_name = f'riders_group_{rider.user.id}'
+            async_to_sync(channel_layer.group_send)(
+                rider_group_name,
+                {
+                    'type': 'order_delivered_notification',
+                    'data': {
+                        'order_id': str(order.id),
+                        'track_id': str(order.track_id),
+                        'status': 'delivered',
+                        'delivered_at': order.delivered_at.isoformat(),
+                        'rider_earning': float(order.rider_earning) if order.rider_earning else 0,
+                        'message': 'Order delivered successfully. Your earnings have been updated.',
+                    }
+                }
+            )
+        except Exception as e:
+            print("Rider WebSocket notification error:", e)
+
+        return success_response(message="Delivery code verification successful")
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def send_delivery_otp(self, request, pk=None):
@@ -1057,33 +1501,7 @@ class RiderViewSet(viewsets.ModelViewSet):
             return bad_request_response(
                 message="Invalid delivery code"
             )
-
-        # update order status to delivered
-        order.status = 'delivered'
-        order.delivery_status = 'delivered'
-        order.delivered_at = timezone.now()
-        order.save()
-        try:
-            customer_group_name = f'customer_{order.user.id}'
-            channel_layer = get_channel_layer()
-
-            async_to_sync(channel_layer.group_send)(
-                customer_group_name,
-                {
-                    'type': 'order_status_update',
-                    'data': {
-                        'order_id': str(order.id),
-                        'status': 'delivered',
-                        'message': 'Order status updated!'
-                    }
-                }
-            )
-        except Exception as e:
-            print(f"WebSocket notification to customer error: {e}")
-
-        #
-
-        return success_response(message="Delivery code verification successful")
+        return self._complete_delivery(order, rider)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def confirm_delivery(self, request, pk=None):
@@ -1108,142 +1526,7 @@ class RiderViewSet(viewsets.ModelViewSet):
                 message='Invalid OTP',
             )
 
-        order.status = 'delivered'
-        order.delivery_otp = None
-        order.delivery_otp_expiry = None
-        order.delivered_at = timezone.now()
-
-        # Calculate and Record Rider Earnings
-        from helpers.order_utils import calculate_rider_fare, get_distance_between_two_location
-        from wallet.models import Wallet, WalletTransaction
-        from decimal import Decimal
-
-        # update vendor wallet and create transaction record for vendor earning
-        vendor_wallet, _ = Wallet.objects.get_or_create(user=order.vendor.user)
-        vendor_earning = order.vendor_amount or Decimal('0.00')
-        vendor_wallet.deposit(vendor_earning)
-
-        WalletTransaction.objects.create(
-            wallet=vendor_wallet,   
-            user=order.vendor.user,
-            amount=vendor_earning,
-            transaction_type='earning',
-            status='completed',
-            description=f"Earning from Order #{order.id}",  
-            order=order
-        )
-
-        # Get delivery distance (should ideally be recorded on the order already, but fallback to calculation)
-        try:
-            # Try to get distance from order or calculate it
-            dist = 0.5
-            if order.vendor and order.user_address:
-                dist = get_distance_between_two_location(
-                    float(order.vendor.location_latitude), float(
-                        order.vendor.location_longitude),
-                    float(order.user_address.latitude), float(
-                        order.user_address.longitude)
-                ) or 0.5
-
-            rider_earning = calculate_rider_fare(dist)
-            # Assuming we added this field or will use it
-            order.rider_earning = Decimal(str(rider_earning))
-
-            # Update Wallet
-            wallet, created = Wallet.objects.get_or_create(user=rider.user)
-            wallet.deposit(Decimal(str(rider_earning)))
-
-            # Create Transaction Record
-            WalletTransaction.objects.create(
-                wallet=wallet,
-                user=rider.user,
-                amount=Decimal(str(rider_earning)),
-                transaction_type='earning',
-                status='completed',
-                description=f"Earning from delivered Order #{order.id}",
-                order=order
-            )
-        except Exception as earning_error:
-            print(f"Error recording rider earning: {earning_error}")
-
-        order.save()
-
-
-        # send push notification to rider about delivery confirmation
-        try:
-            result = notification_helper.send_to_users_with_executor(
-                users=[rider.user],
-                title="Delivery Confirmed!",
-                body=f"Order #{order.track_id} has been marked as delivered. Your earnings have been updated.",
-                data={
-                    "event": "delivery_confirmed",  
-                    "order_id": str(order.id),
-                    "rider_earning": str(order.rider_earning)
-                }
-            )
-            print(f"Rider delivery confirmation notification result: {result}")
-        except Exception as e:
-            print(f"Rider delivery confirmation notification error: {e}")
-
-        # send push notification to customer about delivery confirmation
-        try:
-            result = notification_helper.send_to_users_with_executor(
-                users=[order.user],
-                title="Your Order has been Delivered!",
-                body=f"Order #{order.track_id} has been delivered. Thank you for using our service!",
-                data={
-                    "event": "order_delivered",
-                    "order_id": str(order.id)
-                }
-            )
-            print(f"Customer delivery confirmation notification result: {result}")
-        except Exception as e:
-            print(f"Customer delivery confirmation notification error: {e}")
-
-
-        # send push notification to vendor about delivery confirmation
-        try:
-            result = notification_helper.send_to_users_with_executor(
-                users=[order.vendor.user],
-                title="Order has been delivered",
-                body=f"Order #{order.track_id} has been delivered.",
-                data={
-                    "event": "order_delivered",
-                    "order_id": str(order.id),
-                    "order_status": "delivered"
-                }
-            )
-
-        except Exception as e:
-            print()
-
-        # Send WebSocket notification to vendor
-        try:
-            channel_layer = get_channel_layer()
-            vendor_group_name = f'vendor_{order.vendor.user.id}'
-
-            async_to_sync(channel_layer.group_send)(
-                vendor_group_name,
-                {
-                    'type': 'order_delivered_notification',
-                    'data': {
-                        'order_id': str(order.id),
-                        'status': order.status,
-                        'delivered_at': order.delivered_at.isoformat(),
-                        'rider': {
-                            'id': rider.id,
-                            'name': rider.user.get_full_name(),
-                            'phone': rider.user.phone_number
-                        }
-                    }
-                }
-            )
-        except Exception as e:
-            print("WebSocket error:", e)
-
-        return success_response(
-            message='Order delivered successfully',
-        )
+        return self._complete_delivery(order, rider)
 
 
 def convert_decimals(obj):
@@ -1319,10 +1602,24 @@ class EnhancedRiderViewSet(viewsets.ModelViewSet):
             else:
                 distance_type = "kilometer"
 
-            if True:  # 500m threshold
-                # if distance_to_customer <= 0.5 and order.status == 'in_transit':  # 500m threshold
+            has_delivery_coordinates = bool(
+                order.delivery_latitude and order.delivery_longitude
+            )
+            pickup_grace_elapsed = (
+                order.actual_pickup_time and
+                timezone.now() - order.actual_pickup_time >= timedelta(minutes=3)
+            )
+
+            if (
+                has_delivery_coordinates and
+                distance_to_customer <= 0.2 and
+                order.status == 'in_transit' and
+                order.delivery_status == 'in_transit' and
+                pickup_grace_elapsed
+            ):
                 order.status = 'near_delivery'
-                order.save()
+                order.delivery_status = 'near_delivery'
+                order.save(update_fields=['status', 'delivery_status', 'updated_at'])
 
                 # Send status update
                 async_to_sync(self.channel_layer.group_send)(
@@ -1624,31 +1921,24 @@ class WebSocketSimulationView(generics.GenericAPIView):
 
 
 class RiderOrderDetailView(generics.GenericAPIView):
-    # permission_classes = [IsAuthenticated]
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, order_id):
-        # user = request.user
-
-        # if not hasattr(user, 'rider'):
-        #     return bad_request_response(message="You are not a rider.")
-
-        # rider = user.rider
-
         try:
-            order = Order.objects.get(id=order_id)
+            order = (
+                Order.objects
+                .select_related('vendor__user', 'user')
+                .prefetch_related(
+                    'items__product__productimage_set',
+                    'items__variant_selections',
+                )
+                .get(id=order_id)
+            )
         except Order.DoesNotExist:
-            return bad_request_response(message="Order not found or not assigned to you.", status_code=404)
+            return bad_request_response(message="Order not found.", status_code=404)
 
-        serializer = OrderSerializer(
-            order,
-            context={
-                'request': request,
-                'addition_serializer_data': {
-                    'rider_order_details': True
-                }
-            }
-        )
+        from .serializers import RiderOrderDetailSerializer
+        serializer = RiderOrderDetailSerializer(order)
         return success_response(data=serializer.data)
 
 
@@ -1716,7 +2006,18 @@ class UploadRiderDocumentView(generics.GenericAPIView):
                         continue
                     try:
                         if doc_type == 'profile_photo':
-                            setattr(rider.user, 'profile_image', image_file)
+                            from helpers.backblaze import upload_to_backblaze
+                            import uuid, os
+                            ext = os.path.splitext(image_file.name)[1]
+                            filename = f"rider_profiles/{rider.user.id}_{uuid.uuid4()}{ext}"
+                            upload_result = upload_to_backblaze(image_file, filename)
+                            if upload_result and upload_result.get('downloadUrl'):
+                                rider.user.profile_image_url = upload_result['downloadUrl']
+                            else:
+                                failed_documents.append({
+                                    'document_type': doc_type,
+                                    'reason': 'Failed to upload profile photo'
+                                })
                         else:
                             setattr(rider, field_name, image_file)
                             uploaded_documents.append(doc_type)

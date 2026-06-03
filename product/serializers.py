@@ -1,6 +1,8 @@
 from rest_framework import serializers
+from decimal import Decimal
 from vendor.serializers import VendorSerializer
-from .models import ProductVariantCategory, UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
+from .models import DeliveryZone, ProductVariantCategory, UserFavoriteVendor, Order, OrderItem, Product, Rating, ProductImage, UserFavoriteVendor
+from .promo_models import PromoUsage
 
 
 
@@ -21,10 +23,19 @@ class BuyerProductSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_discounted_price(self, obj):
-        return obj.get_discounted_price()
+        return float(obj.get_discounted_price_with_service_charge())
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['price'] = float(instance.get_price_with_service_charge())
+        data['discounted_price'] = float(instance.get_discounted_price_with_service_charge())
+        data['service_charge'] = float(instance.get_service_charge())
+        data['base_price'] = float(instance.price)
+        return data
     
     def get_images(self,obj):
-        return ProductImageSerializerClass(obj.productimage_set.all(),many=True).data
+        images = obj.productimage_set.filter(is_active=True).exclude(image_url='')
+        return ProductImageSerializerClass(images, many=True).data
         
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -44,19 +55,68 @@ class OrderSerializer(serializers.ModelSerializer):
     total_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     total_commission = serializers.SerializerMethodField()
     whole_price = serializers.SerializerMethodField()
+    promo_discount_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     payment_status = serializers.ChoiceField(choices=Order.PAYMENT_STATUS_CHOICES)
+    delivery_zone = serializers.SerializerMethodField()
+    promo = serializers.SerializerMethodField()
+
+    def get_promo(self, obj):
+        promo = obj.promo_code
+        if not promo:
+            return None
+        return {
+            'id': str(promo.id),
+            'code': promo.code,
+            'promo_type': promo.promo_type,
+            'promo_type_display': promo.get_promo_type_display(),
+        }
     
     def get_total_commission(self, obj):
         """Get the total commission for the order."""
-        return float(obj.calculate_total_commission())
+        prefetched_items = None
+        if hasattr(obj, '_prefetched_objects_cache') and 'items' in obj._prefetched_objects_cache:
+            prefetched_items = list(obj.items.all())
+        return float(obj.calculate_total_commission(prefetched_items=prefetched_items))
     
     def get_whole_price(self, obj):
-        """Get the complete price: total_amount + total_commission + delivery_fee."""
+        """Get the final payable price shown to the customer.
+        total_amount already includes commission (stored as price_with_commission at purchase).
+        service_fee is not added here — commission IS the service fee baked into product prices.
+        """
         from decimal import Decimal
         total_amount = float(obj.total_amount or Decimal('0.00'))
-        total_commission = float(obj.calculate_total_commission())
         delivery_fee = float(obj.delivery_fee or Decimal('0.00'))
-        return float(total_amount + total_commission + delivery_fee) 
+        promo_discount_amount = float(obj.promo_discount_amount or Decimal('0.00'))
+        return float(max(0.0, total_amount + delivery_fee - promo_discount_amount))
+
+    def get_delivery_zone(self, obj):
+        latitude = obj.delivery_latitude or obj.location_latitude
+        longitude = obj.delivery_longitude or obj.location_longitude
+        if latitude is None or longitude is None:
+            return None
+
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+
+        zones = (self.context or {}).get('active_delivery_zones')
+        if zones is None:
+            zone = DeliveryZone.get_zone_for_location(lat, lng)
+        else:
+            zone = next((candidate for candidate in zones if candidate.contains_location(lat, lng)), None)
+
+        if not zone:
+            return None
+
+        return {
+            "id": str(zone.id),
+            "name": zone.name,
+            "fixed_fee": float(zone.fixed_fee),
+            "second_item_fee": float(zone.second_item_fee),
+            "additional_item_fee": float(zone.additional_item_fee),
+        }
 
     class Meta:
         model = Order
@@ -66,8 +126,10 @@ class OrderSerializer(serializers.ModelSerializer):
             'status', 
             'total_amount',
             'total_commission',
-            'whole_price', 
-            'payment_status', 
+            'whole_price',
+            'promo_discount_amount',
+            'promo',
+            'payment_status',
             'payment_method',
             'items',  
             'note',
@@ -80,7 +142,10 @@ class OrderSerializer(serializers.ModelSerializer):
             "location_latitude",
             "location_longitude",
             "delivery_status",
+            "delivery_zone",
             "delivered_at",
+            "pickup_confirmed_at",
+            "pickup_confirmed_by",
             'created_at', 
             'updated_at'
         ]
@@ -116,96 +181,116 @@ class OrderSerializer(serializers.ModelSerializer):
                 order=order,
                 product=product,
                 quantity=item_data['quantity'],
-                price=product.price
+                price=product.get_price_with_commission()
             )
 
         order.update_total_amount()
         return order
 
 
+    def _compute_rider_display_earning(self, instance):
+        if instance.rider and instance.rider.is_in_house_rider:
+            return 0.0
+        return float(instance.calculate_net_rider_earning())
+
+    def _order_item_pricing(self, product, unit_price, quantity):
+        vendor_unit_price = Decimal(str(getattr(product, 'price', 0) or 0))
+        customer_unit_price = Decimal(str(unit_price or 0))
+        platform_unit_commission = max(customer_unit_price - vendor_unit_price, Decimal('0.00'))
+        vendor_unit_after_commission = customer_unit_price - platform_unit_commission
+        quantity_decimal = Decimal(str(quantity or 0))
+
+        return {
+            'vendor_set_price': float(vendor_unit_price),
+            'customer_unit_price': float(customer_unit_price),
+            'platform_unit_commission': float(platform_unit_commission),
+            'vendor_unit_price_after_commission': float(vendor_unit_after_commission),
+            'customer_total_price': float(customer_unit_price * quantity_decimal),
+            'vendor_total_after_commission': float(vendor_unit_after_commission * quantity_decimal),
+            'platform_total_commission': float(platform_unit_commission * quantity_decimal),
+        }
+
     def to_representation(self, instance: Order):
         rep = super().to_representation(instance)
         context = self.context or {}
 
-        # Prefetch all related objects in queryset for performance
-        # items, product, productimage_set, variant_categories, variant_selections, variant, variant__category
-        grouped_items = {}
-        # Use the prefetched items (should be prefetched in queryset)
-        items = list(getattr(instance, 'items').all() if hasattr(instance, 'items') else [])
-        # if context.get("full_items"):
+        # Use prefetched relations — no extra DB hits when queryset has prefetch_related
+        items_list = []
+        items = list(instance.items.all())
         for item in items:
             product = item.product
-            # Prefetch images and variant categories
-            product_images = list(getattr(product, 'productimage_set', []).all()) if hasattr(product, 'productimage_set') else []
-            variant_categories = list(getattr(product, 'variant_categories', []).all()) if hasattr(product, 'variant_categories') else []
-            # Prefetch variant selections
-            variant_selections = list(getattr(item, 'variant_selections', []).all()) if hasattr(item, 'variant_selections') else []
+            product_images = list(product.productimage_set.filter(is_active=True).exclude(image_url=''))
+            variant_selections = list(item.variant_selections.all())
 
             if product.parent:
                 parent = product.parent
-                parent_id = str(parent.id)
-                parent_images = list(getattr(parent, 'productimage_set', []).all()) if hasattr(parent, 'productimage_set') else []
-                if parent_id not in grouped_items:
-                    grouped_items[parent_id] = {
-                        'product': {
-                            'id': parent.id,
-                            'name': parent.name,
-                            'price': float(parent.price),
-                            'quantity': 0,
-                            'images': ProductImageSerializerClass(parent_images, many=True).data,
-                        },
-                        'quantity': 0,
-                        'variants': []
-                    }
-                grouped_items[parent_id]['variants'].append({
-                    'id': product.id,
-                    'variant_category_name': (
-                        variant_categories[0].category_name if variant_categories else None
-                    ),
-                    'name': product.name,
-                    'price': float(product.price),
+                parent_images = list(parent.productimage_set.filter(is_active=True).exclude(image_url=''))
+                variant_categories = list(product.productvariantcategory_set.all())
+                items_list.append({
+                    'product': {
+                        'id': parent.id,
+                        'name': parent.name,
+                        'price': float(item.price),
+                        'vendor_set_price': float(product.price or 0),
+                        'images': ProductImageSerializerClass(parent_images, many=True).data,
+                    },
+                    'price': float(item.price),
+                    'unit_price': float(item.price),
                     'quantity': item.quantity,
-                    'images': ProductImageSerializerClass(product_images, many=True).data,
+                    **self._order_item_pricing(product, item.price, item.quantity),
+                    'variants': [{
+                        'id': product.id,
+                        'variant_category_name': (
+                            variant_categories[0].category_name if variant_categories else None
+                        ),
+                        'name': product.name,
+                        'price': float(item.price),
+                        'quantity': item.quantity,
+                        **self._order_item_pricing(product, item.price, item.quantity),
+                        'images': ProductImageSerializerClass(product_images, many=True).data,
+                    }],
                 })
             else:
-                product_id = str(product.id)
-                if product_id not in grouped_items:
-                    grouped_items[product_id] = {
-                        'product': {
-                            'id': product.id,
-                            'name': product.name,
-                            'price': float(product.price),
-                            'images': ProductImageSerializerClass(product_images, many=True).data,
-                        },
-                        'quantity': item.quantity,
-                        'variants': []
-                    }
-                    for variant_selection in variant_selections:
-                        variant_obj = variant_selection.variant
-                        grouped_items[product_id]['variants'].append({
-                            'id': str(variant_obj.id),
-                            'variant_category_name': getattr(variant_obj.category, 'category_name', None),
-                            'name': variant_obj.name,
-                            'price': float(variant_selection.price_at_purchase),
-                            'quantity': variant_selection.quantity,
-                        })
-                else:
-                    grouped_items[product_id]['quantity'] += item.quantity
+                variants_data = []
+                for variant_selection in variant_selections:
+                    variant_obj = variant_selection.variant
+                    variants_data.append({
+                        'id': str(variant_obj.id),
+                        'variant_category_name': getattr(variant_obj.category, 'category_name', None),
+                        'name': variant_obj.name,
+                        'price': float(variant_selection.price_at_purchase),
+                        'quantity': variant_selection.quantity,
+                        **self._order_item_pricing(
+                            variant_obj,
+                            variant_selection.price_at_purchase,
+                            variant_selection.quantity,
+                        ),
+                    })
+                items_list.append({
+                    'product': {
+                        'id': product.id,
+                        'name': product.name,
+                        'price': float(item.price),
+                        'vendor_set_price': float(product.price or 0),
+                        'images': ProductImageSerializerClass(product_images, many=True).data,
+                    },
+                    'price': float(item.price),
+                    'unit_price': float(item.price),
+                    'quantity': item.quantity,
+                    **self._order_item_pricing(product, item.price, item.quantity),
+                    'variants': variants_data,
+                })
 
-        rep['items'] = list(grouped_items.values())
-        # else:
-        #     # Default detailed items representation
-        #     rep['items'] = [str(item.id) for item in items]
+        rep['items'] = items_list
 
-        # Optional: Include delivery/user/vendor info
-        if context.get('include_delivery_info'): 
+        if context.get('include_delivery_info'):
             rep['user'] = {
                 'id': instance.user.id,
                 'full_name': instance.user.full_name,
                 'first_name': instance.user.first_name,
                 'last_name': instance.user.last_name,
                 'email': instance.user.email,
-               'phone_number': instance.user.phone_number,
+                'phone_number': instance.user.phone_number,
             } if instance.user else None
 
             rep['rider'] = {
@@ -214,6 +299,7 @@ class OrderSerializer(serializers.ModelSerializer):
                 'first_name': instance.rider.user.first_name,
                 'last_name': instance.rider.user.last_name,
                 'email': instance.rider.user.email,
+                'phone_number': instance.rider.user.phone_number,
             } if instance.rider else None
 
             rep['vendor'] = {
@@ -229,9 +315,381 @@ class OrderSerializer(serializers.ModelSerializer):
                 'phone_number': instance.vendor.phone_number,
             } if instance.vendor else None
 
-        # Remove DB updates from serialization for speed
-        rep['total_amount'] = float(instance.total_amount) + float(instance.calculate_total_commission()) + float(instance.delivery_fee or 0)
+        rep['items_total'] = float(instance.total_amount or 0)
+        rep['service_fee'] = 0
+        rep['promo_discount_amount'] = float(instance.promo_discount_amount or 0)
+        rep['delivery_fee'] = float(instance.delivery_fee or 0)
+        rep['total_amount'] = self.get_whole_price(instance)
+        rep['rider_display_earning'] = self._compute_rider_display_earning(instance)
+
+        from django.utils import timezone as tz
+        now = tz.now()
+        estimated_pickup_time = None
+        estimated_dropoff_time = None
+        if instance.actual_pickup_time:
+            estimated_pickup_time = instance.actual_pickup_time.isoformat()
+        elif instance.new_estimated_delivery_time:
+            half_duration = instance.new_estimated_delivery_time / 2
+            estimated_pickup_time = (now + half_duration).isoformat()
+        if instance.actual_delivery_time:
+            estimated_dropoff_time = instance.actual_delivery_time.isoformat()
+        elif instance.new_estimated_delivery_time:
+            estimated_dropoff_time = (now + instance.new_estimated_delivery_time).isoformat()
+        rep['estimated_pickup_time'] = estimated_pickup_time
+        rep['estimated_dropoff_time'] = estimated_dropoff_time
+        rep['pickup_confirmed_by'] = (
+            {
+                'id': str(instance.pickup_confirmed_by_id),
+                'name': instance.get_pickup_confirmed_by_name(),
+                'email': instance.pickup_confirmed_by.email,
+            }
+            if instance.pickup_confirmed_by_id else None
+        )
+
+        if context.get('marketplace_staff_limited'):
+            vendor = instance.vendor
+            vendor_data = None
+            if vendor:
+                marketplace = vendor.marketplace_set.first()
+                vendor_data = {
+                    'id': str(vendor.id),
+                    'name': vendor.name,
+                    'email': vendor.email,
+                    'phone_number': vendor.phone_number,
+                    'profile_image': vendor.thumbnail_url or vendor.logo_url or vendor.user.get_profile_image(),
+                    'marketplace': (
+                        {
+                            'id': str(marketplace.id),
+                            'name': marketplace.name,
+                        }
+                        if marketplace else None
+                    ),
+                }
+            limited_items = []
+            for item in items_list:
+                limited_item = {
+                    'product': {
+                        'id': item['product']['id'],
+                        'name': item['product']['name'],
+                        'vendor_set_price': item['product'].get('vendor_set_price'),
+                        'images': item['product'].get('images', []),
+                    },
+                    'quantity': item['quantity'],
+                    'vendor_set_price': item.get('vendor_set_price'),
+                    'vendor_total_after_commission': item.get('vendor_total_after_commission'),
+                    'variants': [
+                        {
+                            'id': variant.get('id'),
+                            'variant_category_name': variant.get('variant_category_name'),
+                            'name': variant.get('name'),
+                            'quantity': variant.get('quantity'),
+                            'vendor_set_price': variant.get('vendor_set_price'),
+                            'vendor_total_after_commission': variant.get('vendor_total_after_commission'),
+                        }
+                        for variant in item.get('variants', [])
+                    ],
+                }
+                limited_items.append(limited_item)
+
+            return {
+                'id': rep.get('id'),
+                'track_id': rep.get('track_id'),
+                'items': limited_items,
+                'vendor': vendor_data,
+                'actual_pickup_time': rep.get('actual_pickup_time'),
+                'estimated_pickup_time': rep.get('estimated_pickup_time'),
+                'pickup_confirmed_at': rep.get('pickup_confirmed_at'),
+                'pickup_confirmed_by': rep.get('pickup_confirmed_by'),
+                'status': rep.get('status'),
+                'delivery_status': rep.get('delivery_status'),
+                'created_at': rep.get('created_at'),
+                'updated_at': rep.get('updated_at'),
+            }
+
         return rep
+
+
+class AdminOrderListSerializer(serializers.ModelSerializer):
+    total_amount = serializers.SerializerMethodField()
+    delivery_fee = serializers.SerializerMethodField()
+    delivery_zone = serializers.SerializerMethodField()
+    customer = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
+    rider = serializers.SerializerMethodField()
+    picked_up_by = serializers.SerializerMethodField()
+    pickup_time = serializers.SerializerMethodField()
+    vendor_item_total = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = [
+            'id',
+            'track_id',
+            'status',
+            'delivery_status',
+            'address',
+            'total_amount',
+            'delivery_fee',
+            'delivery_zone',
+            'customer',
+            'vendor',
+            'rider',
+            'picked_up_by',
+            'pickup_time',
+            'vendor_item_total',
+            'items',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_items(self, obj):
+        items = list(obj.items.all())
+        result = []
+        for item in items:
+            product = item.product
+            primary_image = None
+            if product:
+                imgs = list(product.productimage_set.filter(is_active=True).exclude(image_url='').order_by('-is_primary'))
+                if imgs:
+                    primary_image = imgs[0].get_image_url()
+            result.append({
+                'id': str(item.id),
+                'name': getattr(product, 'name', '') if product else '',
+                'image': primary_image,
+                'quantity': item.quantity,
+                'vendor_price': float(getattr(product, 'price', 0) or 0) if product else 0,
+            })
+        return result
+
+    def _money(self, value):
+        return float(value or 0)
+
+    def _serialize_user(self, user):
+        if not user:
+            return None
+        return {
+            'id': str(user.id),
+            'name': user.full_name or f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            'email': user.email,
+            'phone_number': user.phone_number,
+            'profile_image': user.get_profile_image(),
+        }
+
+    def _serialize_zone(self, zone):
+        if not zone:
+            return None
+        return {
+            'id': str(zone.id),
+            'name': zone.name,
+            'fixed_fee': float(zone.fixed_fee),
+            'second_item_fee': float(zone.second_item_fee),
+            'additional_item_fee': float(zone.additional_item_fee),
+        }
+
+    def get_total_amount(self, obj):
+        if (self.context or {}).get('marketplace_staff_limited'):
+            return self.get_vendor_item_total(obj)
+        return self._money(obj.total_amount) + self._money(obj.delivery_fee) - self._money(obj.promo_discount_amount)
+
+    def get_delivery_fee(self, obj):
+        return self._money(obj.delivery_fee)
+
+    def get_delivery_zone(self, obj):
+        latitude = obj.delivery_latitude or obj.location_latitude
+        longitude = obj.delivery_longitude or obj.location_longitude
+        if latitude is None or longitude is None:
+            return None
+
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+
+        zones = (self.context or {}).get('active_delivery_zones')
+        if zones is None:
+            zone = DeliveryZone.get_zone_for_location(lat, lng)
+        else:
+            zone = next((candidate for candidate in zones if candidate.contains_location(lat, lng)), None)
+        return self._serialize_zone(zone)
+
+    def get_customer(self, obj):
+        return self._serialize_user(obj.user)
+
+    def get_vendor(self, obj):
+        vendor = obj.vendor
+        if not vendor:
+            return None
+        marketplace = vendor.marketplace_set.first()
+        return {
+            'id': str(vendor.id),
+            'name': vendor.name or self._serialize_user(vendor.user).get('name'),
+            'email': getattr(vendor, 'email', '') or getattr(vendor.user, 'email', ''),
+            'phone_number': getattr(vendor, 'phone_number', '') or getattr(vendor.user, 'phone_number', ''),
+            'profile_image': vendor.thumbnail_url or vendor.logo_url or vendor.user.get_profile_image(),
+            'category': (
+                {
+                    'id': str(vendor.category_id),
+                    'name': vendor.category.name,
+                }
+                if vendor.category_id else None
+            ),
+            'marketplace': (
+                {
+                    'id': str(marketplace.id),
+                    'name': marketplace.name,
+                }
+                if marketplace else None
+            ),
+        }
+
+    def get_rider(self, obj):
+        if not obj.rider:
+            return None
+        user_data = self._serialize_user(obj.rider.user)
+        return {
+            'id': str(obj.rider.id),
+            **user_data,
+        }
+
+    def get_picked_up_by(self, obj):
+        if not obj.pickup_confirmed_by_id:
+            return None
+        return {
+            'id': str(obj.pickup_confirmed_by_id),
+            'name': obj.get_pickup_confirmed_by_name(),
+            'email': obj.pickup_confirmed_by.email,
+        }
+
+    def get_pickup_time(self, obj):
+        return obj.pickup_confirmed_at or obj.actual_pickup_time or obj.estimated_pickup_time
+
+    def get_vendor_item_total(self, obj):
+        if obj.vendor_amount:
+            return self._money(obj.vendor_amount)
+        try:
+            return float(obj.calculate_vendor_settlement_amount())
+        except Exception:
+            return 0.0
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        if not (self.context or {}).get('marketplace_staff_limited'):
+            return rep
+        return {
+            'id': rep.get('id'),
+            'track_id': rep.get('track_id'),
+            'status': rep.get('status'),
+            'delivery_status': rep.get('delivery_status'),
+            'total_amount': rep.get('vendor_item_total'),
+            'vendor_item_total': rep.get('vendor_item_total'),
+            'vendor': rep.get('vendor'),
+            'items': rep.get('items'),
+            'picked_up_by': rep.get('picked_up_by'),
+            'pickup_time': rep.get('pickup_time'),
+            'created_at': rep.get('created_at'),
+            'updated_at': rep.get('updated_at'),
+        }
+
+
+class AdminPromoOrderSerializer(serializers.ModelSerializer):
+    order_id = serializers.SerializerMethodField()
+    track_id = serializers.SerializerMethodField()
+    created_at = serializers.DateTimeField(source='used_at')
+    customer = serializers.SerializerMethodField()
+    vendor = serializers.SerializerMethodField()
+    promo = serializers.SerializerMethodField()
+    order_status = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
+    items_total = serializers.SerializerMethodField()
+    delivery_fee = serializers.SerializerMethodField()
+    paid_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PromoUsage
+        fields = [
+            'id',
+            'order_id',
+            'track_id',
+            'created_at',
+            'customer',
+            'vendor',
+            'promo',
+            'order_status',
+            'payment_status',
+            'items_total',
+            'delivery_fee',
+            'original_amount',
+            'discount_amount',
+            'final_amount',
+            'paid_amount',
+            'distance_at_usage',
+        ]
+
+    def _money(self, value):
+        return float(value or 0)
+
+    def _serialize_user(self, user):
+        if not user:
+            return None
+        return {
+            'id': str(user.id),
+            'name': user.full_name or f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            'email': user.email,
+            'phone_number': user.phone_number,
+        }
+
+    def get_order_id(self, obj):
+        return str(obj.order_id)
+
+    def get_track_id(self, obj):
+        return getattr(obj.order, 'track_id', None)
+
+    def get_customer(self, obj):
+        return self._serialize_user(obj.user or getattr(obj.order, 'user', None))
+
+    def get_vendor(self, obj):
+        vendor = getattr(obj.order, 'vendor', None)
+        if not vendor:
+            return None
+        return {
+            'id': str(vendor.id),
+            'name': vendor.name,
+            'email': getattr(vendor, 'email', ''),
+            'phone_number': getattr(vendor, 'phone_number', ''),
+        }
+
+    def get_promo(self, obj):
+        promo = obj.promo
+        return {
+            'id': str(promo.id),
+            'code': promo.code,
+            'type': promo.promo_type,
+            'type_display': promo.get_promo_type_display(),
+            'value': float(promo.value or 0),
+        }
+
+    def get_order_status(self, obj):
+        return getattr(obj.order, 'status', None)
+
+    def get_payment_status(self, obj):
+        return getattr(obj.order, 'payment_status', None)
+
+    def get_items_total(self, obj):
+        return self._money(getattr(obj.order, 'total_amount', 0))
+
+    def get_delivery_fee(self, obj):
+        return self._money(getattr(obj.order, 'delivery_fee', 0))
+
+    def get_paid_amount(self, obj):
+        order = obj.order
+        return max(
+            0.0,
+            self._money(getattr(order, 'total_amount', 0)) +
+            self._money(getattr(order, 'delivery_fee', 0)) -
+            self._money(getattr(order, 'promo_discount_amount', 0))
+        )
 
 
 class CreateOrderSerializer(serializers.Serializer): 
@@ -310,49 +768,68 @@ class PromoCodeSerializer(serializers.ModelSerializer):
             'validation_message',
         ]
         read_only_fields = ['id', 'code', 'is_active', 'is_automatic']
-    
-    def get_is_valid(self, obj):
-        """Check if the promo code is currently valid based on context."""
+
+    def _validation_context(self):
         request = self.context.get('request')
         user = request.user if request and request.user.is_authenticated else None
-        
-        # Get optional validation context from the request
+
         order_value = float(request.query_params.get('order_value', 0)) if request else 0
         distance = float(request.query_params.get('distance', 0)) if request else None
         vendor_id = request.query_params.get('vendor_id') if request else None
-        
+
         vendor = None
         if vendor_id:
             from account.models import Vendor
             vendor = Vendor.objects.filter(id=vendor_id).first()
+
+        category_ids = []
+        if request:
+            for key in ('category_id', 'category_ids'):
+                values = request.query_params.getlist(key)
+                for value in values:
+                    category_ids.extend([item.strip() for item in str(value).split(',') if item.strip()])
+
+            product_ids = []
+            for key in ('product_id', 'product_ids'):
+                values = request.query_params.getlist(key)
+                for value in values:
+                    product_ids.extend([item.strip() for item in str(value).split(',') if item.strip()])
+
+            if product_ids:
+                try:
+                    from product.models import Product
+                    category_ids.extend(
+                        Product.objects.filter(id__in=product_ids)
+                        .exclude(system_category_id__isnull=True)
+                        .values_list('system_category_id', flat=True)
+                    )
+                except Exception:
+                    pass
+
+        return user, order_value, distance, vendor, category_ids
+    
+    def get_is_valid(self, obj):
+        """Check if the promo code is currently valid based on context."""
+        user, order_value, distance, vendor, category_ids = self._validation_context()
         
         is_valid, message = obj.is_valid_for_calculation(
             user=user,
             order_value=order_value,
             distance=distance,
-            vendor=vendor
+            vendor=vendor,
+            categories=category_ids,
         )
         return is_valid
     
     def get_validation_message(self, obj):
         """Get validation message for the promo code."""
-        request = self.context.get('request')
-        user = request.user if request and request.user.is_authenticated else None
-        
-        # Get optional validation context from the request
-        order_value = float(request.query_params.get('order_value', 0)) if request else 0
-        distance = float(request.query_params.get('distance', 0)) if request else None
-        vendor_id = request.query_params.get('vendor_id') if request else None
-        
-        vendor = None
-        if vendor_id:
-            from account.models import Vendor
-            vendor = Vendor.objects.filter(id=vendor_id).first()
+        user, order_value, distance, vendor, category_ids = self._validation_context()
         
         is_valid, message = obj.is_valid_for_calculation(
             user=user,
             order_value=order_value,
             distance=distance,
-            vendor=vendor
+            vendor=vendor,
+            categories=category_ids,
         )
         return message

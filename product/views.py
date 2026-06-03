@@ -1,7 +1,36 @@
 # --- New View: CustomerCreateOrderWithVariantsView ---
 
-from decimal import Decimal
+from collections import Counter
+from decimal import Decimal, ROUND_HALF_UP
 import traceback
+
+
+def resolve_validation_error_message(error):
+    detail = getattr(error, 'detail', error)
+
+    if isinstance(detail, (list, tuple)):
+        if not detail:
+            return "Invalid request."
+        return resolve_validation_error_message(detail[0])
+
+    if isinstance(detail, dict):
+        if not detail:
+            return "Invalid request."
+        first_value = next(iter(detail.values()))
+        return resolve_validation_error_message(first_value)
+
+    return str(detail)
+
+
+def validate_vendor_accepting_orders(vendor):
+    if not vendor.is_active:
+        raise ValidationError("This vendor is currently unavailable.")
+
+    if vendor.approval_status != 'approved':
+        raise ValidationError("This vendor is currently unavailable.")
+
+    if not vendor.is_currently_open():
+        raise ValidationError(vendor.get_closed_message())
 from helpers.paystack import PaystackManager
 from helpers.websocket_notification import send_order_accepted_notification_customer
 from rest_framework import generics
@@ -9,31 +38,143 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from drf_yasg import openapi
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from django.db.models import F,Q, Avg,Sum, Count
+from django.db.models import F, Q, Avg, Count, Prefetch
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
-from account.models import Address, User, Vendor, VendorRating,VendorIssueReporting
+from account.models import Address, Vendor, VendorRating,VendorIssueReporting
 from account.serializers import VendorIssueReportSerializer, VendorRatingSerializer
 from helpers.order_utils import apply_promo_code, calculate_delivery_fee, get_distance_between_two_location, calculate_rider_fare
+from helpers.vendor_discovery import (
+    approved_vendor_queryset,
+    apply_vendor_search,
+    local_vendor_queryset,
+    nearest_first_vendors,
+    resolve_request_coordinates,
+)
 from product.promo_models import PromoCode
 from product.serializers import CreateOrderSerializer, FavoriteSerializer, FavoriteVendorSerializer, OrderSerializer, PromoCodeSerializer, RatingSerializer
 from vendor.models import MarketPlace
-from vendor.serializers import ProductSerializer, SystemCategorySerializer, VendorSerializer
+from vendor.serializers import BuyerVendorProductSerializer, ProductSerializer, SystemCategorySerializer, VendorSerializer
 from wallet.models import WalletTransaction
-from .models import DeliveryFee, UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
+from .models import DeliveryFee, PlatformSettings, UserFavoriteVendor, Order, OrderItem, ProductImage, Rating, SystemCategory, Product, UserFavoriteVendor
+from account.models import Notification
 from helpers.response.response_format import paginate_success_response_with_serializer,internal_server_error_response, success_response, bad_request_response
 from drf_yasg.utils import swagger_auto_schema
 from helpers.push_notification import notification_helper,send_order_payment_success_notification
 from wallet.models import Wallet
 from rest_framework.exceptions import NotFound
 
+_PRODUCT_SELECT_RELATED = ['vendor__category', 'system_category', 'parent']
+_PRODUCT_PREFETCH_RELATED = [
+    'productimage_set',
+    'parent__productimage_set',
+    'productvariantcategory_set__variants',
+    'variants',
+    'ratings',
+]
+
+
+def _positive_item_quantity(value, *, label="Quantity"):
+    try:
+        quantity = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError(f"{label} must be a valid quantity.")
+    if quantity <= 0:
+        raise ValidationError(f"{label} must be greater than zero.")
+    return quantity
+
+
+def _is_stock_managed_product(product):
+    category = (
+        getattr(product, 'system_category', None)
+        or getattr(getattr(product, 'parent', None), 'system_category', None)
+        or getattr(getattr(product, 'vendor', None), 'category', None)
+    )
+    return bool(category and getattr(category, 'is_stock', False))
+
+
+def reserve_order_stock(product_quantities=None, variant_quantities=None):
+    """
+    Atomically reserve stock for stock-managed categories.
+
+    Non-stock categories keep their current behavior, so regular food vendors with
+    stock=0 are not accidentally blocked.
+    """
+    product_quantities = Counter(product_quantities or {})
+    variant_quantities = Counter(variant_quantities or {})
+
+    product_ids = [product_id for product_id, quantity in product_quantities.items() if quantity > 0]
+    products = {
+        product.id: product
+        for product in Product.objects.select_for_update().filter(id__in=product_ids)
+    }
+
+    for product_id, quantity in product_quantities.items():
+        if quantity <= 0:
+            continue
+        product = products.get(product_id)
+        if not product:
+            raise ValidationError("One of the selected products is no longer available.")
+        if not _is_stock_managed_product(product):
+            continue
+        if product.stock < quantity:
+            raise ValidationError(
+                f"{product.name} has only {product.stock} unit(s) left in stock."
+            )
+
+    for product_id, quantity in product_quantities.items():
+        product = products.get(product_id)
+        if product and quantity > 0 and _is_stock_managed_product(product):
+            Product.objects.filter(id=product.id).update(
+                stock=F('stock') - quantity,
+                purchases=F('purchases') + quantity,
+            )
+
+    if not variant_quantities:
+        return
+
+    variant_ids = [variant_id for variant_id, quantity in variant_quantities.items() if quantity > 0]
+    variants = {
+        variant.id: variant
+        for variant in ProductVariant.objects.select_for_update().filter(id__in=variant_ids)
+    }
+
+    for variant_id, quantity in variant_quantities.items():
+        if quantity <= 0:
+            continue
+        variant = variants.get(variant_id)
+        if not variant:
+            raise ValidationError("One of the selected variants is no longer available.")
+        if not _is_stock_managed_product(variant.product):
+            continue
+        if not variant.track_stock:
+            continue
+        if variant.stock < quantity:
+            raise ValidationError(
+                f"{variant.name} has only {variant.stock} unit(s) left in stock."
+            )
+
+    for variant_id, quantity in variant_quantities.items():
+        variant = variants.get(variant_id)
+        if (
+            variant
+            and quantity > 0
+            and variant.track_stock
+            and _is_stock_managed_product(variant.product)
+        ):
+            ProductVariant.objects.filter(id=variant.id).update(stock=F('stock') - quantity)
+
+
 class InternalProductListView(generics.GenericAPIView):
     # permission_classes = [IsAuthenticated]
     serializer_class = ProductSerializer
     def get(self, request):
-        categories = Product.objects.all()
-        serializer = self.serializer_class(categories, many=True)
+        categories = (
+            Product.objects
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )
+        serializer = self.serializer_class(categories, many=True, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -52,7 +193,16 @@ class SystemCategoryListView(generics.GenericAPIView):
         }
     )
     def get(self, request):
-        categories = SystemCategory.objects.all()
+        # Annotate active vendor count once at the DB layer so the serializer
+        # doesn't run a COUNT(*) per category.
+        from django.db.models import Count, Q
+        categories = SystemCategory.objects.annotate(
+            active_vendor_count=Count(
+                'vendor',
+                filter=Q(vendor__is_active=True),
+                distinct=True,
+            ),
+        )
         serializer = self.serializer_class(categories, many=True)
         return success_response(serializer.data)
 
@@ -77,6 +227,11 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             vendor = Vendor.objects.get(id=vendor_id)
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
+
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=resolve_validation_error_message(exc))
 
         # Address logic (reuse from existing view)
         query_location_latitude = request.GET.get('latitude') or request.data.get('latitude') 
@@ -132,13 +287,19 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             print(e)
             return bad_request_response(message=f"Failed to calculate delivery fee. {str(e)}")
 
-        if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
-            return bad_request_response(message="This vendor cannot deliver to your location (distance too far).")
+        is_in_marketplace = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace:
+            if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
+                return bad_request_response(message="This vendor cannot deliver to your location (distance too far).")
 
         # --- Main logic for ProductVariant/OrderItemVariant ---
         main_product_ids = [item['product'] for item in items_data]
         main_products = Product.objects.filter(id__in=main_product_ids, vendor=vendor)
         product_map = {str(product.id): product for product in main_products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         # Collect all variant IDs
         variant_ids = []
@@ -156,21 +317,27 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             with transaction.atomic():
                 order = Order.objects.create(user=user, vendor=vendor)
 
+                # Validate all items/variants first, then bulk-insert to avoid per-row round-trips
+                order_items_to_create = []
+                variants_by_item = []  # list of (item_index, list of OrderItemVariant kwargs)
+                product_stock_quantities = Counter()
+                variant_stock_quantities = Counter()
+
                 for item in items_data:
                     main_product = product_map.get(item['product'])
                     if not main_product:
                         raise ValidationError(f"Product with ID {item['product']} not found.")
 
-                    # Create OrderItem for the main product
-                    order_item = OrderItem.objects.create(
-                        order=order,
-                        product=main_product,
-                        quantity=item.get('quantity', 1),
-                        price=main_product.get_price_with_commission()
+                    item_qty = _positive_item_quantity(item.get('quantity', 1))
+                    item_count += item_qty
+                    product_stock_quantities[main_product.id] += item_qty
+                    # Use the same price the customer sees: float→Decimal round-trip matches serializer output
+                    item_price = Decimal(str(float(main_product.get_price_with_commission())))
+                    order_items_to_create.append(
+                        OrderItem(order=order, product=main_product, quantity=item_qty, price=item_price)
                     )
-                    item_count += item.get('quantity', 1)
 
-                    # For each variant selection, create OrderItemVariant
+                    item_variants = []
                     for variant in item.get('variants', []):
                         variant_obj = variant_map.get(variant['variant'])
                         if not variant_obj:
@@ -179,30 +346,43 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                             raise ValidationError(f"Variant {variant_obj.name} does not belong to product {main_product.name}.")
                         if not variant_obj.is_active:
                             raise ValidationError(f"Variant {variant_obj.name} is not active.")
-                        # if variant_obj.stock < variant['quantity']:
-                        #     raise ValidationError(f"Not enough stock for variant {variant_obj.name}. Available: {variant_obj.stock}, Requested: {variant['quantity']}")
-             
-                        OrderItemVariant.objects.create(
-                            order_item=order_item,
+                        variant_qty = _positive_item_quantity(variant['quantity'], label=f"{variant_obj.name} quantity")
+                        variant_price = Decimal(str(float(variant_obj.get_price_with_commission())))
+                        item_variants.append(dict(
                             variant=variant_obj,
-                            quantity=variant['quantity'],
-                            price_at_purchase=variant_obj.get_price_with_commission()
-                        )
-                        # Decrement stock
-                        # variant_obj.stock -= variant['quantity']
-                        variant_obj.save()
-                        item_count += variant['quantity']
+                            quantity=variant_qty,
+                            price_at_purchase=variant_price,
+                        ))
+                        item_count += variant_qty
+                        variant_stock_quantities[variant_obj.id] += variant_qty * item_qty
+                    variants_by_item.append(item_variants)
+
+                reserve_order_stock(product_stock_quantities, variant_stock_quantities)
+                created_items = OrderItem.objects.bulk_create(order_items_to_create)
+
+                all_item_variants = []
+                for order_item, item_variants in zip(created_items, variants_by_item):
+                    for kw in item_variants:
+                        all_item_variants.append(OrderItemVariant(order_item=order_item, **kw))
+                if all_item_variants:
+                    OrderItemVariant.objects.bulk_create(all_item_variants)
 
                 promo_code = request.data.get('promo_code')
-                
+
                 # Delivery fee calculation (reuse logic)
                 original_delivery_fee = Decimal('0.00')
                 promo_info = {"is_applied": False, "discount_amount": 0}
 
-                # order_total_price = order.get_total_price()  # Calculate total price based on OrderItems and OrderItemVariants
-                
-                order_total_price_without_delivery_fee = float(order.get_total_price()) + order.service_fee
-                order_total_price = float(order.get_total_price()) + (delivery_fee or order.delivery_fee) + order.service_fee
+                # Compute subtotal from in-memory data — no extra DB query needed
+                # Variant add-ons apply once per unit ordered, so scale by the parent item's quantity.
+                order_item_qty = {oi.id: oi.quantity for oi in created_items}
+                items_subtotal = sum(Decimal(str(oi.price)) * oi.quantity for oi in created_items)
+                items_subtotal += sum(
+                    Decimal(str(iv.price_at_purchase)) * iv.quantity * order_item_qty.get(iv.order_item_id, 1)
+                    for iv in all_item_variants
+                )
+                order_total_price_without_delivery_fee = float(items_subtotal) + float(order.service_fee)
+                order_total_price = float(items_subtotal) + float(delivery_fee or order.delivery_fee) + float(order.service_fee)
 
                 print(
                     f"Initial order total price (before promo): {order_total_price}, item_count: {item_count}, delivery_fee: {delivery_fee}, promo_code: {promo_code}"
@@ -216,7 +396,8 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         dest_lon=float(location_longitude),
                         user=user,
                         promo_code=promo_code,
-                        order_value=float(order_total_price)
+                        order_value=float(order_total_price),
+                        categories=promo_category_ids,
                     )
                     delivery_fee = delivery_fee_response["total_fee"]
                     original_delivery_fee = delivery_fee_response["original_fee"]
@@ -232,7 +413,8 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         order_total_price_without_delivery_fee, 
                         distance_in_km, 
                         order.vendor, 
-                        delivery_fee
+                        delivery_fee,
+                        categories=promo_category_ids,
                     )
 
                 print(promo_info)
@@ -243,7 +425,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                     order.promo_discount_amount = promo_info["discount_amount"]
                     print(f"Applied promo code: {promo_obj.code}, discount amount: {promo_info['discount_amount']}")
 
-                order.update_total_amount()
+                order.total_amount = items_subtotal.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 order.address = address
                 order.location_latitude = location_latitude
                 order.location_longitude = location_longitude
@@ -251,20 +433,17 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 order.original_delivery_fee = original_delivery_fee
                 
                 
-                dist = 0.0
-                try:
-                    dist = get_distance_between_two_location(
-                        lat1=float(vendor.location_latitude),
-                        lon1=float(vendor.location_longitude),
-                        lat2=float(location_latitude),
-                        lon2=float(location_longitude),
-                    )
-                except: pass
-                order.rider_earning = calculate_rider_fare(dist)
+                dist = distance_in_km or 0.0
+                order.rider_earning = max(
+                    Decimal(str(calculate_rider_fare(dist))),
+                    Decimal(str(delivery_fee or 0)),
+                    Decimal(str(original_delivery_fee or 0)),
+                )
                 
                 order.payment_method = request.data.get('payment_method','wallet')
                 order.note = request.data.get('note',request.data.get('notes'))
                 order.save()
+                order.save_vendor_and_commision(gross_order_amount=items_subtotal)
 
                 if order.promo_code:
                     from product.promo_models import PromoUsage
@@ -329,11 +508,21 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         print(e)
 
                     try:
+                        Notification.objects.create(
+                            user=vendor.user,
+                            title="New Order Received!",
+                            content=f"You have a new order #{order.track_id} from {order.user.full_name}. Tap to review and accept."
+                        )
+                    except Exception as e:
+                        print(f"Failed to create vendor in-app notification: {e}")
+
+                    try:
 
                         send_order_payment_success_notification(
                             user=order.user,
-                            order_id=str(order.id),
+                            order_id=str(order.track_id),
                             amount=str(order_total_price),
+                            delivery_code=order.delivery_otp,
                         )
                     except Exception as e:
                         print(e)
@@ -343,7 +532,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         thread = notification_helper.send_to_user_async(
                             user=order.user,
                             title="Order Confirmed!",
-                            body="Your order has been successfully placed. We’ll notify you when it’s on the way 🚚",
+                            body="Your order has been successfully placed. We'll notify you when it's on the way 🚚",
                             data={"event": "order_created", "order_id": order.id}
                         )
                     except Exception as e:
@@ -383,7 +572,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 )
 
         except ValidationError as ve:
-            return bad_request_response(message=str(ve))
+            return bad_request_response(message=resolve_validation_error_message(ve))
         except Exception as e:
             import traceback
             traceback_str = traceback.format_exc()
@@ -398,8 +587,12 @@ class AllProductsView(generics.GenericAPIView):
     serializer_class = ProductSerializer
     
     def get(self, request):
-        products = Product.objects.all()[:5]
-        serializer = self.serializer_class(products, many=True,context={'request': request})
+        products = (
+            Product.objects
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )[:5]
+        serializer = self.serializer_class(products, many=True, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -409,7 +602,7 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
     Endpoint to get products by system category.
     """
     permission_classes = [AllowAny]
-    serializer_class = ProductSerializer
+    serializer_class = BuyerVendorProductSerializer
 
     @swagger_auto_schema(
         operation_description="Get a list of products belonging to a system category.",
@@ -429,9 +622,66 @@ class ProductBySystemCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, system_category_id):
-        products = Product.objects.filter(parent=None,system_category__id=system_category_id)
-        serializer = self.serializer_class(products, many=True)
-        return success_response(serializer.data)
+        try:
+            system_category = SystemCategory.objects.get(id=system_category_id)
+        except SystemCategory.DoesNotExist:
+            return bad_request_response(message="System category not found")
+
+        is_marketplace_category = system_category.name.lower() == 'marketplace'
+        if is_marketplace_category:
+            marketplace_vendor_ids = MarketPlace.objects.filter(
+                is_active=True
+            ).values_list('vendors', flat=True)
+            products = Product.objects.filter(
+                parent=None,
+                vendor_id__in=marketplace_vendor_ids,
+                is_delete=False,
+            )
+        else:
+            products = Product.objects.filter(
+                parent=None,
+                system_category_id=system_category_id,
+                is_delete=False,
+            )
+
+        search = request.query_params.get('search')
+        if search:
+            products = products.filter(
+                Q(name__icontains=search) |
+                Q(description__icontains=search) |
+                Q(category__name__icontains=search) |
+                Q(vendor__name__icontains=search)
+            )
+
+        products = (
+            products
+            .select_related('vendor__category', 'category', 'system_category')
+            .annotate(
+                average_rating_value=Avg('ratings__rating'),
+                total_ratings_value=Count('ratings', distinct=True),
+            )
+            .prefetch_related(
+                Prefetch(
+                    'productimage_set',
+                    queryset=ProductImage.objects.filter(is_active=True).order_by('-is_primary', 'id'),
+                ),
+                'productvariantcategory_set__variants',
+                'variants',
+            )
+            .order_by('-is_featured', 'vendor__name', 'name')
+        )
+
+        platform_settings = PlatformSettings.get_settings()
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            products,
+            page_size=int(request.GET.get('page_size', 20)),
+            extra_serializer_context={
+                'platform_commission_active': platform_settings.is_commission_active,
+                'platform_default_commission_rate': platform_settings.default_commission_percentage,
+            },
+        )
     
 
 class DeleteProductImageView(generics.GenericAPIView):
@@ -459,123 +709,46 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
     queryset = Vendor.objects.all()
 
     def get_queryset(self,category_id=None):
+        if not category_id:
+            return Vendor.objects.none()
 
+        try:
+            system_category = SystemCategory.objects.get(id=category_id)
+        except SystemCategory.DoesNotExist:
+            return Vendor.objects.none()
 
-        # category_id
-        user = self.request.user
+        is_marketplace_category = system_category.name.lower() == 'marketplace'
 
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-
-        is_marketplace = False
-
-        if category_id:
-            try:
-                system_category = SystemCategory.objects.get(id=category_id)
-                if system_category.name.lower() == 'marketplace':
-                    is_marketplace = True
-            except Exception as e:
-                return Vendor.objects.none()
-
-        if not is_marketplace:
-            if not user or not isinstance(user, User):
-                if any([not query_location_latitude, not query_location_latitude]):
-                    return Vendor.objects.none()  
-
-            print(f"User: {user}, query_location_latitude: {query_location_latitude}, query_location_longitude: {query_location_longitude}")
-            if not query_location_latitude or not query_location_longitude:
-                # user_address, _ = Address.objects.get_or_create(user=user)
-                user_address = Address.objects.filter(user=user).order_by('-updated_at').first()
-                if not user_address:
-                    return Vendor.objects.none()
-                user_lat = user_address.location_latitude
-                user_lon = user_address.location_longitude
-            else:
-                user_lat = query_location_latitude
-                user_lon = query_location_longitude
-
-            if user_lat is None or user_lon is None:
-                return Vendor.objects.none()
-
-            try:
-                user_lat = float(user_lat)
-                user_lon = float(user_lon)
-            except ValueError:
-                return Vendor.objects.none()
-            
-        
-            queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
-                product_count__gt=0,
-                location_latitude__isnull=False,
-                location_longitude__isnull=False
-            )
-
-
-
-            if category_id:
-                queryset = queryset.filter(category=system_category)
-
-
-
+        if is_marketplace_category:
+            marketplace_vendor_ids = MarketPlace.objects.filter(
+                is_active=True
+            ).values_list('vendors', flat=True)
+            base_queryset = Vendor.objects.filter(id__in=marketplace_vendor_ids)
         else:
-            marketplaces = MarketPlace.objects.all()
+            base_queryset = local_vendor_queryset(Vendor.objects.filter(category=system_category))
 
-            if not marketplaces.exists():
-                return Vendor.objects.none()
-
-            vendor_ids = []
-
-            for marketplace in marketplaces:
-                vendor_ids.extend(
-                    marketplace.vendors.values_list('id', flat=True)
-                )
-
-            queryset = Vendor.objects.filter(id__in=vendor_ids).distinct()
-
-                
-                # system_category = None
-                
-            
-        
-
-        # Filter by search param
         search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
-            )
 
-        if category_id:return queryset
-            
+        queryset = approved_vendor_queryset(
+            base_queryset,
+            require_products=True,
+            require_location=False,
+        )
+        queryset = apply_vendor_search(queryset, search)
 
-        def distance_check(vendor):
-            try:
-                dist = get_distance_between_two_location(
-                    lat1=user_lat,
-                    lon1=user_lon,
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude)
-                )
-                return (vendor, dist)
-            except (TypeError, ValueError):
-                return (vendor, None)
+        # Marketplace system category: no location, just search + rating sort
+        if is_marketplace_category:
+            return queryset.order_by('-rating', 'name')
 
-        vendors_within_5km = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
-            for future in as_completed(futures):
-                vendor, dist = future.result()
-                if dist is not None and dist <= vendor.delivery_radius_km:
-                    vendors_within_5km.append(vendor)
+        # All other system categories: nearest-first when location provided
+        user_lat, user_lon = resolve_request_coordinates(self.request)
+        if user_lat is None or user_lon is None:
+            return queryset.order_by('-rating', 'name')
 
-        return vendors_within_5km
+        return nearest_first_vendors(queryset, user_lat, user_lon, enforce_delivery_radius=True)
 
 
-    
+
 
     @swagger_auto_schema(
         operation_description="Get vendors by system category",
@@ -584,14 +757,17 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
             200: VendorSerializer,
         }
     )
-    def get(self, request , system_category_id):
-
-        queryset = self.get_queryset(category_id=system_category_id) 
+    def get(self, request, system_category_id):
+        from vendor.views import _annotate_vendors
+        queryset = _annotate_vendors(
+            self.get_queryset(category_id=system_category_id),
+            user=request.user if request.user.is_authenticated else None,
+        )
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             queryset,
-            page_size=int(request.GET.get('page_size',20))
+            page_size=int(request.GET.get('page_size', 20))
         )
     
     
@@ -703,7 +879,12 @@ class ProductDetailView(generics.GenericAPIView):
         }
     )
     def get(self, request, product_id):
-        product = Product.objects.get(id=product_id)
+        product = (
+            Product.objects
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+            .get(id=product_id)
+        )
         serializer = self.serializer_class(product, context={'request': request, "is_vendor": request.user.is_authenticated and hasattr(request.user, 'vendor')})
         return success_response(serializer.data)
 
@@ -794,8 +975,13 @@ class VendorDetailView(generics.GenericAPIView):
         }
     )
     def get(self, request, vendor_id):
-        vendor = Vendor.objects.get(id=vendor_id)
-        serializer = self.serializer_class(vendor)
+        vendor = (
+            Vendor.objects
+            .select_related('user', 'category')
+            .prefetch_related('ratings')
+            .get(id=vendor_id)
+        )
+        serializer = self.serializer_class(vendor, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -853,8 +1039,13 @@ class ProductByVendorCategoryView(generics.GenericAPIView):
         ]
     )
     def get(self, request, vendor_category_id):
-        products = Product.objects.filter(parent=None,category_id=vendor_category_id)
-        serializer = self.serializer_class(products, many=True)
+        products = (
+            Product.objects
+            .filter(parent=None, category_id=vendor_category_id)
+            .select_related(*_PRODUCT_SELECT_RELATED)
+            .prefetch_related(*_PRODUCT_PREFETCH_RELATED)
+        )
+        serializer = self.serializer_class(products, many=True, context={'request': request})
         return success_response(serializer.data)
 
 
@@ -975,32 +1166,34 @@ class GetDeliveryFeeView(generics.GenericAPIView):
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
 
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=resolve_validation_error_message(exc))
+
         # Get user address
-        
+
         location_latitude = None
-        location_longitude = None 
+        location_longitude = None
         is_in_marketplace = MarketPlace.objects.filter(vendors=vendor).exists()
 
-        
         if any([not query_location_latitude, not query_location_longitude]):
             user_address = Address.objects.filter(user=user, is_active=True).first()
             if not user_address:
                 return bad_request_response(
                     message="Please set your delivery address in settings before placing an order."
                 )
-            
+
             if any([not user_address.location_latitude, not user_address.location_longitude]):
                 return bad_request_response(
                     message="Please set your delivery address in settings."
                 )
-            
+
             location_latitude = user_address.location_latitude
-            location_longitude = user_address.location_longitude 
+            location_longitude = user_address.location_longitude
         else:
             location_latitude = query_location_latitude
             location_longitude = query_location_longitude
-        
-
 
         if not is_in_marketplace:
             try:
@@ -1016,7 +1209,7 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                     message="Failed to calculate delivery fee."
                 )
 
-            if distance_in_km is None or distance_in_km > 5: # using 5km range
+            if distance_in_km is None or distance_in_km > float(vendor.delivery_radius_km):
                 return bad_request_response(
                     message=f"This vendor cannot deliver to your location (distance too far). Distance {round(distance_in_km or 0 ,2)} km"
                 )
@@ -1029,7 +1222,9 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                 item_count=item_count,
                 promo_code=promo_code,
                 order_value=order_value,
-                user_id=str(user.id) if user else None
+                user_id=str(user.id) if user else None,
+                customer_id=str(user.id) if user else None,
+                vendor_id=str(vendor.id),
             )
             delivery_fee = delivery_fee_info['total_fee']
             promo_details = delivery_fee_info.get('promo_details')
@@ -1085,6 +1280,11 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
 
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=str(exc))
+
         # Get user address
         
 
@@ -1112,26 +1312,26 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             location_longitude = query_location_longitude
             address = query_address
         
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
+        is_in_marketplace_vendor = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace_vendor:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(
+                    message="Failed to calculate delivery fee."
+                )
 
-        except Exception as e:
-            print(e)
-            return bad_request_response(
-                message="Failed to calculate delivery fee."
-            )
+            if distance_in_km is None or distance_in_km > 5:
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location (distance too far)."
+                )
 
-
-        if distance_in_km is None or distance_in_km > 5:
-            return bad_request_response(
-                message="This vendor cannot deliver to your location (distance too far)."
-            )
-                
         product_ids = []
         for item in items_data:
             if item.get('variants') not in [[],'',False,None]:
@@ -1145,6 +1345,10 @@ class CustomerCreateOrderView(generics.GenericAPIView):
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
         product_map = {str(product.id): product for product in products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         item_count = 0
 
@@ -1152,6 +1356,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
             with transaction.atomic():
                 
                 order = Order.objects.create(user=user, vendor=vendor)
+                product_stock_quantities = Counter()
 
                 # Process each item
                 for item in items_data:
@@ -1175,24 +1380,33 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                             if variant_product.vendor.id != vendor.id:
                                 raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
 
+                            variant_qty = _positive_item_quantity(
+                                variant['quantity'],
+                                label=f"{variant_product.name} quantity",
+                            )
                             OrderItem.objects.create(
                                 order=order,
                                 product=variant_product,
-                                quantity=variant['quantity'],
-                                price=variant_product.price
+                                quantity=variant_qty,
+                                price=variant_product.get_price_with_commission()
                             )
-                            item_count += variant['quantity']
+                            item_count += variant_qty
+                            product_stock_quantities[variant_product.id] += variant_qty
                             print(
-                                f"Created item: {variant_product.name} x {variant['quantity']} @ {variant_product.price}"
+                                f"Created item: {variant_product.name} x {variant_qty} @ {variant_product.price}"
                             )
                     else:
+                        item_qty = _positive_item_quantity(item['quantity'])
                         OrderItem.objects.create(
                             order=order,
                             product=main_product,
-                            quantity=item['quantity'],
-                            price=main_product.price
+                            quantity=item_qty,
+                            price=main_product.get_price_with_commission()
                         )
-                        item_count += item['quantity']
+                        item_count += item_qty
+                        product_stock_quantities[main_product.id] += item_qty
+
+                reserve_order_stock(product_stock_quantities)
 
                 # Calculate delivery and finalize order
                 # delivery_fee = calculate_delivery_fee(
@@ -1209,7 +1423,8 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                     dest_lon=float(location_longitude),
                     user=user,
                     promo_code=promo_code,
-                    order_value=float(order.total_price)
+                    order_value=float(order.total_price),
+                    categories=promo_category_ids,
                 )
                 delivery_fee = delivery_fee_response["total_fee"]
                 original_delivery_fee = delivery_fee_response["original_fee"]
@@ -1244,7 +1459,11 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.original_delivery_fee = original_delivery_fee
                 from helpers.order_utils import calculate_rider_fare
-                order.rider_earning = calculate_rider_fare(dist)
+                order.rider_earning = max(
+                    Decimal(str(calculate_rider_fare(dist))),
+                    Decimal(str(delivery_fee or 0)),
+                    Decimal(str(original_delivery_fee or 0)),
+                )
                 order.save()
 
                 if order.promo_code:
@@ -1265,7 +1484,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 )
 
         except ValidationError as ve:
-            return bad_request_response(message=str(ve))
+            return bad_request_response(message=resolve_validation_error_message(ve))
 
         except Exception as e:
             traceback_str = traceback.format_exc()
@@ -1330,23 +1549,25 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
             location_longitude = query_location_longitude
             address = query_address
         
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
-        except Exception as e:
-            print(e)
-            return bad_request_response(
-                message="Failed to calculate delivery fee."
-            )
+        is_in_marketplace_mobile = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace_mobile:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(
+                    message="Failed to calculate delivery fee."
+                )
 
-        if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
-            return bad_request_response(
-                message="This vendor cannot deliver to your location (distance too far)."
-            )
+            if distance_in_km is None or distance_in_km > vendor.delivery_radius_km:
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location (distance too far)."
+                )
 
         product_ids = []
         for item in items_data:
@@ -1361,6 +1582,10 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
         all_ids = product_ids
         products = Product.objects.filter(id__in=all_ids).select_related('vendor', 'parent') 
         product_map = {str(product.id): product for product in products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         item_count = 0
 
@@ -1368,6 +1593,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
             with transaction.atomic():
                 
                 order = Order.objects.create(user=user, vendor=vendor)
+                product_stock_quantities = Counter()
 
                 # Process each item
                 for item in items_data:
@@ -1390,30 +1616,41 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                             if variant_product.vendor.id != vendor.id:
                                 raise ValidationError(f"Variant '{variant_product.name}' does not belong to the selected vendor.")
 
+                            variant_qty = _positive_item_quantity(
+                                variant['quantity'],
+                                label=f"{variant_product.name} quantity",
+                            )
                             OrderItem.objects.create(
                                 order=order,
                                 product=variant_product,
-                                quantity=variant['quantity'],
-                                price=variant_product.price
+                                quantity=variant_qty,
+                                price=variant_product.get_price_with_commission()
                             )
-                            item_count += variant['quantity']
+                            item_count += variant_qty
+                            product_stock_quantities[variant_product.id] += variant_qty
 
                         if item.get('quantity') and item['quantity'] > 0:
+                            item_qty = _positive_item_quantity(item['quantity'])
                             OrderItem.objects.create(
                                 order=order,
                                 product=main_product,
-                                quantity=item['quantity'],
-                                price=main_product.price
+                                quantity=item_qty,
+                                price=main_product.get_price_with_commission()
                             )
-                            item_count += item['quantity']
+                            item_count += item_qty
+                            product_stock_quantities[main_product.id] += item_qty
                     else:
+                        item_qty = _positive_item_quantity(item['quantity'])
                         OrderItem.objects.create(
                             order=order,
                             product=main_product,
-                            quantity=item['quantity'],
-                            price=main_product.price
+                            quantity=item_qty,
+                            price=main_product.get_price_with_commission()
                         )
-                        item_count += item['quantity']
+                        item_count += item_qty
+                        product_stock_quantities[main_product.id] += item_qty
+
+                reserve_order_stock(product_stock_quantities)
 
                 # if vendor.is_marketplace:
                 #     # get the marketplace the vendor belongs to
@@ -1440,7 +1677,8 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                     dest_lon=float(location_longitude),
                     user=user,
                     promo_code=promo_code,
-                    order_value=float(order.total_price)
+                    order_value=float(order.total_price),
+                    categories=promo_category_ids,
                 )
                         
                 delivery_fee = delivery_fee_response["total_fee"]
@@ -1463,8 +1701,13 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.original_delivery_fee = original_delivery_fee
                 from helpers.order_utils import calculate_rider_fare
-                order.rider_earning = calculate_rider_fare(distance_in_km)
+                order.rider_earning = max(
+                    Decimal(str(calculate_rider_fare(distance_in_km))),
+                    Decimal(str(delivery_fee or 0)),
+                    Decimal(str(original_delivery_fee or 0)),
+                )
                 order.save()
+                order.save_vendor_and_commision()
 
 
                 order_total_price = float(order.get_total_price()) + order.delivery_fee 
@@ -1531,11 +1774,21 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         print(e)
 
                     try:
+                        Notification.objects.create(
+                            user=vendor.user,
+                            title="New Order Received!",
+                            content=f"You have a new order #{order.track_id} from {order.user.full_name}. Tap to review and accept."
+                        )
+                    except Exception as e:
+                        print(f"Failed to create vendor in-app notification: {e}")
+
+                    try:
 
                         send_order_payment_success_notification(
                             user=order.user,
-                            order_id=str(order.id),
+                            order_id=str(order.track_id),
                             amount=str(order.total_price),
+                            delivery_code=order.delivery_otp,
                         )
                     except Exception as e:
                         print(e)
@@ -1545,7 +1798,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         thread = notification_helper.send_to_user_async(
                             user=order.user,
                             title="Order Confirmed!",
-                            body="Your order has been successfully placed. We’ll notify you when it’s on the way 🚚",
+                            body="Your order has been successfully placed. We'll notify you when it's on the way 🚚",
                             data={"event": "order_created", "order_id": order.id}
                         )
                     except Exception as e:
@@ -1616,7 +1869,20 @@ class OrderDetailView(generics.RetrieveUpdateDestroyAPIView):
     
     def get_queryset(self):
         """Only return orders belonging to the authenticated user."""
-        return Order.objects.all()
+        return Order.objects.select_related(
+            'user', 'rider', 'rider__user', 'vendor', 'vendor__user',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+            'items__product__parent',
+            'items__product__parent__productimage_set',
+            'items__product__productvariantcategory_set',
+            'items__variant_selections',
+            'items__variant_selections__variant',
+            'items__variant_selections__variant__category',
+            'items__variant_selections__variant__product',
+        )
 
 
 class UserFavoriteListView(generics.ListAPIView):
@@ -1673,6 +1939,11 @@ class AddToFavoritesView(generics.GenericAPIView):
             vendor = Vendor.objects.get(id=product_id)
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found.")
+
+        try:
+            validate_vendor_accepting_orders(vendor)
+        except ValidationError as exc:
+            return bad_request_response(message=resolve_validation_error_message(exc))
 
         # Check if the product is already in the user's favorites
         if UserFavoriteVendor.objects.filter(user=request.user, vendor=vendor).exists():
@@ -1755,23 +2026,25 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
             location_longitude = query_location_longitude
             address = query_address
 
-        try:
-            distance_in_km = get_distance_between_two_location(
-                lat1=float(location_latitude),
-                lon1=float(location_longitude),
-                lat2=float(vendor.location_latitude),
-                lon2=float(vendor.location_longitude),
-            )
-        except Exception as e:
-            print(e)
-            return bad_request_response(
-                message="Failed to calculate delivery fee."
-            )
+        is_in_marketplace_update = MarketPlace.objects.filter(vendors=vendor).exists()
+        if not is_in_marketplace_update:
+            try:
+                distance_in_km = get_distance_between_two_location(
+                    lat1=float(location_latitude),
+                    lon1=float(location_longitude),
+                    lat2=float(vendor.location_latitude),
+                    lon2=float(vendor.location_longitude),
+                )
+            except Exception as e:
+                print(e)
+                return bad_request_response(
+                    message="Failed to calculate delivery fee."
+                )
 
-        if distance_in_km is None or distance_in_km > 5:
-            return bad_request_response(
-                message="This vendor cannot deliver to your location (distance too far)."
-            )
+            if distance_in_km is None or distance_in_km > 5:
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location (distance too far)."
+                )
 
         product_ids = []
         for item in items_data:
@@ -1784,6 +2057,10 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
 
         products = Product.objects.filter(id__in=product_ids).select_related('vendor', 'parent')
         product_map = {str(product.id): product for product in products}
+        promo_category_ids = [
+            product.system_category_id for product in product_map.values()
+            if product.system_category_id
+        ]
 
         item_count = 0
 
@@ -1820,7 +2097,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                                 order=order,
                                 product=variant_product,
                                 quantity=variant['quantity'],
-                                price=variant_product.price
+                                price=variant_product.get_price_with_commission()
                             )
                             item_count += variant['quantity']
                     else:
@@ -1828,7 +2105,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                             order=order,
                             product=main_product,
                             quantity=item['quantity'],
-                            price=main_product.price
+                            price=main_product.get_price_with_commission()
                         )
                         item_count += item['quantity']
 
@@ -1842,8 +2119,11 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                     dest_lon=location_longitude,
                     item_count=item_count,
                     user_id=str(user.id) if user else None,
+                    customer_id=str(user.id) if user else None,
                     promo_code=promo_code,
-                    order_value=float(order.total_price)
+                    order_value=float(order.total_price),
+                    vendor_id=str(vendor.id),
+                    categories=promo_category_ids,
                 )
                 delivery_fee = delivery_fee_info['total_fee']
                 original_delivery_fee = delivery_fee_info['original_fee']
@@ -1895,7 +2175,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                 )
 
         except ValidationError as ve:
-            return bad_request_response(message=str(ve))
+            return bad_request_response(message=resolve_validation_error_message(ve))
 
         except Exception as e:
             traceback_str = traceback.format_exc()

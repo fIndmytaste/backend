@@ -8,8 +8,8 @@ websocket_urlpatterns = [
     re_path(r'ws/vendor/notifications/$', consumers.VendorNotificationConsumer.as_asgi()),
     re_path(r'ws/customer/notifications/$', consumers.CustomerNotificationConsumer.as_asgi()),
     re_path(r'ws/riders/$', consumers.RiderConsumer.as_asgi()),
+    re_path(r'api/v1/ws/?$', consumers.LegacyNotificationConsumer.as_asgi()),
 ]
-
 
 
 

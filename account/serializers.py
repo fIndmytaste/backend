@@ -51,11 +51,85 @@ class RiderInlineUserSerializer(serializers.ModelSerializer):
 
 class RiderSerializer(serializers.ModelSerializer):
     user = RiderInlineUserSerializer()
+    current_zone = serializers.SerializerMethodField()
+    home_zone = serializers.SerializerMethodField()
+    assignment_context = serializers.SerializerMethodField()
 
     class Meta:
         model = Rider
         fields = '__all__'
         ref_name = 'AccountRiderSerializer'
+
+    def _serialize_zone(self, zone):
+        if not zone:
+            return None
+        return {
+            'id': str(zone.id),
+            'name': zone.name,
+            'fixed_fee': float(zone.fixed_fee),
+        }
+
+    def _zone_for_location(self, latitude, longitude):
+        if latitude is None or longitude is None:
+            return None
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+
+        zones = (self.context or {}).get('active_delivery_zones')
+        if zones is not None:
+            return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
+
+        from product.models import DeliveryZone
+        return DeliveryZone.get_zone_for_location(lat, lng)
+
+    def get_current_zone(self, obj):
+        zone = self._zone_for_location(obj.current_latitude, obj.current_longitude)
+        return self._serialize_zone(zone)
+
+    def get_home_zone(self, obj):
+        zone = self._zone_for_location(obj.location_latitude, obj.location_longitude)
+        return self._serialize_zone(zone)
+
+    def get_assignment_context(self, obj):
+        addition_serializer_data = (self.context or {}).get('addition_serializer_data') or {}
+        order = (self.context or {}).get('marketplace_order') or addition_serializer_data.get('marketplace_order')
+        if not order:
+            return None
+
+        latitude = order.delivery_latitude or order.location_latitude
+        longitude = order.delivery_longitude or order.location_longitude
+        order_zone = (
+            (self.context or {}).get('assignment_order_zone') or
+            self._zone_for_location(latitude, longitude)
+        )
+        rider_zone = (
+            self._zone_for_location(obj.current_latitude, obj.current_longitude) or
+            self._zone_for_location(obj.location_latitude, obj.location_longitude)
+        )
+        reasons = []
+
+        if not obj.is_in_house_rider:
+            reasons.append('Not an in-house marketplace rider')
+        if obj.status != 'active':
+            reasons.append('Rider is not active')
+        if not obj.is_verified:
+            reasons.append('Rider is not verified')
+        if order_zone and not rider_zone:
+            reasons.append('Rider has no detected zone')
+        if order_zone and rider_zone and order_zone.id != rider_zone.id:
+            reasons.append('Rider is outside the order zone')
+        if not order_zone:
+            reasons.append('Order delivery address is outside active zones')
+
+        return {
+            'eligible': len(reasons) == 0,
+            'reasons': reasons,
+            'order_zone': self._serialize_zone(order_zone),
+            'rider_zone': self._serialize_zone(rider_zone),
+        }
 
     def to_representation(self, instance):
         # Access the custom data
@@ -89,15 +163,27 @@ class RiderSerializer(serializers.ModelSerializer):
             if isinstance(addition_serializer_data, dict):
                 rider_type = addition_serializer_data.get('rider_type')
                 if rider_type == 'marketplace':
-                    orders_queryset_count = Order.objects.filter(
-                        rider=instance,
-                        delivery_status='pending'
-                    ).count()
+                    orders_queryset_count = getattr(instance, 'ongoing_orders_count', None)
+                    if orders_queryset_count is None:
+                        orders_queryset_count = Order.objects.filter(
+                            rider=instance,
+                            status__in=[
+                                'rider_assigned',
+                                'confirmed',
+                                'preparing',
+                                'picked_up',
+                                'in_transit',
+                                'near_delivery',
+                            ]
+                        ).count()
                     representation['ongoing_orders_count'] = orders_queryset_count
+                    representation['ongoing_orders'] = orders_queryset_count
 
-                    ratings = RiderRating.objects.filter(rider=instance)
-                    overall_rating = ratings.aggregate(
-                        avg_rating=Avg('rating'))['avg_rating']
+                    overall_rating = getattr(instance, 'overall_rating', None)
+                    if overall_rating is None:
+                        ratings = RiderRating.objects.filter(rider=instance)
+                        overall_rating = ratings.aggregate(
+                            avg_rating=Avg('rating'))['avg_rating']
                     if overall_rating is None:
                         overall_rating = Decimal('0.00')
                     else:
@@ -163,9 +249,10 @@ class UserSerializer(serializers.ModelSerializer):
             representation = super().to_representation(instance)
             rider_obj, created = Rider.objects.get_or_create(user=instance)
             print(rider_obj, created)
-            representation['rider'] = RiderSerializer(rider_obj).data
+            rider_data = RiderSerializer(rider_obj).data
+            representation['rider'] = rider_data
             representation['profile_image'] = instance.get_profile_image()
-            representation['delivery_zone'] = rider_obj.get_current_zone()
+            representation['delivery_zone'] = rider_data.get('current_zone')
             return representation
 
         elif instance.role == 'vendor':
@@ -443,25 +530,66 @@ class DeliveryLocationCreatSerializer(serializers.Serializer):
 
 
 class FCMTokenSerializer(serializers.ModelSerializer):
+    # Disable model-level uniqueness validation here so repeated app launches
+    # can upsert the latest token instead of failing with a 400 response.
+    token = serializers.CharField(validators=[])
+    device_id = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+
     class Meta:
         model = FCMToken
         fields = ['token', 'device_id', 'platform']
+        validators = []
 
     def create(self, validated_data):
         user = self.context['request'].user
+        token_str = validated_data['token']
         device_id = validated_data.get('device_id')
+        platform = validated_data.get('platform', 'android')
 
-        # Update existing token or create new one
-        token, created = FCMToken.objects.update_or_create(
-            user=user,
-            device_id=device_id,
-            defaults={
-                'token': validated_data['token'],
-                'platform': validated_data.get('platform', 'android'),
-                'is_active': True
-            }
-        )
-        return token
+        # A token should point to the latest active device/user mapping only.
+        # Remove any stale rows that still own this token before we upsert.
+        existing_for_token = FCMToken.objects.filter(token=token_str).first()
+        if existing_for_token and (
+            existing_for_token.user_id != user.id
+            or (device_id and existing_for_token.device_id != device_id)
+        ):
+            existing_for_token.delete()
+
+        if device_id:
+            token_obj = FCMToken.objects.filter(user=user, device_id=device_id).first()
+            if token_obj:
+                token_obj.token = token_str
+                token_obj.platform = platform
+                token_obj.is_active = True
+                token_obj.save(update_fields=['token', 'platform', 'is_active', 'updated_at'])
+            else:
+                token_obj = FCMToken.objects.create(
+                    user=user,
+                    token=token_str,
+                    device_id=device_id,
+                    platform=platform,
+                    is_active=True,
+                )
+        else:
+            token_obj, _ = FCMToken.objects.update_or_create(
+                user=user,
+                token=token_str,
+                defaults={
+                    'platform': platform,
+                    'is_active': True,
+                },
+            )
+
+        # Keep one active row for the user/device and one owner for the token.
+        if device_id:
+            FCMToken.objects.filter(user=user, device_id=device_id).exclude(pk=token_obj.pk).delete()
+        FCMToken.objects.filter(token=token_str).exclude(pk=token_obj.pk).delete()
+
+        return token_obj
 
 
 class SendNotificationSerializer(serializers.Serializer):

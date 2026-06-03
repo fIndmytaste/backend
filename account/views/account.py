@@ -459,11 +459,40 @@ class PasswordChangeView(generics.GenericAPIView):
         return success_response(message="Password successfully changed.")
 
 
+class NotificationUnreadCountView(generics.GenericAPIView):
+    """Returns the unread notification count for the authenticated user.
+
+    Used by the mobile apps to render the navbar badge.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        count = Notification.objects.filter(user=request.user, read=False).count()
+        return success_response(data={'unread_count': count})
+
+
+class NotificationMarkReadView(generics.GenericAPIView):
+    """Mark notifications as read.
+
+    POST body (optional): {"ids": ["<uuid>", ...]}. If omitted, marks ALL
+    notifications for the user as read.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        ids = request.data.get('ids') if isinstance(request.data, dict) else None
+        qs = Notification.objects.filter(user=request.user, read=False)
+        if ids:
+            qs = qs.filter(id__in=ids)
+        updated = qs.update(read=True)
+        return success_response(data={'marked_read': updated})
+
+
 class NotificationListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = NotificationSerializer
 
-    
+
     def get_queryset(self):
         return Notification.objects.filter(user=self.request.user).order_by("-created_at")
 

@@ -1,11 +1,12 @@
 from django.contrib import admin
+from django import forms
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
-    FCMToken, PushNotificationLog, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
-    VerificationCode, Notification
+    FCMToken, PushNotificationLog, ProductCreationGrant, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
+    VerificationCode, Notification, StaffPagePermission, StaffMarketplaceAssignment
 )
-# ...existing code...
 from .models import Guarantor, Address
+from product.models import BukaItemServiceCharge, Product, ServiceChargeTier
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
@@ -187,36 +188,105 @@ class AddressAdmin(admin.ModelAdmin):
     search_fields = ('user__email', 'city', 'state', 'country')
     readonly_fields = ('created_at', 'updated_at')
 
+
+class VendorServiceChargeTierInline(admin.TabularInline):
+    model = ServiceChargeTier
+    extra = 1
+    fields = ('system_category', 'min_price', 'max_price', 'flat_charge', 'is_active')
+    autocomplete_fields = ('system_category',)
+    show_change_link = True
+
+
+class BukaItemServiceChargeInlineForm(forms.ModelForm):
+    parent_vendor = None
+
+    class Meta:
+        model = BukaItemServiceCharge
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        vendor_id = getattr(self.instance, 'vendor_id', None)
+        if not vendor_id and self.parent_vendor:
+            vendor_id = self.parent_vendor.id
+
+        if vendor_id:
+            self.fields['product'].queryset = Product.objects.filter(
+                vendor_id=vendor_id,
+                is_delete=False,
+            ).order_by('name')
+        else:
+            self.fields['product'].queryset = Product.objects.none()
+
+
+class BukaItemServiceChargeInline(admin.TabularInline):
+    model = BukaItemServiceCharge
+    form = BukaItemServiceChargeInlineForm
+    extra = 1
+    fields = ('product', 'flat_charge', 'is_active')
+    show_change_link = True
+
+    def get_formset(self, request, obj=None, **kwargs):
+        formset = super().get_formset(request, obj, **kwargs)
+        formset.form.parent_vendor = obj
+        return formset
+
+
 @admin.register(Vendor)
 class VendorAdmin(admin.ModelAdmin):
     list_display = (
-        'name', 'user', 'email', 'phone_number',
-        'country', 'state', 'city', 'address', 'location_latitude', 'location_longitude',
-        'is_active', 'is_featured', 'rating', 'commission_percentage', 'approval_status'
+        'name', 'email', 'city', 'state',
+        'is_active', 'is_featured', 'is_marketplace', 'approval_status',
+        'rating', 'service_charge_tier_count', 'buka_item_charge_count', 'marketplace_delivery_fee',
     )
-    list_filter = ('is_active', 'is_featured', 'country', 'category', 'approval_status')
+    list_filter = ('is_active', 'is_featured', 'is_marketplace', 'country', 'category', 'approval_status')
     search_fields = ('name', 'email', 'user__email', 'city', 'state')
     readonly_fields = ('created_at', 'updated_at')
-    # fieldsets = (
-    #     ('Vendor Info', {
-    #         'fields': ('user', 'name', 'email', 'phone_number', 'description', 'thumbnail', 'logo', 'category')
-    #     }),
-    #     ('Location', {
-    #         'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude')
-    #     }),
-    #     ('Bank Details', {
-    #         'fields': ('bank_account', 'bank_account_name', 'bank_name')
-    #     }),
-    #     ('Schedule', {
-    #         'fields': ('open_day', 'close_day', 'open_time', 'close_time')
-    #     }),
-    #     ('Status', {
-    #         'fields': ('is_active', 'is_featured', 'rating')
-    #     }),
-    #     ('Timestamps', {
-    #         'fields': ('created_at', 'updated_at')
-    #     }),
-    # )
+    inlines = [VendorServiceChargeTierInline, BukaItemServiceChargeInline]
+    fieldsets = (
+        ('Vendor Info', {
+            'fields': ('user', 'name', 'email', 'phone_number', 'description',
+                       'thumbnail_url', 'logo_url', 'category', 'is_marketplace'),
+        }),
+        ('Location', {
+            'fields': ('country', 'state', 'city', 'address',
+                       'location_latitude', 'location_longitude', 'delivery_radius_km'),
+        }),
+        ('Schedule', {
+            'fields': ('open_day', 'close_day', 'open_time', 'close_time',
+                       'estimated_delivery_time'),
+        }),
+        ('Financials', {
+            'description': 'Service charge tiers for this vendor are managed in the inline rows below. marketplace_delivery_fee overrides the marketplace base fee for this vendor only.',
+            'fields': ('marketplace_delivery_fee',
+                       'starting_delivery_price',
+                       'bank_account', 'bank_account_name', 'bank_name'),
+        }),
+        ('Status', {
+            'fields': ('is_active', 'is_featured', 'rating',
+                       'approval_status', 'approval_comment'),
+        }),
+        ('Product creation lock', {
+            'description': (
+                "Vendors are auto-locked the first time admin pricing is set "
+                "on one of their products if the category has "
+                "lock_products_after_approval enabled. Grants let a locked "
+                "vendor add N more products before re-locking."
+            ),
+            'fields': ('product_creation_locked', 'product_creation_grant_count'),
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+        }),
+    )
+
+    @admin.display(description='Service charge tiers')
+    def service_charge_tier_count(self, obj):
+        return obj.service_charge_tiers.count()
+
+    @admin.display(description='Buka item charges')
+    def buka_item_charge_count(self, obj):
+        return obj.buka_item_service_charges.count()
 
 @admin.register(VendorRating)
 class VendorRatingAdmin(admin.ModelAdmin):
@@ -235,13 +305,14 @@ class GuarantorInline(admin.TabularInline):
 
 @admin.register(Rider)
 class RiderAdmin(admin.ModelAdmin):
-    list_display = ('user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online')
-    list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online')
+    list_display = ('user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
+    list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider')
     search_fields = ('user__email', 'vehicle_number')
     readonly_fields = ('created_at', 'updated_at', 'location_updated_at')
     inlines = [GuarantorInline]
     fieldsets = (
         (None, {'fields': ('user', 'mode_of_transport', 'vehicle_number', 'vehicle_brand', 'plate_number', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')}),
+        ('Verification Documents', {'fields': ('drivers_license_front', 'drivers_license_back', 'nin_front', 'nin_back', 'vehicle_insurance', 'vehicle_registration')}),
         ('Address', {'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude','preferred_location')}),
         ('Next of Kin', {'fields': ('next_of_kin', 'next_of_kin_phone')}),
         ('Performance', {'fields': ('on_time_delivery_rate', 'successful_delivery_rate', 'order_acceptance_rate', 'average_customer_rating')}),
@@ -279,3 +350,209 @@ class NotificationLogAdmin(admin.ModelAdmin):
 
     
 admin.site.register(RiderRating)
+
+
+# ---------------------------------------------------------------------------
+# Staff Page Permissions
+# ---------------------------------------------------------------------------
+
+class StaffPagePermissionInline(admin.TabularInline):
+    model = StaffPagePermission
+    fk_name = 'user'
+    extra = 1
+    fields = ('page',)
+    readonly_fields = ()
+    verbose_name = 'Page Access'
+    verbose_name_plural = 'Custom Admin Page Access'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for obj in instances:
+            if not obj.pk:
+                obj.granted_by = request.user
+            obj.save()
+        formset.save_m2m()
+
+
+class StaffMarketplaceAssignmentInline(admin.TabularInline):
+    model = StaffMarketplaceAssignment
+    fk_name = 'user'
+    extra = 2
+    fields = ('marketplace',)
+    autocomplete_fields = ('marketplace',)
+    verbose_name = 'Marketplace Access'
+    verbose_name_plural = 'Assigned Marketplaces'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user', 'marketplace')
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for obj in instances:
+            if not obj.pk:
+                obj.assigned_by = request.user
+            obj.save()
+        formset.save_m2m()
+
+
+@admin.register(StaffPagePermission)
+class StaffPagePermissionAdmin(admin.ModelAdmin):
+    list_display = ('user_email', 'user_full_name', 'page_display', 'granted_by_email', 'created_at')
+    list_filter = ('page',)
+    search_fields = ('user__email', 'user__full_name')
+    readonly_fields = ('granted_by', 'created_at')
+    autocomplete_fields = ('user',)
+
+    fieldsets = (
+        (None, {
+            'fields': ('user', 'page'),
+            'description': (
+                'Grant a staff user access to a specific page in the custom admin dashboard. '
+                'The user must have <strong>is_staff = True</strong> on their account.'
+            ),
+        }),
+        ('Audit', {'fields': ('granted_by', 'created_at'), 'classes': ('collapse',)}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.granted_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description='User email', ordering='user__email')
+    def user_email(self, obj):
+        return obj.user.email
+
+    @admin.display(description='Full name', ordering='user__full_name')
+    def user_full_name(self, obj):
+        return obj.user.full_name or '—'
+
+    @admin.display(description='Page', ordering='page')
+    def page_display(self, obj):
+        return obj.get_page_display()
+
+    @admin.display(description='Granted by', ordering='granted_by__email')
+    def granted_by_email(self, obj):
+        return obj.granted_by.email if obj.granted_by else '—'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user', 'granted_by')
+
+
+@admin.register(StaffMarketplaceAssignment)
+class StaffMarketplaceAssignmentAdmin(admin.ModelAdmin):
+    list_display = ('user_email', 'user_full_name', 'marketplace_name', 'assigned_by_email', 'created_at')
+    list_filter = ('marketplace',)
+    search_fields = ('user__email', 'user__full_name', 'marketplace__name')
+    readonly_fields = ('assigned_by', 'created_at', 'updated_at')
+    autocomplete_fields = ('user', 'marketplace')
+
+    fieldsets = (
+        (None, {
+            'fields': ('user', 'marketplace'),
+            'description': (
+                'Assign marketplace staff to one or more marketplaces. '
+                'Grant the same user the <strong>Marketplace Staff (limited)</strong> '
+                'page permission for the dedicated pickup-confirmation page.'
+            ),
+        }),
+        ('Audit', {'fields': ('assigned_by', 'created_at', 'updated_at'), 'classes': ('collapse',)}),
+    )
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.assigned_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.display(description='User email', ordering='user__email')
+    def user_email(self, obj):
+        return obj.user.email
+
+    @admin.display(description='Full name', ordering='user__full_name')
+    def user_full_name(self, obj):
+        return obj.user.full_name or '—'
+
+    @admin.display(description='Marketplace', ordering='marketplace__name')
+    def marketplace_name(self, obj):
+        return obj.marketplace.name
+
+    @admin.display(description='Assigned by', ordering='assigned_by__email')
+    def assigned_by_email(self, obj):
+        return obj.assigned_by.email if obj.assigned_by else '—'
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user', 'marketplace', 'assigned_by')
+
+
+# ---------------------------------------------------------------------------
+# Extend UserAdmin with page-permission inline + promote-to-staff action
+# ---------------------------------------------------------------------------
+
+# Unregister the existing UserAdmin and re-register with the inline
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class UserAdminWithPermissions(UserAdmin):
+    inlines = [StaffPagePermissionInline, StaffMarketplaceAssignmentInline]
+    actions = [
+        'set_delivery_percentage_off_for_selected',
+        'send_bulk_notification_to_selected',
+        'promote_to_staff',
+        'demote_from_staff',
+        'grant_all_pages',
+        'revoke_all_pages',
+    ]
+
+    def promote_to_staff(self, request, queryset):
+        updated = queryset.filter(is_staff=False).update(is_staff=True)
+        self.message_user(request, f"{updated} user(s) promoted to staff.")
+
+    promote_to_staff.short_description = "Promote to staff (enable custom admin login)"
+
+    def demote_from_staff(self, request, queryset):
+        updated = queryset.exclude(is_superuser=True).filter(is_staff=True).update(is_staff=False)
+        self.message_user(request, f"{updated} user(s) removed from staff.")
+
+    demote_from_staff.short_description = "Remove staff status (disable custom admin login)"
+
+    def grant_all_pages(self, request, queryset):
+        pages = [p[0] for p in StaffPagePermission.PAGE_CHOICES]
+        created = 0
+        for user in queryset.filter(is_staff=True):
+            for page in pages:
+                _, is_new = StaffPagePermission.objects.get_or_create(
+                    user=user, page=page, defaults={'granted_by': request.user}
+                )
+                if is_new:
+                    created += 1
+        self.message_user(request, f"Granted {created} new page permission(s).")
+
+    grant_all_pages.short_description = "Grant ALL page access to selected staff users"
+
+    def revoke_all_pages(self, request, queryset):
+        deleted, _ = StaffPagePermission.objects.filter(user__in=queryset).delete()
+        self.message_user(request, f"Revoked {deleted} page permission(s).")
+
+    revoke_all_pages.short_description = "Revoke ALL page access from selected staff users"
+
+
+@admin.register(ProductCreationGrant)
+class ProductCreationGrantAdmin(admin.ModelAdmin):
+    list_display = ('vendor', 'action', 'count', 'balance_after', 'granted_by', 'created_at')
+    list_filter = ('action',)
+    search_fields = ('vendor__name', 'vendor__email', 'granted_by__email', 'note')
+    readonly_fields = ('vendor', 'action', 'count', 'balance_after', 'granted_by', 'note', 'created_at')
+    ordering = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser

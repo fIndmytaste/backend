@@ -12,10 +12,24 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('id', 'created_at', 'updated_at', 'track_id')
 
+    def _get_whole_price(self, instance: Order) -> float:
+        """items_total + delivery_fee - promo_discount.
+        Commission is baked into item prices — service_fee is not added separately.
+        """
+        from decimal import Decimal
+        items_total = float(instance.total_amount or Decimal('0.00'))
+        delivery_fee = float(instance.delivery_fee or Decimal('0.00'))
+        promo_discount = float(instance.promo_discount_amount or Decimal('0.00'))
+        return max(0.0, items_total + delivery_fee - promo_discount)
 
-    def to_representation(self, instance:Order):
+    def _compute_rider_display_earning(self, instance: Order) -> float:
+        if instance.rider and instance.rider.is_in_house_rider:
+            return 0.0
+        return float(instance.calculate_net_rider_earning())
+
+    def to_representation(self, instance: Order):
         addition_serializer_data = self.context.get('addition_serializer_data')
-        
+
         # Call super to get default representation
         representation = super().to_representation(instance)
 
@@ -45,17 +59,140 @@ class OrderSerializer(serializers.ModelSerializer):
                 representation['distance'] = 10.05
                 representation['earning'] = 4000
 
+                order_items = (
+                    OrderItem.objects
+                    .filter(order=instance)
+                    .select_related('product')
+                    .prefetch_related('product__productimage_set')
+                )
                 items = [dict(
                     id=item.id,
                     product_name=item.product.name,
-                    product_images = item.product.all_images(),
+                    product_images=item.product.all_images(),
                     quantity=item.quantity,
                     price=item.price,
-                    
-                ) for item in OrderItem.objects.filter(order=instance)]
+                ) for item in order_items]
                 representation['items'] = items
 
+        # Overwrite total_amount with the customer-facing grand total
+        # (items + delivery - discount). Commission is already inside item prices.
+        representation['total_amount'] = self._get_whole_price(instance)
+        representation['items_total'] = float(instance.total_amount or 0)
+        representation['service_fee'] = 0
+        representation['delivery_fee'] = float(instance.delivery_fee or 0)
+        representation['discount_amount'] = float(instance.promo_discount_amount or 0)
+
+        # rider_display_earning = delivery fee after platform commission is deducted.
+        # PlatformSettings is fetched once per serializer instance, not per order.
+        representation['rider_display_earning'] = self._compute_rider_display_earning(instance)
+
         return representation
+
+
+def _compute_rider_earning(instance: Order) -> float:
+    """Net delivery earning after platform commission is deducted."""
+    if instance.rider and instance.rider.is_in_house_rider:
+        return 0.0
+    return float(instance.calculate_net_rider_earning())
+
+
+class RiderOrderDetailSerializer(serializers.Serializer):
+    """
+    Lean, read-only serializer for the rider order detail screen.
+    Returns exactly the fields the screen uses — nothing else.
+    """
+
+    def to_representation(self, instance: Order):
+        from django.utils import timezone as tz
+        now = tz.now()
+
+        # --- items: only what OrderItemsWidget renders ---
+        items = []
+        for item in instance.items.all():
+            product = item.product
+            images = list(product.productimage_set.all())
+            # only the first image is ever shown
+            first_image = images[0].image_url if images else None
+
+            # variant line totals (used for total price computation on Flutter side)
+            variants = []
+            for vs in item.variant_selections.all():
+                variants.append({
+                    'price': float(vs.price_at_purchase),
+                    'quantity': vs.quantity,
+                })
+
+            items.append({
+                'product': {
+                    'id': str(product.id),
+                    'name': product.name,
+                    'price': float(product.price),
+                    'images': [{'image': first_image}] if first_image else [],
+                },
+                'quantity': item.quantity,
+                'price': float(item.price),
+                'variants': variants,
+            })
+
+        # --- vendor: address, name, phone, coordinates for navigation ---
+        vendor = instance.vendor
+        vendor_data = None
+        if vendor:
+            vendor_data = {
+                'id': str(vendor.id),
+                'name': vendor.name,
+                'full_name': vendor.user.full_name if vendor.user else '',
+                'phone_number': vendor.phone_number,
+                'address': vendor.address,
+                'location_latitude': str(vendor.location_latitude or ''),
+                'location_longitude': str(vendor.location_longitude or ''),
+            }
+
+        # --- customer: name + phone for contact card ---
+        customer = instance.user
+        customer_data = None
+        if customer:
+            customer_data = {
+                'id': str(customer.id),
+                'full_name': customer.full_name,
+                'phone_number': customer.phone_number,
+            }
+
+        # --- estimated times ---
+        estimated_pickup_time = None
+        estimated_dropoff_time = None
+        if instance.actual_pickup_time:
+            estimated_pickup_time = instance.actual_pickup_time.isoformat()
+        elif instance.new_estimated_delivery_time:
+            estimated_pickup_time = (now + instance.new_estimated_delivery_time / 2).isoformat()
+        if instance.actual_delivery_time:
+            estimated_dropoff_time = instance.actual_delivery_time.isoformat()
+        elif instance.new_estimated_delivery_time:
+            estimated_dropoff_time = (now + instance.new_estimated_delivery_time).isoformat()
+
+        return {
+            'id': str(instance.id),
+            'track_id': instance.track_id or '',
+            'status': instance.status,
+            'delivery_status': instance.delivery_status or '',
+            'address': instance.address or '',
+            'location_latitude': str(instance.location_latitude or ''),
+            'location_longitude': str(instance.location_longitude or ''),
+            'note': instance.note or '',
+            'rider_display_earning': _compute_rider_earning(instance),
+            'is_marketplace_order': bool(instance.vendor and instance.vendor.is_marketplace),
+            'is_salary_order': bool(instance.rider and instance.rider.is_in_house_rider),
+            'delivery_fee': float(instance.delivery_fee or 0),
+            'total_distance': float(instance.total_distance or 0),
+            'estimated_pickup_time': estimated_pickup_time,
+            'estimated_dropoff_time': estimated_dropoff_time,
+            'actual_pickup_time': instance.actual_pickup_time.isoformat() if instance.actual_pickup_time else None,
+            'actual_delivery_time': instance.actual_delivery_time.isoformat() if instance.actual_delivery_time else None,
+            'created_at': instance.created_at.isoformat() if instance.created_at else None,
+            'items': items,
+            'vendor': vendor_data,
+            'user': customer_data,
+        }
 
 
 class RiderSerializer(serializers.ModelSerializer):

@@ -2,24 +2,63 @@ from datetime import timedelta, timezone
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 
-from account.models import Vendor, VendorRating
-from django.db.models import Sum
+from account.models import StaffPagePermission, Vendor, VendorRating
+from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
+from admin_manager.serializers.lists import AdminVendorListSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
-from drf_yasg import openapi 
+from drf_yasg import openapi
 
 from product.models import Order, Product
+from vendor.models import MarketPlace
 from vendor.serializers import ProductSerializer, VendorSerializer
+
+
+def _is_limited_marketplace_staff(user):
+    """
+    True when the user is a marketplace-scoped staff member: an is_staff
+    (non-superuser) user who has been granted the 'marketplace-staff' page
+    permission.
+    """
+    if not (user.is_authenticated and user.is_staff and not user.is_superuser):
+        return False
+    return StaffPagePermission.objects.filter(
+        user=user, page='marketplace-staff',
+    ).exists()
+
+
+def _staff_marketplace_ids(user):
+    if not _is_limited_marketplace_staff(user):
+        return None
+    return list(user.marketplace_assignments.values_list('marketplace_id', flat=True))
+
+
+def _filter_marketplaces_for_staff(queryset, user):
+    marketplace_ids = _staff_marketplace_ids(user)
+    if marketplace_ids is None:
+        return queryset
+    if not marketplace_ids:
+        return queryset.none()
+    return queryset.filter(id__in=marketplace_ids)
+
+
+def _filter_vendors_for_staff_marketplaces(queryset, user):
+    marketplace_ids = _staff_marketplace_ids(user)
+    if marketplace_ids is None:
+        return queryset
+    if not marketplace_ids:
+        return queryset.none()
+    return queryset.filter(marketplace__id__in=marketplace_ids).distinct()
 
 
 
 
 
 class AdminVendorListView(generics.ListAPIView):
-    serializer_class = VendorSerializer
+    serializer_class = AdminVendorListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Vendor.objects.all()
+    queryset = Vendor.objects.select_related('user', 'category').all()
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",
@@ -32,10 +71,24 @@ class AdminVendorListView(generics.ListAPIView):
     )
     def get(self, request):
         category = request.GET.get("category")
+        search = request.GET.get("search")
         if category:
-            vendors = Vendor.objects.filter(category__name=category)
+            vendors = self.get_queryset().filter(category__name__icontains=category)
         else:
-            vendors = Vendor.objects.all()
+            vendors = self.get_queryset()
+
+        if search:
+            vendors = vendors.filter(
+                Q(name__icontains=search) |
+                Q(email__icontains=search) |
+                Q(phone_number__icontains=search) |
+                Q(address__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search) |
+                Q(user__email__icontains=search)
+            )
+
+        vendors = vendors.order_by('-created_at')
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
@@ -48,9 +101,9 @@ class AdminVendorListView(generics.ListAPIView):
 
 
 class AdminMarketPlaceVendorListView(generics.ListAPIView):
-    serializer_class = VendorSerializer
+    serializer_class = AdminVendorListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Vendor.objects.all()
+    queryset = Vendor.objects.select_related('user', 'category').all()
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",
@@ -63,14 +116,28 @@ class AdminMarketPlaceVendorListView(generics.ListAPIView):
     )
     def get(self, request):
         category = request.GET.get("category")
+        search = request.GET.get("search")
+        vendors = self.get_queryset().filter(
+            Q(is_marketplace=True) | Q(marketplace__isnull=False)
+        ).distinct()
+        vendors = _filter_vendors_for_staff_marketplaces(vendors, request.user)
+
         if category:
-            vendors = Vendor.objects.filter(category__name__icontains='market')
-        else:
-            vendors = Vendor.objects.all()
+            vendors = vendors.filter(category__name__icontains=category)
+
+        if search:
+            vendors = vendors.filter(
+                Q(name__icontains=search) |
+                Q(address__icontains=search) |
+                Q(city__icontains=search) |
+                Q(state__icontains=search) |
+                Q(user__email__icontains=search)
+            )
+
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            vendors,
+            vendors.order_by('-created_at'),
             page_size=int(request.GET.get('page_size',20))
         )
 
@@ -114,7 +181,10 @@ class AdminVendorDetailView(generics.GenericAPIView):
     )
     def get(self, request, vendor_id):
         try:
-            vendor = Vendor.objects.get(id=vendor_id)
+            vendor = _filter_vendors_for_staff_marketplaces(
+                Vendor.objects.all(),
+                request.user,
+            ).get(id=vendor_id)
             serializer = self.serializer_class(vendor)
             return success_response(serializer.data)
         except Vendor.DoesNotExist:
@@ -132,6 +202,8 @@ class AdminVendorDetailView(generics.GenericAPIView):
         }
     )
     def put(self, request, vendor_id):
+        if _is_limited_marketplace_staff(request.user):
+            return bad_request_response(message="You do not have permission to update vendors.", status_code=403)
         try:
             vendor = Vendor.objects.get(id=vendor_id)
             serializer = self.serializer_class(vendor, data=request.data, partial=True)
@@ -380,4 +452,98 @@ class AdminVendorRatingListView(generics.ListAPIView):
             self.serializer_class,
             self.get_queryset(),
             page_size=int(request.GET.get('page_size',10)),
+        )
+
+
+class AdminMarketPlaceListView(generics.GenericAPIView):
+    """List all marketplaces and their delivery fee / time settings."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        marketplaces = _filter_marketplaces_for_staff(MarketPlace.objects.all(), request.user)
+        data = []
+        for mp in marketplaces:
+            data.append({
+                'id': str(mp.id),
+                'name': mp.name,
+                'description': mp.description,
+                'is_active': mp.is_active,
+                'delivery_fee': str(mp.delivery_fee),
+                'second_item_fee': str(mp.second_item_fee),
+                'additional_item_fee': str(mp.additional_item_fee),
+                'special_category_discount_percentage': str(mp.special_category_discount_percentage),
+                'has_perishables': mp.has_perishables,
+                'vendor_count': mp.vendors.count(),
+            })
+        return success_response(data=data)
+
+
+class AdminMarketPlaceDetailView(generics.GenericAPIView):
+    """
+    GET  — retrieve a marketplace's settings.
+    PATCH — update delivery fees, name, description, is_active, has_perishables.
+
+    Also supports updating estimated_delivery_time on all vendors in this
+    marketplace by passing delivery_time_hours (integer, e.g. 48).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, marketplace_id):
+        try:
+            mp = _filter_marketplaces_for_staff(MarketPlace.objects.all(), request.user).get(id=marketplace_id)
+        except MarketPlace.DoesNotExist:
+            return bad_request_response(message="Marketplace not found")
+
+        return success_response(data={
+            'id': str(mp.id),
+            'name': mp.name,
+            'description': mp.description,
+            'is_active': mp.is_active,
+            'delivery_fee': str(mp.delivery_fee),
+            'second_item_fee': str(mp.second_item_fee),
+            'additional_item_fee': str(mp.additional_item_fee),
+            'special_category_discount_percentage': str(mp.special_category_discount_percentage),
+            'has_perishables': mp.has_perishables,
+            'vendor_count': mp.vendors.count(),
+        })
+
+    def patch(self, request, marketplace_id):
+        if _is_limited_marketplace_staff(request.user):
+            return bad_request_response(message="You do not have permission to update marketplace settings.", status_code=403)
+        try:
+            mp = MarketPlace.objects.get(id=marketplace_id)
+        except MarketPlace.DoesNotExist:
+            return bad_request_response(message="Marketplace not found")
+
+        updatable_fields = [
+            'name', 'description', 'is_active', 'has_perishables',
+            'delivery_fee', 'second_item_fee', 'additional_item_fee',
+            'special_category_discount_percentage',
+        ]
+        for field in updatable_fields:
+            if field in request.data:
+                setattr(mp, field, request.data[field])
+        mp.save()
+
+        # Optionally update estimated_delivery_time on all vendors in this marketplace.
+        # Pass delivery_time_hours=48 to set all vendors' estimated_delivery_time to 48h.
+        delivery_time_hours = request.data.get('delivery_time_hours')
+        if delivery_time_hours is not None:
+            try:
+                hours = int(delivery_time_hours)
+                new_duration = timedelta(hours=hours)
+                mp.vendors.all().update(estimated_delivery_time=new_duration)
+            except (ValueError, TypeError):
+                return bad_request_response(message="delivery_time_hours must be an integer")
+
+        return success_response(
+            message="Marketplace updated successfully",
+            data={
+                'id': str(mp.id),
+                'name': mp.name,
+                'delivery_fee': str(mp.delivery_fee),
+                'second_item_fee': str(mp.second_item_fee),
+                'additional_item_fee': str(mp.additional_item_fee),
+                'delivery_time_hours_updated': delivery_time_hours,
+            }
         )

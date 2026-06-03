@@ -2,9 +2,11 @@ from datetime import timedelta
 import uuid
 import string
 import random
+from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from cloudinary.models import CloudinaryField
 from product.promo_models import PromoCode
@@ -39,6 +41,16 @@ class PlatformSettings(models.Model):
     is_commission_active = models.BooleanField(
         default=True,
         help_text="Enable/disable commission calculation platform-wide"
+    )
+    rider_commission_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.00,
+        help_text=(
+            "Platform commission deducted from rider delivery fee before crediting "
+            "the rider. E.g. 10.00 means rider keeps 90% of the delivery fee. "
+            "Set to 0 to disable."
+        )
     )
 
     # Rider Fare Configuration
@@ -79,6 +91,161 @@ class PlatformSettings(models.Model):
         return f"Platform Settings (Commission: {self.default_commission_percentage}%)"
 
 
+class ServiceChargeTier(models.Model):
+    """
+    Flat-rate service charge tier based on product price range.
+    Tiers can be vendor-specific, or category defaults when vendor is blank.
+    Admin can create, edit, or delete tiers at any time without app updates.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    system_category = models.ForeignKey(
+        'SystemCategory',
+        on_delete=models.CASCADE,
+        related_name='service_charge_tiers',
+        help_text="The system category this tier belongs to (e.g. Marketplace, Pharmacy)."
+    )
+    vendor = models.ForeignKey(
+        'account.Vendor',
+        on_delete=models.CASCADE,
+        related_name='service_charge_tiers',
+        null=True,
+        blank=True,
+        help_text="Optional vendor-specific tier. Leave blank to make this a category default."
+    )
+    min_price = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        help_text="Lower bound of the product price range (inclusive). E.g. 100.00"
+    )
+    max_price = models.DecimalField(
+        max_digits=12, decimal_places=2,
+        null=True, blank=True,
+        help_text="Upper bound of the product price range (inclusive). Leave blank for open-ended top tier."
+    )
+    flat_charge = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Fixed naira amount charged as a service fee for items in this range."
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['system_category', 'vendor__name', 'min_price']
+        verbose_name = "Service Charge Tier"
+        verbose_name_plural = "Service Charge Tiers"
+
+    def clean(self):
+        super().clean()
+        if self.max_price is not None and self.max_price < self.min_price:
+            raise ValidationError({'max_price': 'Max price must be greater than or equal to min price.'})
+
+        overlapping = (
+            ServiceChargeTier.objects
+            .filter(
+                system_category=self.system_category,
+                vendor=self.vendor,
+                is_active=True,
+            )
+            .filter(models.Q(min_price__lte=self.max_price) if self.max_price is not None else models.Q())
+            .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=self.min_price))
+        )
+        if self.pk:
+            overlapping = overlapping.exclude(pk=self.pk)
+
+        if self.is_active and overlapping.exists():
+            raise ValidationError(
+                'This active service charge tier overlaps another active tier for the same vendor/category scope.'
+            )
+
+    def __str__(self):
+        upper = f"–₦{self.max_price}" if self.max_price else "+"
+        owner = self.vendor.name if self.vendor else self.system_category.name
+        return f"{owner}: ₦{self.min_price}{upper} → ₦{self.flat_charge}"
+
+    @classmethod
+    def get_charge_for(cls, system_category, price: Decimal, vendor=None) -> Decimal:
+        """
+        Return the flat service charge for a given product price.
+        Vendor-specific tiers override category default tiers.
+        """
+        base_filters = {
+            'system_category': system_category,
+            'is_active': True,
+            'min_price__lte': price,
+        }
+
+        def matching_tier(vendor_value):
+            return (
+                cls.objects
+                .filter(**base_filters, vendor=vendor_value)
+                .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=price))
+                .order_by('-min_price')
+                .first()
+            )
+
+        if vendor is not None:
+            tier = matching_tier(vendor)
+            if tier:
+                return tier.flat_charge
+
+        tier = (
+            cls.objects
+            .filter(**base_filters, vendor__isnull=True)
+            .filter(models.Q(max_price__isnull=True) | models.Q(max_price__gte=price))
+            .order_by('-min_price')
+            .first()
+        )
+        return tier.flat_charge if tier else Decimal('0.00')
+
+
+class BukaItemServiceCharge(models.Model):
+    """
+    Per-item flat service charge for Buka (food) vendors.
+    Each item can have its own charge, editable by admin at any time.
+    Calculation: (base_price + service_charge) × quantity
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(
+        'account.Vendor',
+        on_delete=models.CASCADE,
+        related_name='buka_item_service_charges',
+        null=True,
+        blank=True,
+        help_text="The vendor whose product this item charge applies to."
+    )
+    product = models.OneToOneField(
+        'Product',
+        on_delete=models.CASCADE,
+        related_name='buka_service_charge',
+        help_text="The Buka product this service charge applies to."
+    )
+    flat_charge = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Fixed naira service charge added to this item's price per unit."
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Buka Item Service Charge"
+        verbose_name_plural = "Buka Item Service Charges"
+
+    def clean(self):
+        super().clean()
+        if self.product and self.vendor and self.product.vendor_id != self.vendor_id:
+            raise ValidationError({'product': 'Product must belong to the selected vendor.'})
+
+    def save(self, *args, **kwargs):
+        if self.product_id and not self.vendor_id:
+            self.vendor_id = self.product.vendor_id
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.product.name}: +₦{self.flat_charge}"
+
+
 class DeliveryZone(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -102,6 +269,20 @@ class DeliveryZone(models.Model):
         help_text="Fixed delivery fee for this zone. Example: 1500.00"
     )
 
+    second_item_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Extra delivery fee for the second item in this zone."
+    )
+
+    additional_item_fee = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        help_text="Extra delivery fee per item from the third item onwards in this zone."
+    )
+
     is_active = models.BooleanField(
         default=True,
         help_text="Indicates whether this delivery zone is currently active."
@@ -117,6 +298,30 @@ class DeliveryZone(models.Model):
 
     def __str__(self):
         return self.name
+
+    def calculate_fee(self, item_count=1, is_special_category=False, special_discount_percentage=0):
+        from decimal import Decimal
+
+        item_count = max(int(item_count or 0), 0)
+        if item_count <= 0:
+            return Decimal("0.00")
+
+        base_fee = Decimal(self.fixed_fee)
+        if is_special_category:
+            discount = Decimal(special_discount_percentage or 0) / Decimal("100")
+            if item_count == 1:
+                return base_fee.quantize(Decimal("0.01"))
+            discounted_fee = base_fee * (Decimal("1") - discount)
+            return (base_fee + (discounted_fee * (item_count - 1))).quantize(Decimal("0.01"))
+
+        if item_count == 1:
+            return base_fee.quantize(Decimal("0.01"))
+        if item_count == 2:
+            return (base_fee + Decimal(self.second_item_fee)).quantize(Decimal("0.01"))
+
+        base_for_two = base_fee + Decimal(self.second_item_fee)
+        additional_items = item_count - 2
+        return (base_for_two + (Decimal(self.additional_item_fee) * additional_items)).quantize(Decimal("0.01"))
 
     def contains_location(self, latitude, longitude):
         """
@@ -279,6 +484,16 @@ class SystemCategory(models.Model):
         blank=True,
         help_text="Delivery discount for this category (%)"
     )
+    lock_products_after_approval = models.BooleanField(
+        default=False,
+        help_text=(
+            "When True, vendors in this category are blocked from adding new "
+            "products once the admin has configured pricing for at least one "
+            "of their products. The vendor must contact support to request "
+            "additional product-creation grants. Intended for categories like "
+            "Eatery/Buka where admin sets prices and commissions."
+        ),
+    )
 
     def __str__(self):
         return self.name
@@ -379,107 +594,88 @@ class Product(models.Model):
                 return self.price - discount_amount
         return self.price
 
-    def get_commission_rate(self):
+    def _is_buka_category(self) -> bool:
+        """Return True when this product belongs to a Buka-style system category."""
+        if not self.system_category:
+            return False
+        key = (self.system_category.name_key or '').lower()
+        return 'buka' in key
+
+    def get_service_charge(self, base_price: Decimal = None) -> Decimal:
         """
-        Get the applicable commission rate for this product.
-        Priority: Vendor-specific > Category-specific > Platform default
+        Return the flat service charge the customer pays on top of the base price.
 
-        Returns:
-            Decimal: Commission percentage
+        Logic:
+          • Buka per-item override, if present.
+          • Vendor-specific ServiceChargeTier by price range.
+          • Category default ServiceChargeTier by price range.
+          • Falls back to 0 if no tier/charge is configured.
         """
-        return self.vendor.get_commission_rate()
-
-    def calculate_commission(self, base_price=None):
-        """
-        Calculate commission amount for the product.
-
-        Args:
-            base_price: Optional specific price to calculate commission on.
-                       If None, uses the product's discounted price or regular price.
-
-        Returns:
-            Decimal: Commission amount
-        """
-        from decimal import Decimal
-
-        # # Check if vendor has custom rate
-        # if  self.vendor.commission_percentage is not None:
-        #     return self.vendor.commission_percentage
-
-        # # Check if category has custom rate
-        # if  self.vendor.category and self.vendor.category.commission_percentage is not None:
-        #     return self.vendor.category.commission_percentage
-
-        settings = PlatformSettings.get_settings()
-        if not settings.is_commission_active:
-            return Decimal('0.00')
-
         if base_price is None:
             base_price = self.get_discounted_price()
 
-        rate = self.get_commission_rate() / Decimal('100')
-        return (base_price * rate).quantize(Decimal('0.01'))
+        try:
+            charge_obj = self.buka_service_charge
+            if charge_obj.is_active:
+                return charge_obj.flat_charge
+        except BukaItemServiceCharge.DoesNotExist:
+            pass
 
-    def get_price_with_commission(self):
-        """
-        Get final price including commission (base price case).
-        This is what the customer pays.
+        if self.parent_id:
+            return Decimal('0.00')
 
-        Returns:
-            Decimal: Price + Commission
-        """
-        from decimal import Decimal
-        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'))
+        effective_category = self.system_category or getattr(self.vendor, 'category', None)
+        if effective_category:
+            tier_charge = ServiceChargeTier.get_charge_for(
+                effective_category,
+                base_price,
+                vendor=self.vendor,
+            )
+            if tier_charge:
+                return tier_charge
 
-    def get_discounted_price_with_commission(self):
-        """
-        Get discounted price including commission.
+        return Decimal('0.00')
 
-        Returns:
-            Decimal: Discounted Price + Commission
-        """
-        from decimal import Decimal
+    def get_price_with_service_charge(self) -> Decimal:
+        """Return base price + flat service charge (no discount)."""
+        charge = self.get_service_charge(self.price)
+        return (self.price + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+    def get_discounted_price_with_service_charge(self) -> Decimal:
+        """Return discounted price + flat service charge."""
         discounted = self.get_discounted_price()
-        return (discounted + self.calculate_commission(discounted)).quantize(Decimal('0.01'))
+        charge = self.get_service_charge(discounted)
+        return (discounted + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-    def get_display_price(self):
-        """
-        Get the final price to display to customers (includes commission).
-        Uses discounted price if available, otherwise regular price.
+    def get_display_price(self) -> Decimal:
+        """Price shown to customers — discounted price + flat service charge."""
+        return self.get_discounted_price_with_service_charge()
 
-        Returns:
-            Decimal: Final display price
-        """
-        return self.get_discounted_price_with_commission()
+    # ── Legacy aliases kept so existing callers don't break ──────────────
 
-    def get_vendor_earnings(self, quantity=1):
-        """
-        Calculate what the vendor will receive (price without commission).
+    def get_commission_rate(self):
+        return self.vendor.get_commission_rate()
 
-        Args:
-            quantity: Number of units sold
+    def calculate_commission(self, base_price=None):
+        """Preserved for backward compatibility — now delegates to flat-rate logic."""
+        return self.get_service_charge(base_price)
 
-        Returns:
-            Decimal: Vendor earnings
-        """
-        from decimal import Decimal
+    def get_price_with_commission(self) -> Decimal:
+        return self.get_price_with_service_charge()
+
+    def get_discounted_price_with_commission(self) -> Decimal:
+        return self.get_discounted_price_with_service_charge()
+
+    def get_vendor_earnings(self, quantity=1) -> Decimal:
+        """Vendor receives the base (discounted) price; service charge goes to the platform."""
         base_price = self.get_discounted_price()
         return (base_price * quantity).quantize(Decimal('0.01'))
 
-    def get_platform_earnings(self, quantity=1):
-        """
-        Calculate platform commission earnings.
-
-        Args:
-            quantity: Number of units sold
-
-        Returns:
-            Decimal: Platform commission
-        """
-        from decimal import Decimal
+    def get_platform_earnings(self, quantity=1) -> Decimal:
+        """Platform earns the flat service charge per unit."""
         base_price = self.get_discounted_price()
-        commission = self.calculate_commission(base_price)
-        return (commission * quantity).quantize(Decimal('0.01'))
+        charge = self.get_service_charge(base_price)
+        return (charge * quantity).quantize(Decimal('0.01'))
 
     def is_favorite(self):
         """
@@ -551,6 +747,10 @@ class ProductVariant(models.Model):
         max_digits=10, decimal_places=2, help_text="Price for this variant option.")
     stock = models.PositiveIntegerField(
         default=0, help_text="Stock for this variant option.")
+    track_stock = models.BooleanField(
+        default=False,
+        help_text="When enabled, this variant option is blocked at checkout if stock is 0.",
+    )
     is_active = models.BooleanField(
         default=True, help_text="Is this variant option active?")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -569,39 +769,91 @@ class ProductVariant(models.Model):
         """
         return self.product.get_commission_rate()
 
-    def calculate_commission(self, base_price=None):
+    def get_service_charge(self, base_price: Decimal = None) -> Decimal:
         """
-        Calculate commission amount for the variant.
-
-        Args:
-            base_price: Optional specific price to calculate commission on.
-                       If None, uses the variant's price.
-
-        Returns:
-            Decimal: Commission amount
+        Return the variant-specific flat service charge when configured.
+        Product-level charges and tier charges do not apply to variants.
         """
-        from decimal import Decimal
-
-        settings = PlatformSettings.get_settings()
-        if not settings.is_commission_active:
-            return Decimal('0.00')
-
         if base_price is None:
             base_price = self.price
 
-        rate = self.get_commission_rate() / Decimal('100')
-        return (Decimal(str(base_price)) * rate).quantize(Decimal('0.01'))
+        try:
+            charge_obj = self.buka_service_charge
+            if charge_obj.is_active:
+                return charge_obj.flat_charge
+        except BukaVariantServiceCharge.DoesNotExist:
+            pass
 
-    def get_price_with_commission(self):
-        """
-        Get final price including commission.
-        This is what the customer pays for this variant.
+        return Decimal('0.00')
 
-        Returns:
-            Decimal: Price + Commission
-        """
-        from decimal import Decimal
-        return (self.price + self.calculate_commission(self.price)).quantize(Decimal('0.01'))
+    def calculate_commission(self, base_price=None):
+        """Backward-compatible alias — delegates to flat-rate service charge."""
+        return self.get_service_charge(base_price)
+
+    def get_price_with_commission(self) -> Decimal:
+        """Price customer pays for this variant (base + flat service charge)."""
+        charge = self.get_service_charge(self.price)
+        return (self.price + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+
+class BukaVariantServiceCharge(models.Model):
+    """
+    Per-variant flat service charge for Buka product options.
+    Overrides the parent product charge for the selected variant only.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    vendor = models.ForeignKey(
+        'account.Vendor',
+        on_delete=models.CASCADE,
+        related_name='buka_variant_service_charges',
+        null=True,
+        blank=True,
+        help_text="The vendor whose product variant this charge applies to."
+    )
+    product = models.ForeignKey(
+        'Product',
+        on_delete=models.CASCADE,
+        related_name='buka_variant_service_charges',
+        help_text="The parent Buka product for this variant charge."
+    )
+    variant = models.OneToOneField(
+        'ProductVariant',
+        on_delete=models.CASCADE,
+        related_name='buka_service_charge',
+        help_text="The Buka product variant this service charge applies to."
+    )
+    flat_charge = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        help_text="Fixed naira service charge added to this variant's price per unit."
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Buka Variant Service Charge"
+        verbose_name_plural = "Buka Variant Service Charges"
+
+    def clean(self):
+        super().clean()
+        if self.variant_id:
+            if self.product_id and self.variant.product_id != self.product_id:
+                raise ValidationError({'variant': 'Variant must belong to the selected product.'})
+            if self.vendor_id and self.variant.product.vendor_id != self.vendor_id:
+                raise ValidationError({'variant': 'Variant must belong to the selected vendor.'})
+
+    def save(self, *args, **kwargs):
+        if self.variant_id:
+            if not self.product_id:
+                self.product_id = self.variant.product_id
+            if not self.vendor_id:
+                self.vendor_id = self.variant.product.vendor_id
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.product.name} / {self.variant.name}: +₦{self.flat_charge}"
 
 
 # --- OrderItemVariant for tracking variant selections in orders ---
@@ -663,6 +915,7 @@ class Order(models.Model):
         ('delivered', 'Delivered'),
         ('canceled', 'Canceled'),
         ('rejected', 'Rejected'),
+        ('failed', 'Failed'),
         ('payment_failed', 'Payment Failed'),
     ]
     DELIVERY_STATUS_CHOICES = [
@@ -767,6 +1020,19 @@ class Order(models.Model):
         null=True, blank=True, help_text="Actual time when the rider picked up the order.")
     actual_delivery_time = models.DateTimeField(
         null=True, blank=True, help_text="Actual time when the order was delivered.")
+    pickup_confirmed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='confirmed_marketplace_pickups',
+        help_text="Marketplace staff/admin user who confirmed item pickup."
+    )
+    pickup_confirmed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when marketplace pickup was confirmed."
+    )
 
     payment_method = models.CharField(max_length=20, choices=ORDER_PAYMENT_METHOD_CHOICES,
                                       default='wallet', help_text="The payment method of the order.")
@@ -784,29 +1050,31 @@ class Order(models.Model):
     def __str__(self):
         return f"Order #{self.id}"
 
-    def calculate_total_commission(self):
-        """Calculate total commission for all items in the order."""
+    def calculate_total_commission(self, prefetched_items=None):
+        """Calculate total commission for all items in the order.
+
+        Pass prefetched_items (already-evaluated list) to avoid re-querying the DB.
+        """
         from decimal import Decimal
         total_commission = Decimal('0.00')
 
-        for item in self.items.all():
-            # Commission on base product
+        items = prefetched_items if prefetched_items is not None else self.items.all()
+        for item in items:
             product_commission = item.product.calculate_commission(item.price)
             total_commission += product_commission * item.quantity
 
-            # Commission on variants
             for variant_selection in item.variant_selections.all():
-                # Get the variant's parent product to access commission calculation
                 variant_product = variant_selection.variant.product
                 variant_commission = variant_product.calculate_commission(
                     variant_selection.price_at_purchase)
-                total_commission += variant_commission * variant_selection.quantity
+                total_commission += variant_commission * variant_selection.quantity * item.quantity
 
         return total_commission
 
     def update_total_amount(self):
         """Recalculates the total order amount based on order items."""
-        total = sum(item.total_price() for item in self.items.all())
+        items = self.items.prefetch_related('variant_selections').all()
+        total = sum(item.total_price() for item in items)
         self.total_amount = total
         self.save()
 
@@ -863,22 +1131,77 @@ class Order(models.Model):
     def mark_as_picked_up(self):
         """Mark the order as picked up by the rider."""
         self.status = 'picked_up'
+        self.delivery_status = 'picked_up'
         self.actual_pickup_time = timezone.now()
         self.save()
+
+    def get_pickup_confirmed_by_name(self):
+        if not self.pickup_confirmed_by:
+            return None
+        return (
+            self.pickup_confirmed_by.full_name
+            or f"{self.pickup_confirmed_by.first_name or ''} {self.pickup_confirmed_by.last_name or ''}".strip()
+            or self.pickup_confirmed_by.email
+        )
+
+    def credit_vendor_earning_once(self, description=None):
+        """Credit vendor earning for this order once, regardless of caller."""
+        from decimal import Decimal
+        from wallet.models import Wallet, WalletTransaction
+
+        if not self.vendor or not self.vendor.user:
+            return None
+
+        existing = WalletTransaction.objects.filter(
+            order=self,
+            user=self.vendor.user,
+            transaction_type='earning',
+            status='completed',
+        ).first()
+        if existing:
+            return existing
+
+        vendor_earning = self.calculate_vendor_settlement_amount()
+        if vendor_earning <= 0:
+            vendor_earning = Decimal(str(self.vendor_amount or 0)).quantize(Decimal('0.01'))
+        if vendor_earning <= 0:
+            return None
+
+        self.vendor_amount = vendor_earning
+        self.platform_amount = max(
+            Decimal('0.00'),
+            (Decimal(str(self.get_total_price() or 0)) - vendor_earning).quantize(Decimal('0.01')),
+        )
+        self.save(update_fields=['vendor_amount', 'platform_amount', 'updated_at'])
+
+        vendor_wallet, _ = Wallet.objects.get_or_create(user=self.vendor.user)
+        vendor_wallet.deposit(vendor_earning)
+        return WalletTransaction.objects.create(
+            wallet=vendor_wallet,
+            user=self.vendor.user,
+            amount=vendor_earning,
+            transaction_type='earning',
+            status='completed',
+            description=description or f"Earning from Order #{self.track_id}",
+            order=self,
+        )
 
     def mark_as_in_transit(self):
         """Mark the order as in transit."""
         self.status = 'in_transit'
+        self.delivery_status = 'in_transit'
         self.save()
 
     def mark_as_near_delivery(self):
         """Mark the order as near the delivery location."""
         self.status = 'near_delivery'
+        self.delivery_status = 'near_delivery'
         self.save()
 
     def mark_as_delivered(self):
         """Mark the order as delivered."""
         self.status = 'delivered'
+        self.delivery_status = 'delivered'
         self.actual_delivery_time = timezone.now()
         self.save()
 
@@ -959,38 +1282,68 @@ class Order(models.Model):
 
     def get_total_price(self):
         """Get the total price of the order."""
-        order_items = OrderItem.objects.filter(order=self)
+        order_items = OrderItem.objects.filter(order=self).prefetch_related('variant_selections')
         return sum(item.total_price() for item in order_items)
 
+    def calculate_vendor_settlement_amount(self):
+        """Calculate the vendor's actual take-home amount for the order."""
+        from decimal import Decimal
 
-    def save_vendor_and_commision(self):
-        """Calculate and save the vendor amount and platform commission for this order."""
+        settlement_total = Decimal('0.00')
+        for item in self.items.prefetch_related('variant_selections__variant').all():
+            settlement_total += item.product.get_vendor_earnings(item.quantity)
+            for variant_selection in item.variant_selections.all():
+                settlement_total += (
+                    variant_selection.variant.price * variant_selection.quantity * item.quantity
+                )
+
+        return settlement_total.quantize(Decimal('0.01'))
+
+    def calculate_rider_earning_amount(self):
+        """Calculate what should be credited to the rider for this order."""
+        from decimal import Decimal
+
+        candidate_amounts = [
+            Decimal(str(self.rider_earning or 0)),
+            Decimal(str(self.delivery_fee or 0)),
+            Decimal(str(self.original_delivery_fee or 0)),
+        ]
+        return max(candidate_amounts).quantize(Decimal('0.01'))
+
+    def calculate_net_rider_earning(self, gross_earning=None):
+        """
+        Apply the platform's rider commission to the gross delivery earning.
+
+        The admin sets PlatformSettings.rider_commission_percentage (e.g. 10 for 10%).
+        Rider receives: gross_earning * (1 - commission / 100).
+        If commission is 0 or disabled the full gross amount is returned.
+        """
+        from decimal import Decimal
+        gross = Decimal(str(gross_earning)) if gross_earning is not None else self.calculate_rider_earning_amount()
+        settings = PlatformSettings.get_settings()
+        commission_pct = Decimal(str(settings.rider_commission_percentage or 0))
+        if commission_pct <= 0:
+            return gross.quantize(Decimal('0.01'))
+        net = gross * (1 - commission_pct / Decimal('100'))
+        return max(Decimal('0.00'), net).quantize(Decimal('0.01'))
+
+
+    def save_vendor_and_commision(self, gross_order_amount=None):
+        """Persist the vendor settlement amount for this order."""
         try:
-            total_vendor_amount = 0
-            total_platform_amount = 0
-
-            for item in self.items.all():
-                # Calculate base product amounts
-                vendor_earning = item.product.price 
-                platform_earning = item.product.get_price_with_commission() - item.product.price
-
-                total_vendor_amount += vendor_earning
-                total_platform_amount += platform_earning
-
-                # Calculate variant amounts
-                for variant_selection in item.variant_selections.all():
-                    variant_product: Product = variant_selection.variant.product
-                    variant_vendor_earning = variant_product.price
-                    variant_platform_earning = variant_product.get_price_with_commission() - variant_product.price
-
-                    total_vendor_amount += variant_vendor_earning
-                    total_platform_amount += variant_platform_earning
+            total_vendor_amount = self.calculate_vendor_settlement_amount()
+            if gross_order_amount is None:
+                gross_order_amount = Decimal(str(self.get_total_price() or 0)).quantize(Decimal('0.01'))
+            else:
+                gross_order_amount = Decimal(str(gross_order_amount)).quantize(Decimal('0.01'))
 
             self.vendor_amount = total_vendor_amount
-            self.platform_amount = total_platform_amount
+            self.platform_amount = max(
+                Decimal('0.00'),
+                (gross_order_amount - total_vendor_amount).quantize(Decimal('0.01')),
+            )
             self.save()
         except Exception as e:
-            # Log the error or handle it as needed
             print(f"Error calculating vendor and platform amounts: {e}")    
 
     # def get_vendor_earning(self):
@@ -1006,6 +1359,16 @@ class Order(models.Model):
     #             total_earning += variant_product.get_vendor_earnings(variant_selection.quantity)
 
     #     return total_earning
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', '-created_at'], name='order_user_created_idx'),
+            models.Index(fields=['vendor', '-created_at'], name='order_vendor_created_idx'),
+            models.Index(fields=['rider', '-created_at'], name='order_rider_created_idx'),
+            models.Index(fields=['status'], name='order_status_idx'),
+            models.Index(fields=['payment_status'], name='order_payment_status_idx'),
+            models.Index(fields=['vendor', 'status'], name='order_vendor_status_idx'),
+        ]
 
 
 class OrderItem(models.Model):
@@ -1023,18 +1386,20 @@ class OrderItem(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def total_price(self):
-        """Returns the total price for this item (price * quantity + variant prices)."""
-        # Base product price
+        """Returns the total price for this item (price * quantity + variant prices * quantity)."""
         total = self.price * self.quantity
-
-        # Add variant prices
         for variant_selection in self.variant_selections.all():
-            total += variant_selection.price_at_purchase * variant_selection.quantity
-
+            total += variant_selection.price_at_purchase * variant_selection.quantity * self.quantity
         return total
 
     def __str__(self):
         return f"{self.product.name} (x{self.quantity})"
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['order'], name='orderitem_order_idx'),
+            models.Index(fields=['product'], name='orderitem_product_idx'),
+        ]
 
 
 class DeclinedOrder(models.Model):

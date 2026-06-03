@@ -1,38 +1,181 @@
 import redis
 from django.conf import settings
 from rest_framework import status, generics 
-from django.db.models import Q, Avg,Sum, Count
+from django.db import transaction
+from django.db.models import Q, Avg, Sum, Count, Prefetch
 from account.models import Address, Notification, Rider, User, Vendor, VendorRating
 from account.serializers import VendorRatingSerializer
 from helpers.order_utils import get_distance_between_two_location
+from helpers.vendor_discovery import (
+    approved_vendor_queryset,
+    apply_vendor_search,
+    local_vendor_queryset,
+    filter_and_sort_vendors_by_distance,
+    nearest_first_vendors,
+    resolve_request_coordinates,
+)
 from helpers.push_notification import notification_helper
-from helpers.websocket_notification import send_order_accepted_notification_customer
+from helpers.websocket_notification import (
+    get_candidate_riders_for_order,
+    send_order_accepted_notification_customer,
+)
 from helpers.permissions import IsVendor
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from product.models import Order, Product, ProductImage, SystemCategory, VendorCategory, UserFavoriteVendor
+from product.models import Order, PlatformSettings, Product, ProductImage, SystemCategory, VendorCategory, UserFavoriteVendor
 from product.serializers import OrderSerializer
 from vendor.models import MarketPlace
 from wallet.models import Wallet, WalletTransaction
 from .serializers import (
-    MarketPlaceSerializer, 
-    VendorCategorySerializer, 
-    ProductSerializer, 
+    BuyerVendorCardSerializer,
+    MarketPlaceSerializer,
+    VendorCategorySerializer,
+    BuyerVendorProductSerializer,
+    ProductSerializer,
     VendorRatingCreateSerializer,
-    VendorRegisterBusinessSerializer, 
+    VendorRegisterBusinessSerializer,
     VendorSerializer,
     VendorOrderActionSerializer,
-    VendorImageUploadSerializer
+    VendorImageUploadSerializer,
+    VendorOrderSerializer,
 )
 from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer, validation_error_response
 from helpers.backblaze import upload_to_backblaze
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi 
 from datetime import timedelta
+from django.utils.dateparse import parse_date
 from rest_framework.decorators import api_view
 from math import radians, cos
 import logging
+
+# ---------------------------------------------------------------------------
+# Shared helper: annotate a vendor queryset/list so VendorSerializer can
+# resolve average_rating, total_ratings, is_favorite, and marketplace
+# membership without firing any extra per-vendor SQL queries.
+# ---------------------------------------------------------------------------
+def _annotate_vendors(vendors, user=None, include_rating_objects=False):
+    """
+    Accept either a QuerySet or a plain list of Vendor instances.
+    Returns a list with per-instance attributes set for the serializer.
+    """
+    from django.db.models import Avg, Count, OuterRef, Exists, Subquery, FloatField
+    vendor_list = list(vendors)
+    if not vendor_list:
+        return vendor_list
+
+    vendor_ids = [v.id for v in vendor_list]
+
+    # --- ratings: avg + count per vendor via a single aggregation query ---
+    from account.models import VendorRating
+    rating_qs = (
+        VendorRating.objects
+        .filter(vendor_id__in=vendor_ids)
+        .values('vendor_id')
+        .annotate(avg=Avg('rating'), cnt=Count('id'))
+    )
+    rating_map = {str(row['vendor_id']): row for row in rating_qs}
+
+    ratings_by_vendor = {}
+    if include_rating_objects:
+        # Detail-style serializers need review objects; card serializers only need
+        # aggregate rating fields and should not pull every review row.
+        all_ratings = list(
+            VendorRating.objects
+            .filter(vendor_id__in=vendor_ids)
+            .select_related('user')
+            .order_by('-created_at')
+        )
+        for r in all_ratings:
+            ratings_by_vendor.setdefault(str(r.vendor_id), []).append(r)
+
+    # --- favorite vendor IDs for the current user (single query) ---
+    fav_ids = set()
+    if user and user.is_authenticated:
+        fav_ids = set(
+            str(vid) for vid in
+            UserFavoriteVendor.objects
+            .filter(user=user, vendor_id__in=vendor_ids)
+            .values_list('vendor_id', flat=True)
+        )
+
+    # --- marketplace membership (single query) ---
+    marketplace_vendor_ids = set(
+        str(vid) for vid in
+        MarketPlace.objects
+        .filter(vendors__id__in=vendor_ids)
+        .values_list('vendors', flat=True)
+    )
+
+    for v in vendor_list:
+        vid = str(v.id)
+        row = rating_map.get(vid, {})
+        v._avg_rating = row.get('avg', 0) or 0
+        v._total_ratings = row.get('cnt', 0) or 0
+        if include_rating_objects:
+            # Inject the prefetch cache so _get_prefetched_ratings picks it up.
+            if not hasattr(v, '_prefetched_objects_cache'):
+                v._prefetched_objects_cache = {}
+            v._prefetched_objects_cache['ratings'] = ratings_by_vendor.get(vid, [])
+        v._is_favorite = vid in fav_ids
+        v._is_marketplace_member = vid in marketplace_vendor_ids
+
+    return vendor_list
+
+
+def _request_product_images(request):
+    images = request.FILES.getlist('images')
+    if not images and request.FILES.get('image'):
+        images = [request.FILES['image']]
+    return images
+
+
+def _upload_product_images_or_raise(product, images):
+    for index, img in enumerate(images):
+        upload_result = upload_to_backblaze(
+            file=img,
+            folder=f"products/{product.id}",
+            file_name=f"image_{index + 1}_{img.name}",
+        )
+        download_url = upload_result.get('downloadUrl') if upload_result else ''
+        if not download_url:
+            raise ValueError(f"Storage did not return a download URL for {img.name}.")
+
+        ProductImage.objects.create(
+            product=product,
+            image_url=download_url,
+            is_primary=not ProductImage.objects.filter(product=product, is_primary=True).exists(),
+            is_active=True,
+        )
+
+        logging.info(
+            "Successfully uploaded image %s for product %s: %s",
+            index + 1,
+            product.id,
+            download_url,
+        )
+
+
 # Vendor Views
+
+
+def _apply_date_range_filter(queryset, start_date, end_date, field_name='created_at'):
+    parsed_start = parse_date(start_date) if start_date else None
+    parsed_end = parse_date(end_date) if end_date else None
+
+    if parsed_start:
+        queryset = queryset.filter(**{f'{field_name}__date__gte': parsed_start})
+    if parsed_end:
+        queryset = queryset.filter(**{f'{field_name}__date__lte': parsed_end})
+
+    return queryset
+
+
+def _calculate_vendor_earnings_total(orders):
+    total = 0.0
+    for order in orders:
+        total += float(order.calculate_vendor_settlement_amount())
+    return total
 
 
 class VendorRegisterBusinessView(generics.GenericAPIView):
@@ -325,55 +468,49 @@ class ProductsListCreateView(generics.GenericAPIView):
         #     )
 
         if not user.is_verified:
-            return bad_request_response( 
+            return bad_request_response(
                 message="You must be verified to create a product."
             )
 
-        serializer = self.serializer_class(data=request.data,context={'request': request, 'is_vendor': True})
+        vendor_for_check = Vendor.objects.filter(user=user).first()
+        used_grant = False
+        if vendor_for_check is not None:
+            allowed, reason = vendor_for_check.can_create_products()
+            if not allowed:
+                return bad_request_response(
+                    message=(
+                        "New product creation is currently restricted for this "
+                        "store. Please contact support to request access."
+                    ),
+                    group='PRODUCT_CREATION_RESTRICTED',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                )
+            used_grant = (
+                vendor_for_check.product_creation_locked
+                and vendor_for_check.product_creation_grant_count > 0
+            )
+
+        serializer = self.serializer_class(data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
-        product = serializer.save()
+        images = _request_product_images(request)
 
-        # Handle product images if present in the request
-        images = request.FILES.getlist('images')  # Expecting images as a list of files
+        try:
+            with transaction.atomic():
+                product = serializer.save()
+                _upload_product_images_or_raise(product, images)
+        except Exception as e:
+            logging.error("Failed to create product with images: %s", str(e))
+            return bad_request_response(
+                message=f"Product image upload failed: {str(e)}"
+            )
 
-        if images:
-            # Iterate over the uploaded images and create ProductImage instances
-            for index, img in enumerate(images):
-                # For the first image, mark it as the primary image
-                is_primary = True if index == 0 else False
-                
-                try:
-                    # Upload file to Backblaze B2 and get the URL
-                    folder_name = f"products/{product.id}"
-                    image_url = upload_to_backblaze(
-                        file=img,
-                        folder=folder_name,
-                        file_name=f"image_{index + 1}_{img.name}"
-                    )
-                    
-                    # Create ProductImage instance with the uploaded image URL
-                    ProductImage.objects.create(
-                        product=product,
-                        image_url=image_url.get('downloadUrl', ''),
-                        is_primary=is_primary,
-                        is_active=True
-                    )
-                    
-                    logging.info(f"Successfully uploaded image {index + 1} for product {product.id}: {image_url.get('downloadUrl', '')}")
-                    
-                except Exception as e:
-                    # Log the error but continue with other images
-                    logging.error(f"Failed to upload image {index + 1} for product {product.id}: {str(e)}")
-                    
-                    # Create ProductImage instance with empty URL as fallback
-                    ProductImage.objects.create(
-                        product=product,
-                        image_url='',
-                        is_primary=is_primary,
-                        is_active=False  # Mark as inactive since upload failed
-                    )
+        if used_grant and vendor_for_check is not None:
+            vendor_for_check.consume_product_creation_grant()
 
-        return success_response(serializer.data, status_code=status.HTTP_201_CREATED)
+        # Re-fetch from DB so product_variant reflects the saved variants
+        product.refresh_from_db()
+        response_serializer = self.serializer_class(product, context={'request': request, 'is_vendor': True})
+        return success_response(response_serializer.data, status_code=status.HTTP_201_CREATED)
 
 
 class ProductGetUpdateDeleteView(generics.GenericAPIView):
@@ -423,8 +560,17 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         product = Product.objects.get(id=product_id)
         serializer = ProductSerializer(product, data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return success_response(serializer.data)
+        try:
+            with transaction.atomic():
+                product = serializer.save()
+                _upload_product_images_or_raise(product, _request_product_images(request))
+        except Exception as e:
+            logging.error("Failed to update product images: %s", str(e))
+            return bad_request_response(
+                message=f"Product image upload failed: {str(e)}"
+            )
+        product.refresh_from_db()
+        return success_response(ProductSerializer(product, context={'request': request, 'is_vendor': True}).data)
 
     @swagger_auto_schema(
         operation_summary="Partially update a product's details.",
@@ -436,9 +582,17 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         product = Product.objects.get(id=product_id)
         serializer = ProductSerializer(product, data=request.data, partial=True, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        product_serializer = ProductSerializer(product, context={'request': request, 'is_vendor': True})
-        return success_response(product_serializer.data)
+        try:
+            with transaction.atomic():
+                product = serializer.save()
+                _upload_product_images_or_raise(product, _request_product_images(request))
+        except Exception as e:
+            logging.error("Failed to update product images: %s", str(e))
+            return bad_request_response(
+                message=f"Product image upload failed: {str(e)}"
+            )
+        product.refresh_from_db()
+        return success_response(ProductSerializer(product, context={'request': request, 'is_vendor': True}).data)
 
     @swagger_auto_schema(
         operation_summary="Delete a product by its ID.",
@@ -469,16 +623,25 @@ class VendorOrderListView(generics.ListAPIView):
     - The vendor can filter the orders based on order status, payment status, and date range.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
     
     def get_queryset(self):
         """
         Optionally filter orders for the vendor by status, payment status, or date range.
         """
-        vendor = Vendor.objects.get(user=self.request.user) 
-        
-        queryset = Order.objects.filter(vendor=vendor).order_by('-created_at')
+        vendor = Vendor.objects.only('id').get(user=self.request.user)
+
+        queryset = (
+            Order.objects
+            .filter(vendor=vendor)
+            .select_related('vendor__user', 'rider__user', 'user')
+            .prefetch_related(
+                'items__product__productimage_set',
+                'items__variant_selections__variant__category',
+            )
+            .order_by('-created_at')
+        )
         
         # Filter by order status
         status = self.request.GET.get('status', None)
@@ -493,8 +656,12 @@ class VendorOrderListView(generics.ListAPIView):
         # Filter by date range (created_at)
         start_date = self.request.GET.get('start_date', None)
         end_date = self.request.GET.get('end_date', None)
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='created_at',
+        )
         
         # Allow for searching by order ID (or other fields if desired)
         order_id = self.request.GET.get('order_id', None)
@@ -528,7 +695,7 @@ class VendorPendingOrderListView(generics.ListAPIView):
     View to list all pending orders for a specific vendor.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
 
     def get_queryset(self):
@@ -552,8 +719,12 @@ class VendorPendingOrderListView(generics.ListAPIView):
 
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='updated_at',
+        )
 
         order_id = self.request.GET.get('order_id')
         if order_id:
@@ -585,7 +756,7 @@ class VendorDeliveredOrderListView(generics.ListAPIView):
     View to list all pending orders for a specific vendor.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
     def get_queryset(self):
         vendor = Vendor.objects.only('id').get(user=self.request.user)
@@ -608,8 +779,12 @@ class VendorDeliveredOrderListView(generics.ListAPIView):
 
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='delivered_at',
+        )
 
         order_id = self.request.GET.get('order_id')
         if order_id:
@@ -643,7 +818,7 @@ class VendorInProgressOrderListView(generics.ListAPIView):
     View to list all pending orders for a specific vendor.
     """
     permission_classes = [IsVendor]  # Assuming IsVendor is a custom permission class for vendors
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
 
     def get_queryset(self):
         vendor = Vendor.objects.only('id').get(user=self.request.user)
@@ -675,8 +850,12 @@ class VendorInProgressOrderListView(generics.ListAPIView):
 
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
-        if start_date and end_date:
-            queryset = queryset.filter(created_at__range=[start_date, end_date])
+        queryset = _apply_date_range_filter(
+            queryset,
+            start_date,
+            end_date,
+            field_name='updated_at',
+        )
 
         order_id = self.request.GET.get('order_id')
         if order_id:
@@ -722,15 +901,20 @@ class GetVendorDetailView(generics.GenericAPIView):
     )
     def get(self, request, vendor_id):
         try:
-            vendor = Vendor.objects.get(id=vendor_id)
-            serializer = self.serializer_class(vendor)
+            vendor = (
+                Vendor.objects
+                .select_related('user', 'category')
+                .prefetch_related('ratings__user', 'marketplace_set')
+                .get(id=vendor_id)
+            )
+            serializer = self.serializer_class(vendor, context={'request': request})
             return success_response(serializer.data)
         except Vendor.DoesNotExist:
             return bad_request_response(message="Vendor not found")
         
 
 class BuyerVendorProductListView(generics.ListAPIView):
-    serializer_class = ProductSerializer  # Assuming you have a ProductSerializer
+    serializer_class = BuyerVendorProductSerializer
     permission_classes = []
     
     def get_queryset(self):
@@ -749,20 +933,44 @@ class BuyerVendorProductListView(generics.ListAPIView):
     def get(self, request, vendor_id):
         try:
             # Check if vendor exists
-            vendor = Vendor.objects.get(id=vendor_id)
+            vendor = Vendor.objects.select_related('category').get(id=vendor_id)
 
             if request.user.is_authenticated:
                 is_vendor = True if vendor.user == request.user else False
             else:
                 is_vendor = False
 
-            
+            queryset = (
+                Product.objects
+                .filter(parent=None, vendor=vendor, is_delete=False)
+                .select_related('vendor__category', 'category', 'system_category')
+                .annotate(
+                    average_rating_value=Avg('ratings__rating'),
+                    total_ratings_value=Count('ratings', distinct=True),
+                )
+                .prefetch_related(
+                    Prefetch(
+                        'productimage_set',
+                        queryset=ProductImage.objects.filter(is_active=True).order_by('-is_primary', 'id'),
+                    ),
+                    'productvariantcategory_set__variants',
+                    'variants',
+                )
+                .order_by('-is_featured', 'name')
+            )
+
+            platform_settings = PlatformSettings.get_settings()
+
             return paginate_success_response_with_serializer(
                 request,
                 self.serializer_class,
-                Product.objects.filter(parent=None,vendor=vendor),
+                queryset,
                 page_size=int(request.GET.get('page_size', 20)),
-                addition_serializer_data={'request': request, 'is_vendor': is_vendor}
+                addition_serializer_data={'request': request, 'is_vendor': is_vendor},
+                extra_serializer_context={
+                    'platform_commission_active': platform_settings.is_commission_active,
+                    'platform_default_commission_rate': platform_settings.default_commission_percentage,
+                },
             )
         except Vendor.DoesNotExist:
             return bad_request_response(message= "Vendor not found")
@@ -778,75 +986,26 @@ from drf_yasg.utils import swagger_auto_schema
 
 class HotPickVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
-    def get_vendor_queryset(self, user):
-        # Check for latitude/longitude query parameters first
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-
-        if query_location_latitude and query_location_longitude:
-            try:
-                user_lat = float(query_location_latitude)
-                user_lon = float(query_location_longitude)
-            except ValueError:
-                return Vendor.objects.none()
-        else:
-            # Fall back to user's primary address if authenticated
-            if not user or not isinstance(user, User):
-                return Vendor.objects.none()
-                
-            user_address = Address.objects.filter(
-                is_primary=True,
-                is_active=True,
-                user=user
-            ).order_by('-updated_at').first()
-
-            if not user_address:
-                return Vendor.objects.none()
-            
-            user_lat = user_address.location_latitude
-            user_lon = user_address.location_longitude
-
-            if user_lat is None or user_lon is None:
-                return Vendor.objects.none()
-
-            try:
-                user_lat = float(user_lat)
-                user_lon = float(user_lon)
-            except ValueError:
-                return Vendor.objects.none()
-
-        # Filter vendors roughly in bounding box first
-        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
-            product_count__gt=0,
-            approval_status='approved',
-            location_latitude__isnull=False,
-            location_longitude__isnull=False,
+    def get_vendor_candidates(self):
+        user_lat, user_lon = resolve_request_coordinates(self.request)
+        # Exclude marketplace vendors — they don't have a physical local presence
+        queryset = approved_vendor_queryset(
+            local_vendor_queryset(),
+            require_products=True,
+            require_location=True,
         )
+        search = self.request.query_params.get('search')
+        queryset = apply_vendor_search(queryset, search)
 
-        # Now filter queryset in Python using exact haversine distance (within 10 km)
-        def distance_check(vendor):
-            try:
-                dist = get_distance_between_two_location(
-                    lat1=user_lat,
-                    lon1=user_lon,
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude)
-                )
-                return (vendor, dist)
-            except (TypeError, ValueError):
-                return (vendor, None)
-
-        vendors_within_10km = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
-            for future in as_completed(futures):
-                vendor, dist = future.result()
-                if dist is not None and dist <= vendor.delivery_radius_km:  # consistent with bounding box
-                    vendors_within_10km.append(vendor)
-
-        return vendors_within_10km
+        return filter_and_sort_vendors_by_distance(
+            queryset,
+            user_lat,
+            user_lon,
+            enforce_delivery_radius=True,
+            # BROWSE_RADIUS_KM (10km) — only show vendors near the user
+        )
 
     @swagger_auto_schema(
         operation_description="Get hot pick vendors by combining user favorites, top-rated, and most active vendors.",
@@ -882,11 +1041,8 @@ class HotPickVendorsView(generics.GenericAPIView):
     )
     def get(self, request):
         limit = int(request.GET.get('limit', 10))
-
-        # Get vendors near user (within 10km)
-        try:
-            user:User = User.objects.get(id=self.request.user.id)
-        except User.DoesNotExist:
+        vendor_candidates = self.get_vendor_candidates()
+        if not vendor_candidates:
             return paginate_success_response_with_serializer(
                 request,
                 self.serializer_class,
@@ -894,20 +1050,38 @@ class HotPickVendorsView(generics.GenericAPIView):
                 limit
             )
 
+        favorite_vendor_ids = set()
+        if request.user.is_authenticated:
+            favorite_vendor_ids = set(
+                UserFavoriteVendor.objects.filter(user=request.user).values_list(
+                    'vendor_id',
+                    flat=True,
+                )
+            )
 
-        nearby_vendors = self.get_vendor_queryset(user)
+        ranked_candidates = []
+        for vendor, distance in vendor_candidates:
+            score = float(vendor.rating or 0)
+            if vendor.id in favorite_vendor_ids:
+                score += 100
+            if vendor.is_featured:
+                score += 5
+            ranked_candidates.append((vendor, distance, score))
 
-        # Get user's favorited vendors from nearby vendors
-        favorite_vendors = list(self.get_user_favorites(user, nearby_vendors))
+        # Sort: highest score first, distance as tiebreaker, then name
+        ranked_candidates.sort(
+            key=lambda item: (
+                -item[2],   # score descending (rating + boosts)
+                item[1],    # distance ascending (nearest among equal scores)
+                item[0].name or '',
+            )
+        )
 
-        # Get top-rated vendors from nearby vendors
-        top_rated_vendors = list(self.get_top_rated_vendors(nearby_vendors, limit))
-
-        # Combine vendors: avoid duplicates using set()
-        combined_vendors = set(favorite_vendors + top_rated_vendors)
-
-        # Limit results
-        limited_vendors = list(combined_vendors)[:limit]
+        # Return top N — keep the rating-first order, no re-sort by distance
+        limited_vendors = _annotate_vendors(
+            [vendor for vendor, _, _ in ranked_candidates[:limit]],
+            user=request.user if request.user.is_authenticated else None,
+        )
 
         return paginate_success_response_with_serializer(
             request,
@@ -935,87 +1109,55 @@ class FeaturedVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
 
     # permission_classes = [IsAuthenticated]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
     queryset = Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
     
     def get_queryset(self):
-
-        user = None
-        if self.request.user.is_authenticated:
-            user:User = User.objects.get(id=self.request.user.id)
-        
-        # Check for latitude/longitude query parameters first
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-
-        if query_location_latitude and query_location_longitude:
-            try:
-                user_lat = float(query_location_latitude)
-                user_lon = float(query_location_longitude)
-            except ValueError:
-                return Vendor.objects.filter(is_featured=True,approval_status='approved',).annotate(product_count=Count('product')).filter(product_count__gt=0)
-        else:
-            # Fall back to user's primary address if authenticated
-            if not user or not isinstance(user, User):
-                return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
-            
-            user_address = Address.objects.filter(is_primary=True,is_active=True,user=user).first()
-            if not user_address:
-                return Vendor.objects.filter(is_featured=True,approval_status='approved',).annotate(product_count=Count('product')).filter(product_count__gt=0)
-            
-            user_lat = user_address.location_latitude
-            user_lon = user_address.location_longitude
-            if user_lat is None or user_lon is None:
-                return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
-
-            try:
-                user_lat = float(user_lat)
-                user_lon = float(user_lon)
-            except ValueError:
-                return Vendor.objects.filter(is_featured=True,approval_status='approved',).annotate(product_count=Count('product')).filter(product_count__gt=0)
-
-
-        # Filter vendors roughly in bounding box first
-        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
-            product_count__gt=0,
-            approval_status='approved',
-            location_latitude__isnull=False,
-            location_longitude__isnull=False,
-        )
-
-        # Filter by search param
         search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
+        user_lat, user_lon = resolve_request_coordinates(self.request)
+
+        # Exclude marketplace vendors — featured is a local browsing section
+        featured_queryset = approved_vendor_queryset(
+            local_vendor_queryset(Vendor.objects.filter(is_featured=True)),
+            require_products=True,
+            require_location=user_lat is not None and user_lon is not None,
+        )
+        featured_queryset = apply_vendor_search(featured_queryset, search)
+
+        if user_lat is None or user_lon is None:
+            return featured_queryset.order_by('-rating', 'name')
+
+        # 10km radius — only show featured vendors near the user
+        featured_candidates = filter_and_sort_vendors_by_distance(
+            featured_queryset,
+            user_lat,
+            user_lon,
+            enforce_delivery_radius=True,
+        )
+        if featured_candidates:
+            # Nearest first, rating as tiebreaker
+            featured_candidates.sort(
+                key=lambda item: (item[1], -(float(item[0].rating or 0)), item[0].name or '')
             )
+            return [vendor for vendor, _ in featured_candidates]
 
-        # Now filter queryset in Python using exact haversine distance
-        def distance_check(vendor):
-            try:
-                dist = get_distance_between_two_location(
-                    lat1=user_lat,
-                    lon1=user_lon,
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude)
-                )
-                return (vendor, dist)
-            except (TypeError, ValueError):
-                return (vendor, None)
-
-        vendors_within_5km = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
-            for future in as_completed(futures):
-                vendor, dist = future.result()
-                if dist is not None and dist <= vendor.delivery_radius_km:
-                    vendors_within_5km.append(vendor)
-
-        return vendors_within_5km
+        # No featured vendors within 10km — fall back to top-rated nearby non-marketplace vendors
+        auto_queryset = approved_vendor_queryset(
+            local_vendor_queryset(),
+            require_products=True,
+            require_location=True,
+        )
+        auto_queryset = apply_vendor_search(auto_queryset, search)
+        auto_candidates = filter_and_sort_vendors_by_distance(
+            auto_queryset,
+            user_lat,
+            user_lon,
+            enforce_delivery_radius=True,
+        )
+        auto_candidates.sort(
+            key=lambda item: (-(float(item[0].rating or 0)), item[1], item[0].name or '')
+        )
+        return [vendor for vendor, _ in auto_candidates[:20]]
 
     @swagger_auto_schema(
         operation_description="Get featured vendors based on location. If latitude and longitude are provided, returns featured vendors within 5km of that location. Otherwise, returns all featured vendors.",
@@ -1040,14 +1182,18 @@ class FeaturedVendorsView(generics.GenericAPIView):
         }
     )
     def get(self, request):
+        vendors = _annotate_vendors(
+            self.get_queryset(),
+            user=request.user if request.user.is_authenticated else None,
+        )
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset(),
+            vendors,
             page_size=20
         )
 
-   
+
 
 
 # class AllVendorsView(generics.GenericAPIView):
@@ -1076,97 +1222,42 @@ class FeaturedVendorsView(generics.GenericAPIView):
 
 class AllVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
-
-
-    def get_queryset(self):
-        user = self.request.user
-
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-
-        if not user or not isinstance(user, User):
-            if any([not query_location_latitude, not query_location_latitude]):
-                return Vendor.objects.none()
-            
-            # return Vendor.objects.filter(is_featured=True).annotate(product_count=Count('product')).filter(product_count__gt=0)
-
-        
-
-        if not query_location_latitude or not query_location_longitude:
-            # user_address, _ = Address.objects.get_or_create(user=user)
-            user_address = Address.objects.filter(user=user,is_primary=True,is_active=True).order_by('-updated_at').first()
-            if not user_address:
-                return Vendor.objects.none()
-            user_lat = user_address.location_latitude
-            user_lon = user_address.location_longitude
-        else:
-            user_lat = query_location_latitude
-            user_lon = query_location_longitude
-
-        if user_lat is None or user_lon is None:
-            return Vendor.objects.none()
-
-        try:
-            user_lat = float(user_lat)
-            user_lon = float(user_lon)
-        except ValueError:
-            return Vendor.objects.none()
-
-        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
-            product_count__gt=0,
-            approval_status='approved',
-            location_latitude__isnull=False,
-            location_longitude__isnull=False
-        )
-
-        # Filter by search param
-        search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
-            )
-
-        def distance_check(vendor):
-            try:
-                dist = get_distance_between_two_location(
-                    lat1=user_lat,
-                    lon1=user_lon,
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude)
-                )
-                print(
-                    " User location: ", user_lat, user_lon,
-                    " Vendor location: ", vendor.location_latitude, vendor.location_longitude,
-                )
-                print(dist)
-                print(dist)
-                return (vendor, dist)
-            except (TypeError, ValueError):
-                return (vendor, None)
-
-        vendors_within_5km = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
-            for future in as_completed(futures):
-                vendor, dist = future.result()
-                print(vendor.location_latitude)
-                print(vendor.location_longitude)
-                print(dist,vendor.delivery_radius_km )
-                if dist is not None and dist <= vendor.delivery_radius_km:
-                    vendors_within_5km.append(vendor)
-
-        return vendors_within_5km
-
+    serializer_class = BuyerVendorCardSerializer
 
     def get(self, request):
-        vendors = self.get_queryset()
-        data = self.serializer_class(vendors, many=True,context={'request': request}).data
-        return success_response(data)
+        from helpers.redis_geo import SEARCH_RADIUS_KM
+        search = request.query_params.get('search')
+        user_lat, user_lon = resolve_request_coordinates(request)
+
+        # Non-marketplace vendors only for the main listing
+        regular_qs = approved_vendor_queryset(
+            local_vendor_queryset(),
+            require_products=True,
+            require_location=True,
+        )
+        regular_qs = apply_vendor_search(regular_qs, search)
+
+        if user_lat is not None and user_lon is not None:
+            # Browsing (no search): 10km — only vendors near the user
+            # Searching (keyword): 500km — relevance drives results, not distance
+            radius = SEARCH_RADIUS_KM if search else None  # None = default BROWSE_RADIUS_KM
+            kwargs = dict(enforce_delivery_radius=True)
+            if radius:
+                kwargs['radius_km'] = radius
+            regular_vendors = nearest_first_vendors(regular_qs, user_lat, user_lon, **kwargs)
+        else:
+            regular_vendors = list(regular_qs.order_by('-rating', 'name'))
+
+        regular_vendors = _annotate_vendors(
+            regular_vendors,
+            user=request.user if request.user.is_authenticated else None,
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            regular_vendors,
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 
@@ -1198,7 +1289,7 @@ class SingleMarketPlaceCategoryView(generics.GenericAPIView):
 
 class SingleMarketPlaceCategoryVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
     def get(self, request, category_id):
         try:
@@ -1206,106 +1297,60 @@ class SingleMarketPlaceCategoryVendorsView(generics.GenericAPIView):
         except:
             return bad_request_response(message='Category not found ')
 
-        vendors = marketplace.vendors.order_by('-created_at')
-
-        queryset = vendors.annotate(product_count=Count('product')).filter(
-            # product_count__gt=0,
-        )
-
-        # Filter by search param
         search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
-            )
+        queryset = approved_vendor_queryset(
+            marketplace.vendors.all(),
+            require_products=True,
+            require_location=False,
+        )
+        queryset = apply_vendor_search(queryset, search)
 
-        data = self.serializer_class(queryset, many=True,context={'request': request}).data
-        return success_response(data)
+        vendor_list = _annotate_vendors(
+            list(queryset.order_by('-rating', 'name')),
+            user=request.user if request.user.is_authenticated else None,
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            vendor_list,
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 
 
 class AllMarketPlaceVendorsView(generics.GenericAPIView):
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
+    serializer_class = BuyerVendorCardSerializer
 
 
     def get_queryset(self):
-        user = self.request.user
-
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-
-        if not user or not isinstance(user, User):
-            if any([not query_location_latitude, not query_location_latitude]):
-                return Vendor.objects.none()
-
-        if not query_location_latitude or not query_location_longitude:
-            user_address, _ = Address.objects.get_or_create(user=user)
-            user_lat = user_address.location_latitude
-            user_lon = user_address.location_longitude
-        else:
-            user_lat = query_location_latitude
-            user_lon = query_location_longitude
-
-        if user_lat is None or user_lon is None:
-            return Vendor.objects.none()
-
-        try:
-            user_lat = float(user_lat)
-            user_lon = float(user_lon)
-        except ValueError:
-            return Vendor.objects.none()
-
-        queryset = Vendor.objects.annotate(product_count=Count('product')).filter(
-            product_count__gt=0,
-            location_latitude__isnull=False,
-            location_longitude__isnull=False,
-            is_marketplace=True
-        )
-
-        # Filter by search param
         search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
-            )
+        queryset = approved_vendor_queryset(
+            Vendor.objects.filter(is_marketplace=True),
+            require_products=True,
+            require_location=True,
+        )
+        queryset = apply_vendor_search(queryset, search)
 
-        def distance_check(vendor):
-            try:
-                dist = get_distance_between_two_location(
-                    lat1=user_lat,
-                    lon1=user_lon,
-                    lat2=float(vendor.location_latitude),
-                    lon2=float(vendor.location_longitude)
-                )
-                return (vendor, dist)
-            except (TypeError, ValueError):
-                return (vendor, None)
+        user_lat, user_lon = resolve_request_coordinates(self.request)
+        if user_lat is None or user_lon is None:
+            return queryset.order_by('-rating', 'name')
 
-        vendors_within_5km = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(distance_check, vendor) for vendor in queryset]
-            for future in as_completed(futures):
-                vendor, dist = future.result()
-                if dist is not None and dist <= 5:
-                    vendors_within_5km.append(vendor)
-
-        return vendors_within_5km
+        return nearest_first_vendors(queryset, user_lat, user_lon, enforce_delivery_radius=False)
 
 
     def get(self, request):
-        vendors = self.get_queryset()
-        data = self.serializer_class(vendors, many=True,context={'request': request}).data
-        return success_response(data)
+        vendors = _annotate_vendors(
+            self.get_queryset(),
+            user=request.user if request.user.is_authenticated else None,
+        )
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            vendors,
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 
@@ -1418,150 +1463,48 @@ class AllVendorsNewView(generics.GenericAPIView):
    
 
 class AllVendorsNewCachedView(generics.GenericAPIView):
+    """
+    All-vendors listing using Redis geo for fast proximity queries.
+    Falls back to Haversine if Redis is unavailable.
+    No delivery-radius enforcement here — this is a browsing endpoint.
+    """
     permission_classes = [AllowAny]
-    serializer_class = VendorSerializer
-    queryset = Vendor.objects.filter(is_featured=True)
+    serializer_class = BuyerVendorCardSerializer
 
-    def get_redis_client(self):
-        cache_config = settings.CACHES['default']
-        if 'LOCATION' in cache_config:
-            location_from_url = cache_config['LOCATION']
-            return redis.Redis.from_url(location_from_url)
-        else:
-            # Redis not available, return None to trigger fallback behavior
-            return None
+    def get(self, request):
+        from helpers.redis_geo import SEARCH_RADIUS_KM
+        user_lat, user_lon = resolve_request_coordinates(request)
+        search = request.query_params.get('search')
+        query_category = request.GET.get('category')
 
-    def get_queryset(self): 
-        user = self.request.user
-        query_location_latitude = self.request.GET.get('latitude')
-        query_location_longitude = self.request.GET.get('longitude')
-        query_category = self.request.GET.get('category')
-
-        if not query_location_latitude or not query_location_longitude:
-            user_address = Address.objects.filter(user=user, is_primary=True, is_active=True).first()
-            if not user_address:
-                return Vendor.objects.none()
-            user_lat = user_address.location_latitude
-            user_lon = user_address.location_longitude
-        else:
-            user_lat = query_location_latitude
-            user_lon = query_location_longitude
-
-        if user_lat is None or user_lon is None:
-            return Vendor.objects.none()
-
-        try:
-            user_lat = float(user_lat)
-            user_lon = float(user_lon)
-        except ValueError:
-            return Vendor.objects.none()
-
-        r = self.get_redis_client()
-        
-        if r is not None:
-            # Redis is available, use geospatial queries
-            MAX_RADIUS_KM = 50  # Conservative max to fetch candidates
-
-            # GEORADIUS: Get nearby vendor IDs with distances
-            nearby = r.georadius(
-                "vendors:geo",
-                user_lon, user_lat,  # Center: user lon/lat
-                MAX_RADIUS_KM, 'km',
-                withdist=True,  # Include dist
-                withcoord=False,
-                count=None,  # All within radius
-                sort='ASC'  # Nearest first
-            )
-
-            # nearby: [(b'uuid-string', 2.5), (b'uuid-string', 10.1), ...] -> filter valid vendors
-            vendor_distances = {}
-            valid_ids = []
-            for member_bytes, dist_km in nearby:
-                vendor_id = member_bytes.decode()  # UUID string, no need to convert to int
-                vendor = Vendor.objects.filter(id=vendor_id, approval_status='approved', location_latitude__isnull=False).first()
-                if vendor and dist_km <= vendor.delivery_radius_km:
-                    valid_ids.append(vendor_id)
-                    vendor_distances[vendor_id] = dist_km
-
-            if not valid_ids:
-                return Vendor.objects.none()
-
-            # Base queryset from valid IDs
-            queryset = Vendor.objects.filter(
-                id__in=valid_ids
-            ).annotate(product_count=Count('product')).filter(
-                product_count__gt=0
-            )
-        else:
-            # Redis not available, fallback to database-only filtering
-            from math import radians, cos, sin, asin, sqrt
-            
-            def haversine(lon1, lat1, lon2, lat2):
-                """Calculate the great circle distance between two points on earth (in km)"""
-                lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-                dlon = lon2 - lon1
-                dlat = lat2 - lat1
-                a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                c = 2 * asin(sqrt(a))
-                r = 6371  # Radius of earth in kilometers
-                return c * r
-            
-            # Get all approved vendors with location data
-            all_vendors = Vendor.objects.filter(
-                approval_status='approved',
-                location_latitude__isnull=False,
-                location_longitude__isnull=False
-            ).annotate(product_count=Count('product'))
-            
-            # Filter vendors within their delivery radius
-            valid_vendors = []
-            for vendor in all_vendors:
-                try:
-                    distance = haversine(
-                        float(user_lon), float(user_lat),
-                        float(vendor.location_longitude), float(vendor.location_latitude)
-                    )
-                    if distance <= vendor.delivery_radius_km:
-                        valid_vendors.append(vendor.id)
-                except (ValueError, TypeError):
-                    continue
-            
-            if not valid_vendors:
-                return Vendor.objects.none()
-                
-            queryset = Vendor.objects.filter(
-                id__in=valid_vendors
-            ).annotate(product_count=Count('product')).filter(
-                product_count__gt=0
-            )
-
-        # Apply search and category filters
-        search = self.request.query_params.get('search')
-        if search:
-            queryset = queryset.filter(
-                Q(name__icontains=search) |
-                Q(email__icontains=search) |
-                Q(city__icontains=search) |
-                Q(state__icontains=search) |
-                Q(category__name__icontains=search)
-            )
-
+        # Exclude marketplace vendors — they don't belong in the local feed
+        queryset = approved_vendor_queryset(
+            local_vendor_queryset(),
+            require_products=True,
+            require_location=True,
+        )
+        queryset = apply_vendor_search(queryset, search)
         if query_category:
             queryset = queryset.filter(Q(category__name__icontains=query_category))
 
-        # Optional: Annotate distance for sorting (using Django's Distance func if PostGIS)
-        # from django.contrib.gis.db.models.functions import Distance
-        # queryset = queryset.annotate(distance=Distance('location', Point(user_lon, user_lat)))
-        # queryset = queryset.order_by('distance')
+        if user_lat is None or user_lon is None:
+            vendors = list(queryset.order_by('-rating', 'name'))
+        else:
+            radius = SEARCH_RADIUS_KM if search else None
+            kwargs = dict(enforce_delivery_radius=True)
+            if radius:
+                kwargs['radius_km'] = radius
+            vendors = nearest_first_vendors(queryset, user_lat, user_lon, **kwargs)
 
-        return queryset.order_by('id')  # Or by distance if annotated
-
-    def get(self, request):
+        vendors = _annotate_vendors(
+            vendors,
+            user=request.user if request.user.is_authenticated else None,
+        )
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset(),
-            10
+            vendors,
+            page_size=int(request.GET.get('page_size', 20)),
         )
 
 
@@ -1627,7 +1570,6 @@ class VendorOverviewView(generics.GenericAPIView):
         }
     )
     def get(self, request):
-        from django.utils import timezone
         user = request.user
         try:
             vendor = Vendor.objects.get(user=user)
@@ -1635,38 +1577,50 @@ class VendorOverviewView(generics.GenericAPIView):
             return bad_request_response(message="Vendor Not Found",status_code=404)
         try:
             time_frame = request.GET.get('time_frame', 'weekly')
-            
-            # Get date range based on time_frame
-            # end_date = timezone.now()
-            # if time_frame == 'daily':
-            #     start_date = end_date - timedelta(days=1)
-            # elif time_frame == 'weekly':
-            #     start_date = end_date - timedelta(days=7)
-            # elif time_frame == 'monthly':
-            #     start_date = end_date - timedelta(days=30)
-            # elif time_frame == 'yearly':
-            #     start_date = end_date - timedelta(days=365)
-            # else:
-            #     start_date = end_date - timedelta(days=7)  # Default to weekly
-            
-            # Get orders for this vendor
+            date_from_str = request.GET.get('date_from')
+            date_to_str = request.GET.get('date_to')
+
             vendor_orders = Order.objects.filter(vendor=vendor)
+            created_period_orders = _apply_date_range_filter(
+                vendor_orders,
+                date_from_str,
+                date_to_str,
+                field_name='created_at',
+            )
+            delivered_period_orders = _apply_date_range_filter(
+                vendor_orders.filter(status='delivered'),
+                date_from_str,
+                date_to_str,
+                field_name='delivered_at',
+            )
             
             # Calculate order statistics
-            total_orders = vendor_orders.count()
-            active_orders = vendor_orders.filter(status='pending').count()
-            completed_orders = vendor_orders.filter(status='delivered').count()
-            canceled_orders = vendor_orders.filter(status='canceled').count()
+            total_orders = created_period_orders.count()
+            active_orders = created_period_orders.filter(
+                status__in=[
+                    'pending',
+                    'confirmed',
+                    'preparing',
+                    'looking_for_rider',
+                    'rider_assigned',
+                    'picked_up',
+                    'in_transit',
+                    'near_delivery',
+                ]
+            ).count()
+            completed_orders = delivered_period_orders.count()
+            canceled_orders = created_period_orders.filter(
+                status__in=['canceled', 'cancelled', 'rejected']
+            ).count()
             
             # Calculate financial metrics
-            total_earnings = vendor_orders.filter(payment_status='paid').aggregate(
-                total=Sum('total_amount')
-            )['total'] or 0
+            paid_delivered_orders = delivered_period_orders.filter(
+                payment_status='paid',
+            )
+            total_earnings = _calculate_vendor_earnings_total(paid_delivered_orders)
             
-            # Calculate payouts (assuming you have a Payout model or similar)
-            # This is a placeholder; adjust according to your actual payment tracking system
-            total_payouts = float(total_earnings) * 0.9  # Example: 90% of earnings go to vendor
-            pending_payouts = 0  # Placeholder - replace with actual calculation
+            total_payouts = float(total_earnings)
+            pending_payouts = 0
             
             # Get recent reports or issues (placeholder)
             reports_count = 0  # Replace with actual report count if you have such a feature
@@ -1720,10 +1674,17 @@ class VendorOverviewView(generics.GenericAPIView):
 
 
 class VendorOrderDetailAPIView(generics.RetrieveAPIView):
-    serializer_class = OrderSerializer
+    serializer_class = VendorOrderSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.all()
+    queryset = (
+        Order.objects
+        .select_related('vendor__user', 'rider__user', 'user')
+        .prefetch_related(
+            'items__product__productimage_set',
+            'items__variant_selections__variant__category',
+        )
+    )
 
     @swagger_auto_schema(
         operation_description="Retrieve detailed information of a specific order by ID.",
@@ -1782,7 +1743,7 @@ def process_refund(order:Order):
     Notification.objects.create(
         user=order.user,
         title="Order Refund",
-        content=f"Your payment of {transaction.amount} for order {order.id} has been refunded."
+        content=f"Your payment of {transaction.amount} for order #{order.track_id} has been refunded."
     )
     return f"Refunded {transaction.amount} to user {order.user.id} for order {order.id}."
 
@@ -1850,6 +1811,12 @@ class VendorOrderActionAPIView(generics.GenericAPIView):
             order.delivery_status = 'canceled'
             order.save()
 
+            Notification.objects.create(
+                user=order.user,
+                title="Order Rejected",
+                content=f"Your order #{order.track_id} was rejected by {order.vendor.name}.",
+            )
+
 
 
             # refund user if they had already paid
@@ -1889,11 +1856,14 @@ class VendorOrderActionAPIView(generics.GenericAPIView):
                     title="Order Rejected",
                     body=f"Your order #{order.track_id} was rejected.",
                     data={
-                        "event": "order_rejected",
+                        "type": "order_status_update",
                         "order_id": str(order.id),
+                        "status": "rejected",
+                        "delivery_status": "canceled",
                         "vendor_id": str(order.vendor.id),
                         "vendor_name": order.vendor.name,
-                        "screen": "order_details"
+                        "screen": "order_details",
+                        "track_id": str(order.track_id),
                     }
                 )
                 print(f"Push rejection notification sent: {result}")
@@ -1985,7 +1955,7 @@ def vendor_rating_stats(request, vendor_id):
             'total_ratings': ratings.count(),
             'rating_distribution': rating_distribution,
             'recent_reviews': VendorRatingSerializer(
-                ratings.filter(comment__isnull=False).exclude(comment='').order_by('-created_at')[:10], 
+                ratings.order_by('-created_at')[:10],
                 many=True
             ).data
         }
@@ -2179,15 +2149,22 @@ def send_new_order_push_notification_riders(order):
         order (Order): The order instance to notify riders about.
     """
     try:
-        riders = Rider.objects.filter(active='active')
+        riders = get_candidate_riders_for_order(order)
 
         def send_notification(rider):
             try:
                 notification_helper.send_to_user_async(
                     user=rider.user,
                     title="New order! 🎉",
-                    body=f"A new order is available for pickup at {order.vendor.name}.",
-                    data={"event": "new_order_event", "order_id": str(order.id)}
+                    body=f"Order #{order.track_id} is available for pickup at {order.vendor.name}.",
+                    data={
+                        "event": "new_order_event",
+                        "type": "new_order_event",
+                        "order_id": str(order.id),
+                        "track_id": str(order.track_id),
+                        "vendor_name": order.vendor.name,
+                        "message": f"Order #{order.track_id} is ready for pickup.",
+                    }
                 )
             except Exception as e:
                 print(f"Push notification error for rider {rider.id}: {e}")
@@ -2198,4 +2175,3 @@ def send_new_order_push_notification_riders(order):
 
     except Exception as e:
         print(f"Error sending push notifications to riders: {e}")
-

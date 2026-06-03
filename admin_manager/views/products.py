@@ -1,19 +1,61 @@
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum
+from django.db import transaction
+from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
 from datetime import timedelta
+from uuid import UUID
 
-from account.models import Rider, User
+from account.models import Rider, StaffPagePermission, User, Vendor
 from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
-from product.models import Order, Product, Rating, SystemCategory
+from product.models import DeliveryZone, Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
-from product.serializers import OrderSerializer, RatingSerializer
+from product.promo_models import PromoUsage
+from product.serializers import AdminOrderListSerializer, AdminPromoOrderSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
+
+
+def _is_uuid(value):
+    try:
+        UUID(str(value))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_limited_marketplace_staff(user):
+    """
+    True when the user is a marketplace-scoped staff member: an is_staff
+    (non-superuser) user who has been granted the 'marketplace-staff' page
+    permission. These users only see orders for their assigned marketplaces
+    and receive a stripped-down serializer.
+    """
+    if not (user.is_authenticated and user.is_staff and not user.is_superuser):
+        return False
+    return StaffPagePermission.objects.filter(
+        user=user, page='marketplace-staff',
+    ).exists()
+
+
+def _staff_marketplace_ids(user):
+    if not _is_limited_marketplace_staff(user):
+        return None
+    return list(
+        user.marketplace_assignments.values_list('marketplace_id', flat=True)
+    )
+
+
+def _filter_for_staff_marketplaces(queryset, user):
+    marketplace_ids = _staff_marketplace_ids(user)
+    if marketplace_ids is None:
+        return queryset
+    if not marketplace_ids:
+        return queryset.none()
+    return queryset.filter(vendor__marketplace__id__in=marketplace_ids).distinct()
 
 
 class AdminSystemCategoryListView(generics.GenericAPIView):
@@ -30,8 +72,71 @@ class AdminSystemCategoryListView(generics.GenericAPIView):
     )
     def get(self, request):
         categories = SystemCategory.objects.all()
+
+        marketplace_ids = _staff_marketplace_ids(request.user)
+        if marketplace_ids is not None:
+            # Limited marketplace staff — only show categories actually
+            # used by vendors in their assigned marketplaces.
+            if not marketplace_ids:
+                categories = categories.none()
+            else:
+                relevant_category_ids = Vendor.objects.filter(
+                    marketplace__id__in=marketplace_ids,
+                    category__isnull=False,
+                ).values_list('category_id', flat=True).distinct()
+                categories = categories.filter(id__in=relevant_category_ids)
+
         serializer = self.serializer_class(categories, many=True)
         return success_response(serializer.data)
+
+
+class AdminDeliveryZoneListView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+
+        marketplace_ids = _staff_marketplace_ids(request.user)
+        if marketplace_ids is not None:
+            # Limited marketplace staff — only show zones that contain at
+            # least one of their orders' delivery (or pickup) coordinates.
+            if not marketplace_ids:
+                zones = []
+            else:
+                order_locations = Order.objects.filter(
+                    Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False),
+                    vendor__marketplace__id__in=marketplace_ids,
+                ).values(
+                    'delivery_latitude',
+                    'delivery_longitude',
+                    'location_latitude',
+                    'location_longitude',
+                )
+                relevant_zone_ids = set()
+                remaining = {z.id for z in zones}
+                for loc in order_locations:
+                    if not remaining:
+                        break
+                    lat = loc['delivery_latitude'] or loc['location_latitude']
+                    lon = loc['delivery_longitude'] or loc['location_longitude']
+                    if lat is None or lon is None:
+                        continue
+                    for zone in zones:
+                        if zone.id in remaining and zone.contains_location(lat, lon):
+                            relevant_zone_ids.add(zone.id)
+                            remaining.discard(zone.id)
+                zones = [z for z in zones if z.id in relevant_zone_ids]
+
+        return success_response([
+            {
+                "id": str(zone.id),
+                "name": zone.name,
+                "fixed_fee": float(zone.fixed_fee),
+                "second_item_fee": float(zone.second_item_fee),
+                "additional_item_fee": float(zone.additional_item_fee),
+            }
+            for zone in zones
+        ])
 
 
 
@@ -128,7 +233,14 @@ class AdminProductRatingListView(generics.ListAPIView):
 
 class AdminDashboardOverviewAPIView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
-    
+
+    # Statuses that mean an order is actively being processed (not yet done, not cancelled)
+    ACTIVE_ORDER_STATUSES = [
+        'pending', 'confirmed', 'preparing',
+        'looking_for_rider', 'rider_assigned',
+        'picked_up', 'in_transit', 'near_delivery',
+    ]
+
     @swagger_auto_schema(
         operation_summary="Admin Dashboard Overview",
         operation_description="Get dashboard metrics (orders, users, earnings, payouts) for a specific time range.",
@@ -136,187 +248,210 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             openapi.Parameter(
                 'time_range',
                 openapi.IN_QUERY,
-                description="Time range filter (week, month, year). Defaults to 'week'.",
+                description="Time range filter (day, week, month, year). Defaults to 'week'.",
                 type=openapi.TYPE_STRING,
-                enum=['week', 'month', 'year'],
+                enum=['day', 'week', 'month', 'year'],
                 required=False
             )
         ],
-        responses={
-            200: openapi.Response(
-                description="Dashboard metrics successfully retrieved.",
-                examples={
-                    "application/json": {
-                        "success": True,
-                        "data": {
-                            "order_overview": {
-                                "total_orders": {"value": 120, "growth": True},
-                                "active_orders": {"value": 25},
-                                "completed_orders": {"value": 80},
-                                "canceled_orders": {"value": 15}
-                            },
-                            "revenue_summary": {
-                                "total_earnings": {"value": 25400.00, "growth": True},
-                                "vendor_payouts": {"value": 22860.00}
-                            },
-                            "user_metrics": {
-                                "active_users": {"value": 140, "growth": True},
-                                "new_users": {"value": 30},
-                                "vendors": {"value": 12},
-                                "riders": {"value": 5}
-                            }
-                        }
-                    }
-                }
-            ),
-            401: "Unauthorized"
-        }
+        responses={200: "Dashboard metrics", 401: "Unauthorized"}
     )
     def get(self, request):
-        # Get time range filter (default to weekly)
-        time_range = request.query_params.get('time_range', 'week')
-        
-        # Calculate date range based on filter
-        today = timezone.now()
-        if time_range == 'week':
-            start_date = today - timedelta(days=7)
-        elif time_range == 'month':
-            start_date = today - timedelta(days=30)
-        elif time_range == 'year':
-            start_date = today - timedelta(days=365)
-        else:
-            start_date = today - timedelta(days=7)  # Default to weekly
-        
-        # Get orders data
-        total_orders = Order.objects.filter(created_at__gte=start_date).count()
-        active_orders = Order.objects.filter(status='pending', created_at__gte=start_date).count()
-        completed_orders = Order.objects.filter(status='delivered', created_at__gte=start_date).count()
-        canceled_orders = Order.objects.filter(status='canceled', created_at__gte=start_date).count()
-        
-        # Get revenue data
-        total_earnings = Order.objects.filter(
-            payment_status='paid', 
-            created_at__gte=start_date
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-        
-        # Calculate vendor payouts
-        # Assuming vendor gets 90% of order amount, adjust as needed
-        print(total_earnings)
-        vendor_payouts = float(total_earnings) * 0.9
-        
-        total_users = User.objects.all().count()
+        # Accept both `time_range` (existing) and `period` (frontend dropdown).
+        raw = (
+            request.query_params.get('time_range')
+            or request.query_params.get('period')
+            or 'week'
+        ).lower()
+        # Map adjective forms ("daily", "weekly", ...) to bare nouns.
+        adjective_map = {
+            'daily': 'day',
+            'weekly': 'week',
+            'monthly': 'month',
+            'yearly': 'year',
+        }
+        time_range = adjective_map.get(raw, raw)
 
+        today = timezone.now()
+        if time_range == 'day':
+            delta = timedelta(days=1)
+        elif time_range == 'month':
+            delta = timedelta(days=30)
+        elif time_range == 'year':
+            delta = timedelta(days=365)
+        else:
+            time_range = 'week'
+            delta = timedelta(days=7)
+
+        start_date = today - delta
+        prev_start = start_date - delta
+
+        # ── Orders ──────────────────────────────────────────────────────────
+        base_orders = Order.objects.filter(created_at__gte=start_date)
+
+        completed_statuses = ['delivered']
+        canceled_statuses = ['canceled', 'cancelled', 'rejected', 'failed', 'payment_failed']
+
+        order_agg = base_orders.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status__in=self.ACTIVE_ORDER_STATUSES)),
+            completed=Count('id', filter=Q(status__in=completed_statuses) | Q(delivery_status__in=completed_statuses)),
+            canceled=Count('id', filter=Q(status__in=canceled_statuses) | Q(delivery_status__in=canceled_statuses)),
+        )
+
+        # ── Revenue: use real vendor_amount field, fall back to sum of total_amount ──
+        revenue_agg = base_orders.filter(payment_status='paid').aggregate(
+            total_earnings=Sum('total_amount'),
+            vendor_payouts=Sum('vendor_amount'),
+            platform_earnings=Sum('platform_amount'),
+        )
+        total_earnings = revenue_agg['total_earnings'] or 0
+        vendor_payouts = revenue_agg['vendor_payouts'] or 0
+
+        # ── Previous period for growth indicators ───────────────────────────
+        prev_orders = Order.objects.filter(
+            created_at__gte=prev_start,
+            created_at__lt=start_date,
+        )
+        prev_total = prev_orders.count()
+        prev_earnings = prev_orders.filter(payment_status='paid').aggregate(
+            total=Sum('total_amount')
+        )['total'] or 0
+
+        order_growth = order_agg['total'] > 0 if prev_total == 0 else (order_agg['total'] > prev_total)
+        earnings_growth = total_earnings > 0 if float(prev_earnings) == 0 else (float(total_earnings) > float(prev_earnings))
+
+        # ── Users ────────────────────────────────────────────────────────────
+        total_users = User.objects.count()
         total_customers = User.objects.filter(role='buyer').count()
-        # Get user metrics
-        active_users = User.objects.filter(
-            is_active=True, 
-            last_login__gte=start_date
-        ).count()
-        
-        new_users = User.objects.filter(
-            created_at__gte=start_date
-        ).count()
-        
-        vendors_count = User.objects.filter(
-            role='vendor',
-            created_at__gte=start_date
-        ).count()
-        
-        riders_count = User.objects.filter(
-            role='rider',
-            created_at__gte=start_date
-        ).count()
-        
-        # Check if there's growth compared to previous period
-        previous_start = start_date - (today - start_date)
-        previous_end = start_date
-        
-        prev_total_orders = Order.objects.filter(
-            created_at__gte=previous_start,
-            created_at__lt=previous_end
-        ).count()
-        
+
+        active_users = User.objects.filter(is_active=True, last_login__gte=start_date).count()
+        new_users = User.objects.filter(created_at__gte=start_date).count()
+        vendors_count = Vendor.objects.count()
+        riders_count = Rider.objects.count()
+
         prev_active_users = User.objects.filter(
             is_active=True,
-            last_login__gte=previous_start,
-            last_login__lt=previous_end
+            last_login__gte=prev_start,
+            last_login__lt=start_date,
         ).count()
-        
-        prev_total_earnings = Order.objects.filter(
-            payment_status='paid',
-            created_at__gte=previous_start,
-            created_at__lt=previous_end
-        ).aggregate(total=Sum('total_amount'))['total'] or 0
-        
-        # Calculate growth indicators
-        order_growth = (total_orders > prev_total_orders) if prev_total_orders > 0 else True
-        user_growth = (active_users > prev_active_users) if prev_active_users > 0 else True
-        earnings_growth = (total_earnings > prev_total_earnings) if prev_total_earnings > 0 else True
-        
+        user_growth = active_users > 0 if prev_active_users == 0 else (active_users > prev_active_users)
+
         return success_response(data={
+            "period": time_range,
             "order_overview": {
-                "total_orders": {
-                    "value": total_orders,
-                    "growth": order_growth
-                },
-                "active_orders": {
-                    "value": active_orders
-                },
-                "completed_orders": {
-                    "value": completed_orders
-                },
-                "canceled_orders": {
-                    "value": canceled_orders
-                }
+                "total_orders": {"value": order_agg['total'], "growth": order_growth},
+                "active_orders": {"value": order_agg['active']},
+                "completed_orders": {"value": order_agg['completed']},
+                "canceled_orders": {"value": order_agg['canceled']},
             },
             "revenue_summary": {
-                "total_earnings": {
-                    "value": float(total_earnings),
-                    "growth": earnings_growth
-                },
-                "vendor_payouts": {
-                    "value": float(vendor_payouts)
-                }
+                "total_earnings": {"value": float(total_earnings), "growth": earnings_growth},
+                "vendor_payouts": {"value": float(vendor_payouts)},
+                "platform_earnings": {"value": float(revenue_agg['platform_earnings'] or 0)},
             },
             "user_metrics": {
-                "total_users": {
-                    "value": total_users    
-                },
-                "total_customers": {
-                    "value": total_customers
-                },
-                "active_users": {
-                    "value": active_users,
-                    "growth": user_growth
-                },
-                "new_users": {
-                    "value": new_users
-                },
-                "vendors": {
-                    "value": vendors_count
-                },
-                "riders": {
-                    "value": riders_count
-                }
+                "total_users": {"value": total_users},
+                "total_customers": {"value": total_customers},
+                "customers": {"value": total_customers},
+                "active_users": {"value": active_users, "growth": user_growth},
+                "new_users": {"value": new_users},
+                "vendors": {"value": vendors_count},
+                "riders": {"value": riders_count},
             }
         })
 
 
 
 class AdminGetMarketPlaceRiderListView(generics.GenericAPIView):
-    permission_classes = []
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     serializer_class = RiderSerializer
-    queryset = Rider.objects.all()
+    queryset = Rider.objects.filter(is_in_house_rider=True).select_related('user')
 
+
+    def _zone_for_location(self, zones, latitude, longitude):
+        if latitude is None or longitude is None:
+            return None
+        try:
+            lat = float(latitude)
+            lng = float(longitude)
+        except (TypeError, ValueError):
+            return None
+        return next((zone for zone in zones if zone.contains_location(lat, lng)), None)
 
     def get(self,request):
+        order = None
+        order_id = request.GET.get('order_id')
+        zone_id = request.GET.get('zone_id')
+        queryset = self.get_queryset().filter(
+            status='active',
+            is_verified=True,
+        ).annotate(
+            ongoing_orders_count=Count(
+                'orders',
+                filter=Q(orders__status__in=[
+                    'rider_assigned',
+                    'confirmed',
+                    'preparing',
+                    'picked_up',
+                    'in_transit',
+                    'near_delivery',
+                ]),
+                distinct=True,
+            )
+        ).annotate(
+            overall_rating=Avg('ratings__rating'),
+        ).order_by('ongoing_orders_count', '-created_at')
+        zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        order_zone = None
+
+        if zone_id:
+            order_zone = next((zone for zone in zones if str(zone.id) == str(zone_id)), None)
+            if not order_zone:
+                return bad_request_response(message="Delivery zone not found.", status_code=404)
+
+        if order_id:
+            try:
+                order = Order.objects.only(
+                    'id',
+                    'delivery_latitude',
+                    'delivery_longitude',
+                    'location_latitude',
+                    'location_longitude',
+                ).get(id=order_id)
+            except Order.DoesNotExist:
+                return bad_request_response(message="Order not found.", status_code=404)
+
+            if not order_zone:
+                latitude = order.delivery_latitude or order.location_latitude
+                longitude = order.delivery_longitude or order.location_longitude
+                order_zone = self._zone_for_location(zones, latitude, longitude)
+
+        if order_zone:
+            matching_ids = [
+                rider.id
+                for rider in queryset
+                if self._zone_for_location(
+                    zones,
+                    rider.current_latitude or rider.location_latitude,
+                    rider.current_longitude or rider.location_longitude,
+                ) == order_zone
+            ]
+            queryset = queryset.filter(id__in=matching_ids)
+
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
-            self.get_queryset(),
+            queryset,
             page_size=int(request.GET.get('page_size',20)),
-            addition_serializer_data={"rider_type":'marketplace'}
+            addition_serializer_data={
+                "rider_type":'marketplace',
+                "marketplace_order": order,
+            },
+            extra_serializer_context={
+                "active_delivery_zones": zones,
+                "assignment_order_zone": order_zone,
+            },
         )
     
 
@@ -328,7 +463,16 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
 
 
     def get_queryset(self,vendor_id):
-        queryset = Order.objects.filter(vendor__id=vendor_id).order_by('-created_at')
+        queryset = Order.objects.filter(vendor__id=vendor_id).select_related(
+            'user',
+            'vendor',
+            'vendor__user',
+            'vendor__category',
+            'rider',
+            'rider__user',
+            'pickup_confirmed_by',
+        ).prefetch_related('vendor__marketplace_set').order_by('-created_at')
+        queryset = _filter_for_staff_marketplaces(queryset, self.request.user)
         track_id = self.request.GET.get('track_id')
         status = self.request.GET.get('status')
 
@@ -390,11 +534,16 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self,request,vendor_id):
+        limited_staff = _is_limited_marketplace_staff(request.user)
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             self.get_queryset(vendor_id),
-            page_size=int(request.GET.get('page_size',20))
+            page_size=int(request.GET.get('page_size',20)),
+            extra_serializer_context={
+                'marketplace_staff_limited': limited_staff,
+                'include_delivery_info': not limited_staff,
+            },
         )
 
 
@@ -402,21 +551,57 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
 
 
 class AdminGetAllOrdersAPIView(generics.GenericAPIView):
-    serializer_class = OrderSerializer
+    serializer_class = AdminOrderListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Order.objects.all().order_by('-created_at')
+    queryset = Order.objects.all().select_related(
+        'user',
+        'vendor',
+        'vendor__user',
+        'vendor__category',
+        'rider',
+        'rider__user',
+        'pickup_confirmed_by',
+    ).prefetch_related('vendor__marketplace_set').order_by('-created_at')
 
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = _filter_for_staff_marketplaces(super().get_queryset(), self.request.user)
         track_id = self.request.GET.get('track_id')
+        search = self.request.GET.get('search')
         status = self.request.GET.get('status')
+        category = self.request.GET.get('category') or self.request.GET.get('category_id')
+        marketplace = self.request.GET.get('marketplace') or self.request.GET.get('marketplace_id')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
 
+        if search:
+            queryset = queryset.filter(
+                Q(track_id__icontains=search) |
+                Q(id__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(vendor__name__icontains=search) |
+                Q(vendor__email__icontains=search) |
+                Q(vendor__category__name__icontains=search) |
+                Q(vendor__marketplace__name__icontains=search) |
+                Q(address__icontains=search)
+            ).distinct()
+
         if status:
             queryset = queryset.filter(status__iexact=status)
+
+        if category:
+            category_filter = Q(vendor__category__name__icontains=category)
+            if _is_uuid(category):
+                category_filter |= Q(vendor__category_id=category)
+            queryset = queryset.filter(category_filter)
+
+        if marketplace:
+            marketplace_filter = Q(vendor__marketplace__name__icontains=marketplace)
+            if _is_uuid(marketplace):
+                marketplace_filter |= Q(vendor__marketplace__id=marketplace)
+            queryset = queryset.filter(marketplace_filter).distinct()
 
         return queryset
 
@@ -468,43 +653,191 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self,request):
+        limited_staff = _is_limited_marketplace_staff(request.user)
         addition_serializer_data = {
             'is_vendor':True
         }
+        active_delivery_zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             self.get_queryset(),
             page_size=int(request.GET.get('page_size',20)),
-            addition_serializer_data=addition_serializer_data
+            addition_serializer_data=addition_serializer_data,
+            extra_serializer_context={
+                'active_delivery_zones': active_delivery_zones,
+                'marketplace_staff_limited': limited_staff,
+            }
         )
     
+
+
+class AdminPromoOrdersAPIView(generics.GenericAPIView):
+    serializer_class = AdminPromoOrderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = PromoUsage.objects.select_related(
+            'promo',
+            'user',
+            'order',
+            'order__user',
+            'order__vendor',
+        ).order_by('-used_at')
+
+        search = self.request.GET.get('search')
+        promo_code = self.request.GET.get('promo_code')
+
+        if search:
+            queryset = queryset.filter(
+                Q(order__track_id__icontains=search) |
+                Q(order__id__icontains=search) |
+                Q(promo__code__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search) |
+                Q(order__vendor__name__icontains=search) |
+                Q(order__vendor__email__icontains=search)
+            ).distinct()
+
+        if promo_code:
+            queryset = queryset.filter(promo__code__icontains=promo_code)
+
+        return queryset
+
+    def get(self, request):
+        return paginate_success_response_with_serializer(
+            request,
+            self.serializer_class,
+            self.get_queryset(),
+            page_size=int(request.GET.get('page_size', 20)),
+        )
 
 
 class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
     """
     Endpoint to fetch all orders from all marketplace vendors.
     """
-    serializer_class = OrderSerializer
+    serializer_class = AdminOrderListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Order.objects.filter(vendor__is_marketplace=True).order_by('-created_at')
+    queryset = Order.objects.filter(
+        Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False)
+    ).distinct().order_by('-created_at')
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().select_related(
+            'user',
+            'vendor',
+            'vendor__user',
+            'vendor__category',
+            'rider',
+            'rider__user',
+            'pickup_confirmed_by',
+        ).prefetch_related(
+            'vendor__marketplace_set',
+            'items',
+            'items__product',
+            'items__product__productimage_set',
+        )
+        queryset = _filter_for_staff_marketplaces(queryset, self.request.user)
         track_id = self.request.GET.get('track_id')
+        search = self.request.GET.get('search')
         status = self.request.GET.get('status')
+        assignment_status = self.request.GET.get('assignment_status')
         vendor_id = self.request.GET.get('vendor_id')
+        zone_id = self.request.GET.get('zone_id')
+        category = self.request.GET.get('category') or self.request.GET.get('category_id')
+        marketplace = self.request.GET.get('marketplace') or self.request.GET.get('marketplace_id')
 
         if track_id:
             queryset = queryset.filter(track_id__icontains=track_id)
 
+        if search:
+            queryset = queryset.filter(
+                Q(track_id__icontains=search) |
+                Q(id__icontains=search) |
+                Q(vendor__name__icontains=search) |
+                Q(vendor__email__icontains=search) |
+                Q(vendor__category__name__icontains=search) |
+                Q(vendor__marketplace__name__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search)
+            ).distinct()
+
         if status:
             queryset = queryset.filter(status__iexact=status)
+
+        if assignment_status == 'incoming':
+            queryset = queryset.filter(rider__isnull=True).exclude(
+                Q(status__in=['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status__in=['delivered', 'canceled'])
+            )
+        elif assignment_status == 'assigned':
+            queryset = queryset.filter(rider__isnull=False).exclude(
+                Q(status__in=['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status__in=['delivered', 'canceled'])
+            )
+        elif assignment_status == 'completed':
+            queryset = queryset.filter(Q(status='delivered') | Q(delivery_status='delivered'))
+        elif assignment_status in ['canceled', 'cancelled']:
+            queryset = queryset.filter(
+                Q(status__in=['canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status='canceled')
+            )
         
         if vendor_id:
             queryset = queryset.filter(vendor__id=vendor_id)
 
-        return queryset
+        if category:
+            category_filter = Q(vendor__category__name__icontains=category)
+            if _is_uuid(category):
+                category_filter |= Q(vendor__category_id=category)
+            queryset = queryset.filter(category_filter)
+
+        if marketplace:
+            marketplace_filter = Q(vendor__marketplace__name__icontains=marketplace)
+            if _is_uuid(marketplace):
+                marketplace_filter |= Q(vendor__marketplace__id=marketplace)
+            queryset = queryset.filter(marketplace_filter).distinct()
+
+        if zone_id:
+            try:
+                zones = self.get_active_delivery_zones()
+                zone = next((candidate for candidate in zones if str(candidate.id) == str(zone_id)), None)
+                if not zone:
+                    raise DeliveryZone.DoesNotExist
+                matching_ids = [
+                    order['id']
+                    for order in queryset.values(
+                        'id',
+                        'location_latitude',
+                        'location_longitude',
+                        'delivery_latitude',
+                        'delivery_longitude',
+                    )
+                    if zone.contains_location(
+                        order['delivery_latitude'] or order['location_latitude'],
+                        order['delivery_longitude'] or order['location_longitude'],
+                    )
+                ]
+                queryset = queryset.filter(id__in=matching_ids)
+            except DeliveryZone.DoesNotExist:
+                queryset = queryset.none()
+
+        return queryset.annotate(
+            priority=Case(
+                When(status='pending', then=Value(0)),
+                When(rider__isnull=True, then=Value(1)),
+                When(status='confirmed', then=Value(2)),
+                When(status='looking_for_rider', then=Value(3)),
+                default=Value(9),
+                output_field=IntegerField(),
+            )
+        ).order_by('priority', '-created_at')
+
+    def get_active_delivery_zones(self):
+        if not hasattr(self, '_active_delivery_zones'):
+            self._active_delivery_zones = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        return self._active_delivery_zones
 
     @swagger_auto_schema(
         operation_summary="List All Orders from Marketplace Vendors (Admin)",
@@ -562,6 +895,7 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         }
     )
     def get(self, request):
+        limited_staff = _is_limited_marketplace_staff(request.user)
         addition_serializer_data = {
             'is_vendor': True
         }
@@ -570,7 +904,11 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             self.serializer_class,
             self.get_queryset(),
             page_size=int(request.GET.get('page_size', 20)),
-            addition_serializer_data=addition_serializer_data
+            addition_serializer_data=addition_serializer_data,
+            extra_serializer_context={
+                "active_delivery_zones": self.get_active_delivery_zones(),
+                "marketplace_staff_limited": limited_staff,
+            },
         )
 
 
@@ -578,7 +916,34 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.all()
+    queryset = Order.objects.select_related(
+        'user',
+        'vendor',
+        'vendor__user',
+        'rider',
+        'rider__user',
+        'pickup_confirmed_by',
+    ).prefetch_related(
+        'vendor__marketplace_set',
+        'items',
+        'items__product',
+        'items__product__parent',
+        'items__product__productimage_set',
+        'items__product__parent__productimage_set',
+        'items__product__productvariantcategory_set',
+        'items__variant_selections',
+        'items__variant_selections__variant',
+        'items__variant_selections__variant__category',
+        'items__variant_selections__variant__product',
+    )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["active_delivery_zones"] = list(DeliveryZone.objects.filter(is_active=True).order_by('name'))
+        return context
+
+    def get_queryset(self):
+        return _filter_for_staff_marketplaces(super().get_queryset(), self.request.user)
 
     @swagger_auto_schema(
         operation_description="Retrieve detailed information of a specific order by ID.",
@@ -601,7 +966,12 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         try:
             order = self.get_object()
-            serializer = self.get_serializer(order)
+            limited_staff = _is_limited_marketplace_staff(request.user)
+            serializer = self.get_serializer(order, context={
+                **self.get_serializer_context(),
+                "include_delivery_info": not limited_staff,
+                "marketplace_staff_limited": limited_staff,
+            })
             return success_response(serializer.data)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found.")
@@ -613,7 +983,10 @@ class AdminOrderDetailAPIView(generics.RetrieveAPIView):
 class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-    queryset = Order.objects.all()
+    queryset = Order.objects.select_related('user', 'vendor', 'vendor__user', 'rider', 'rider__user', 'pickup_confirmed_by')
+
+    def get_queryset(self):
+        return _filter_for_staff_marketplaces(super().get_queryset(), self.request.user)
 
     def get(self, request, *args, **kwargs):
         try:
@@ -621,28 +994,113 @@ class AdminOrderDetailVendorRiderAPIView(generics.RetrieveAPIView):
             response = {
                 'user': None,
                 'vendor': None,
-                'rider': None
+                'rider': None,
+                'picked_up_by': None,
 
             }
-            if order.user:
+            limited_staff = _is_limited_marketplace_staff(request.user)
+            if order.user and not limited_staff:
                 response['user'] = dict(
                     id=order.user.id,
+                    name=order.user.full_name or f"{order.user.first_name or ''} {order.user.last_name or ''}".strip() or order.user.email,
                     profile_image=order.user.get_profile_image(),
-                    phone_number=order.user.phone_number
+                    phone_number=order.user.phone_number,
+                    email=order.user.email,
                 )
 
             if order.vendor:
                 response['vendor'] = dict(
                     id=order.vendor.id,
-                    profile_image=order.vendor.user.get_profile_image(),
-                    phone_number=order.vendor.user.phone_number
+                    name=order.vendor.name or order.vendor.user.full_name or order.vendor.user.email,
+                    profile_image=order.vendor.thumbnail_url or order.vendor.logo_url or order.vendor.user.get_profile_image(),
+                    phone_number=getattr(order.vendor, 'phone_number', '') or order.vendor.user.phone_number,
+                    email=getattr(order.vendor, 'email', '') or order.vendor.user.email,
                 )
-            if order.rider:
+            if order.rider and not limited_staff:
                 response['rider'] = dict(
                     id=order.rider.id,
+                    name=order.rider.user.full_name or f"{order.rider.user.first_name or ''} {order.rider.user.last_name or ''}".strip() or order.rider.user.email,
                     profile_image=order.rider.user.get_profile_image(),
-                    phone_number=order.rider.user.phone_number
+                    phone_number=order.rider.user.phone_number,
+                    email=order.rider.user.email,
+                )
+            if order.pickup_confirmed_by:
+                response['picked_up_by'] = dict(
+                    id=order.pickup_confirmed_by.id,
+                    name=order.get_pickup_confirmed_by_name(),
+                    profile_image=order.pickup_confirmed_by.get_profile_image(),
+                    email=order.pickup_confirmed_by.email,
                 )
             return success_response(response)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found.")
+
+
+class AdminMarketplaceConfirmPickupAPIView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+
+    def post(self, request, id):
+        queryset = Order.objects.select_related(
+            'vendor',
+            'vendor__user',
+            'pickup_confirmed_by',
+        ).prefetch_related(
+            'items',
+            'items__product',
+            'items__variant_selections',
+            'items__variant_selections__variant',
+        ).filter(
+            Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False),
+            id=id,
+        )
+        queryset = _filter_for_staff_marketplaces(queryset, request.user)
+        order = queryset.first()
+        if not order:
+            return bad_request_response(message="Order not found or not allowed.", status_code=404)
+
+        if order.pickup_confirmed_at:
+            return success_response(
+                data={
+                    'order_id': str(order.id),
+                    'track_id': order.track_id,
+                    'pickup_confirmed_at': order.pickup_confirmed_at,
+                    'pickup_confirmed_by': order.get_pickup_confirmed_by_name(),
+                    'already_confirmed': True,
+                },
+                message="Pickup already confirmed.",
+            )
+
+        with transaction.atomic():
+            order = Order.objects.select_for_update().get(id=order.id)
+            if not order.pickup_confirmed_at:
+                now = timezone.now()
+                order.pickup_confirmed_by = request.user
+                order.pickup_confirmed_at = now
+                order.actual_pickup_time = order.actual_pickup_time or now
+                update_fields = [
+                    'pickup_confirmed_by',
+                    'pickup_confirmed_at',
+                    'actual_pickup_time',
+                    'updated_at',
+                ]
+                if order.status not in ['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']:
+                    order.status = 'picked_up'
+                    update_fields.append('status')
+                if order.delivery_status not in ['delivered', 'canceled']:
+                    order.delivery_status = 'picked_up'
+                    update_fields.append('delivery_status')
+                order.save(update_fields=update_fields)
+                order.credit_vendor_earning_once(
+                    description=f"Marketplace pickup earning from Order #{order.track_id}"
+                )
+
+        return success_response(
+            data={
+                'order_id': str(order.id),
+                'track_id': order.track_id,
+                'pickup_confirmed_at': order.pickup_confirmed_at,
+                'pickup_confirmed_by': order.get_pickup_confirmed_by_name(),
+            },
+            message="Pickup confirmed and vendor earning credited.",
+        )

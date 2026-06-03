@@ -13,7 +13,15 @@ from admin_manager.views.popup_announcements import (
 from django.urls import path, include
 from account.views.account import send_notification
 from rest_framework.routers import DefaultRouter
-from api.views import CustomerInProgressOrdersListView, CustomerOrdersListView, GetAllBanksView, TestPushNotificationView, TestingWebsocketView, ValidateBankAccountNumber
+from api.views import (
+    CustomerInProgressOrdersListView, 
+    CustomerOrdersListView, 
+    GetAllBanksView, 
+    TestPushNotificationView, 
+    TestingWebsocketView, 
+    ValidateBankAccountNumber,
+    RedisHealthCheckView
+)
 from rider.views import ConfirmOrderPaymentAPIView, EnhancedRiderViewSet, MakeOrderPayment, NearbyRidersView, OrderPaymentWebhookView, OrderTrackingDetailView, OrderViewSet, RiderGuarantorUpdateView, RiderOrderDetailView, RiderViewSet, UploadRiderDocumentView, WebSocketSimulationView
 from vendor.views import AllMarketPlaceCategoriesView,SingleMarketPlaceCategoryVendorsView, SingleMarketPlaceCategoryView
 
@@ -43,27 +51,28 @@ urlpatterns = [
     path('vendors/',include("vendor.urls")),
     path('wallet/',include("wallet.urls")),
     # path('marketplace/vendors', AllMarketPlaceVendorsView.as_view(), name='AllMarketPlaceVendorsView'),
-    path('marketplace/categories', AllMarketPlaceCategoriesView.as_view(), name='AllMarketPlaceCategoriesView'),
-    path('marketplace/categories/<category_id>', SingleMarketPlaceCategoryView.as_view(), name='SingleMarketPlaceCategoryDetailsView'),
-    path('marketplace/categories/<category_id>/vendors', SingleMarketPlaceCategoryVendorsView.as_view(), name='SingleMarketPlaceCategoryDetailsView'),
+    path('marketplace/categories/', AllMarketPlaceCategoriesView.as_view(), name='AllMarketPlaceCategoriesView'),
+    path('marketplace/categories/<category_id>/', SingleMarketPlaceCategoryView.as_view(), name='SingleMarketPlaceCategoryDetailsView'),
+    path('marketplace/categories/<category_id>/vendors/', SingleMarketPlaceCategoryVendorsView.as_view(), name='SingleMarketPlaceCategoryDetailsView'),
     path('riders/<id>/upload_documents/',UploadRiderDocumentView.as_view()),
     path('riders/<id>/guarantors/',RiderGuarantorUpdateView.as_view()),
-    path('riders/orders/<order_id>',RiderOrderDetailView.as_view()),
+    path('riders/orders/<order_id>/', RiderOrderDetailView.as_view()),
     path('api/orders/<uuid:order_id>/tracking/', OrderTrackingDetailView.as_view(), name='order-tracking'),
     path('api/nearby-riders/', NearbyRidersView.as_view(), name='nearby-riders'),
-    path('order/<id>/make-payment',MakeOrderPayment.as_view()),
-    path('order/confirm-payment',ConfirmOrderPaymentAPIView.as_view()),
-    path('order/make-payment-webhook',OrderPaymentWebhookView.as_view()),
-    path('orders',CustomerOrdersListView.as_view()),
-    path('orders/in-progress', CustomerInProgressOrdersListView.as_view(), name='customer-orders-in-progress-list'),
-    path('main/get-all-banks',GetAllBanksView.as_view()),
-    path('main/resolve-account-number',ValidateBankAccountNumber.as_view()),
+    path('order/<id>/make-payment/', MakeOrderPayment.as_view()),
+    path('order/confirm-payment/', ConfirmOrderPaymentAPIView.as_view()),
+    path('order/make-payment-webhook/', OrderPaymentWebhookView.as_view()),
+    path('orders/', CustomerOrdersListView.as_view()),
+    path('orders/in-progress/', CustomerInProgressOrdersListView.as_view(), name='customer-orders-in-progress-list'),
+    path('main/get-all-banks/',GetAllBanksView.as_view()),
+    path('main/resolve-account-number/',ValidateBankAccountNumber.as_view()),
     path('', include(router.urls)),
     path('', include(('helpers.deep_link_urls', 'deep_link'), namespace='deep_link')),
     path('notifications/send/', send_notification, name='send_notification'),
-    path('websocket/test', TestingWebsocketView.as_view(), name='TestingWebsocketView'),
-    path('websocket/simulate', WebSocketSimulationView.as_view(), name='websocket_simulation'),
-    path('push-notification/test', TestPushNotificationView.as_view(), name='test_push_notification'),
+    path('websocket/test/', TestingWebsocketView.as_view(), name='TestingWebsocketView'),
+    path('websocket/simulate/', WebSocketSimulationView.as_view(), name='websocket_simulation'),
+    path('push-notification/test/', TestPushNotificationView.as_view(), name='test_push_notification'),
+    path('redis/test/', RedisHealthCheckView.as_view(), name='redis_health_check'),
     
     # Backblaze test endpoints
     path('test/backblaze/', include('helpers.test_urls')),

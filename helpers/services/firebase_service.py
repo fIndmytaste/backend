@@ -57,12 +57,9 @@ class FirebaseNotificationService:
         image_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send notification to all active tokens of a user"""
-        print(f"Sending notification to user {user.email} with title '{title}' and body '{body}'")
-        print('++++++++++++++++++++++++++++++++')
-        tokens = FCMToken.objects.filter(user=user)
-        # tokens = FCMToken.objects.filter(user=user, is_active=True)
-        print(tokens)
+        tokens = FCMToken.objects.filter(user=user, is_active=True)
         if not tokens.exists():
+            logger.warning("No active FCM tokens for user %s", user.id)
             return {"success": False, "error": "No active FCM tokens found for user"}
         
         token_strings = [token.token for token in tokens]
@@ -112,25 +109,23 @@ class FirebaseNotificationService:
                 notification=messaging.AndroidNotification(
                     icon='ic_notification',
                     color='#FF6B35',
-                    sound='default'
+                    sound='find_my_taste_sound'
                 )
             ),
             apns=messaging.APNSConfig(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
-                        sound='default',
+                        sound='find_my_taste_sound.caf',
                         badge=1
                     )
                 )
             )
         )
-        
+
         try:
             # Send the message
             response = messaging.send_each_for_multicast(message)
-            print(response)
-            print("******************")
-            print(response.success_count)
+            logger.info("FCM multicast: success=%s failure=%s", response.success_count, response.failure_count)
             # Log the notification
             if user:
                 PushNotificationLog.objects.create(
@@ -204,19 +199,19 @@ class FirebaseNotificationService:
                 notification=messaging.AndroidNotification(
                     icon='ic_notification',
                     color='#FF6B35',
-                    sound='default'
+                    sound='find_my_taste_sound'
                 )
             ),
             apns=messaging.APNSConfig(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
-                        sound='default',
+                        sound='find_my_taste_sound.caf',
                         badge=1
                     )
                 )
             )
         )
-        
+
         try:
             message_id = messaging.send(message)
             return {"success": True, "message_id": message_id}

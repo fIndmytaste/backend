@@ -1,4 +1,6 @@
 import json
+from urllib.parse import parse_qs
+
 from channels.generic.websocket import AsyncWebsocketConsumer, AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 
@@ -344,6 +346,20 @@ class CustomerNotificationConsumer(AsyncWebsocketConsumer):
             )
         logging.warning(f"[CustomerNotificationConsumer] Disconnect finished for {getattr(self, 'customer_group_name', None)} ({self.channel_name})")
 
+    async def receive(self, text_data):
+        try:
+            payload = json.loads(text_data)
+        except Exception:
+            return
+
+        if payload.get('type') == 'ping':
+            await self.send(text_data=json.dumps({
+                'type': 'pong',
+                'data': {
+                    'timestamp': payload.get('timestamp'),
+                }
+            }))
+
     async def order_accepted_notification(self, event):
         """Handle order accepted notification"""
         await self.send(text_data=json.dumps({
@@ -362,6 +378,13 @@ class CustomerNotificationConsumer(AsyncWebsocketConsumer):
 
         # add log
         logging.info(f"[CustomerNotificationConsumer] Sent status_update notification: {event['data']}")
+
+    async def order_delivered_notification(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'order_delivered',
+            'data': event['data']
+        }))
+        logging.info(f"[CustomerNotificationConsumer] Sent order_delivered notification: {event['data']}")
 
 
 
@@ -445,3 +468,104 @@ class RiderConsumer(AsyncJsonWebsocketConsumer):
     async def order_accepted_notification(self, event):
         await self.send_json(event)
         logging.info(f"[RiderConsumer] Sent order_accepted_notification: {event['data']}")
+
+    async def order_assigned_notification(self, event):
+        await self.send_json(event)
+        logging.info(f"[RiderConsumer] Sent order_assigned_notification: {event['data']}")
+
+    async def order_delivered_notification(self, event):
+        await self.send_json(event)
+        logging.info(f"[RiderConsumer] Sent order_delivered_notification: {event['data']}")
+
+
+class LegacyNotificationConsumer(AsyncJsonWebsocketConsumer):
+    """
+    Compatibility endpoint for older clients/proxies that still connect to
+    /api/v1/ws instead of the role-specific websocket paths.
+    """
+
+    async def connect(self):
+        query_params = parse_qs(self.scope.get('query_string', b'').decode())
+        user_id = self._first_query_value(query_params, 'user_id')
+        explicit_group = self._first_query_value(query_params, 'group')
+        role = (
+            self._first_query_value(query_params, 'role') or
+            self._first_query_value(query_params, 'type') or
+            self._first_query_value(query_params, 'channel') or
+            ''
+        ).lower()
+
+        self.group_name = self._resolve_group_name(
+            user_id=user_id,
+            explicit_group=explicit_group,
+            role=role,
+        )
+
+        if not self.group_name:
+            await self.close(code=4400)
+            return
+
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+        await self.send_json({
+            'type': 'connection_established',
+            'data': {
+                'group': self.group_name,
+                'path': self.scope.get('path'),
+            },
+        })
+
+    async def disconnect(self, close_code):
+        group_name = getattr(self, 'group_name', None)
+        if group_name:
+            await self.channel_layer.group_discard(group_name, self.channel_name)
+
+    async def receive_json(self, content, **kwargs):
+        if content.get('type') == 'ping':
+            await self.send_json({
+                'type': 'pong',
+                'data': {
+                    'timestamp': content.get('timestamp'),
+                },
+            })
+
+    async def new_order_event(self, event):
+        await self.send_json(event)
+
+    async def new_order_notification(self, event):
+        await self.send_json({
+            'type': 'new_order',
+            'data': event.get('data'),
+        })
+
+    async def order_accepted_notification(self, event):
+        await self.send_json(event)
+
+    async def order_assigned_notification(self, event):
+        await self.send_json(event)
+
+    async def order_delivered_notification(self, event):
+        await self.send_json(event)
+
+    async def order_status_update(self, event):
+        await self.send_json(event)
+
+    async def delivery_update(self, event):
+        await self.send_json(event)
+
+    @staticmethod
+    def _first_query_value(query_params, key):
+        values = query_params.get(key)
+        return values[0] if values else None
+
+    @staticmethod
+    def _resolve_group_name(user_id, explicit_group, role):
+        if explicit_group:
+            return explicit_group
+        if not user_id:
+            return None
+        if role == 'vendor':
+            return f'vendor_{user_id}'
+        if role == 'customer':
+            return f'customer_{user_id}'
+        return f'riders_group_{user_id}'
