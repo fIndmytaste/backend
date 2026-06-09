@@ -778,6 +778,18 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
             )
         elif assignment_status == 'completed':
             queryset = queryset.filter(Q(status='delivered') | Q(delivery_status='delivered'))
+        elif assignment_status == 'awaiting_pickup':
+            # Marketplace pickup queue: not yet picked up and not in a terminal state.
+            queryset = queryset.filter(pickup_confirmed_at__isnull=True).exclude(
+                Q(status__in=['delivered', 'canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status__in=['delivered', 'canceled'])
+            )
+        elif assignment_status == 'picked_up':
+            # Orders a staff member has already confirmed pickup for.
+            queryset = queryset.filter(pickup_confirmed_at__isnull=False).exclude(
+                Q(status__in=['canceled', 'rejected', 'failed', 'payment_failed']) |
+                Q(delivery_status='canceled')
+            )
         elif assignment_status in ['canceled', 'cancelled']:
             queryset = queryset.filter(
                 Q(status__in=['canceled', 'rejected', 'failed', 'payment_failed']) |

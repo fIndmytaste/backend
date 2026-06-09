@@ -69,7 +69,7 @@ class LoginAPIView(generics.GenericAPIView):
                     verification_type='login' 
                 )
 
-                if user.email in ['maria1@gmail.com','augustinevickky+11@gmail.com']:
+                if user.email in ['maria1@gmail.com','augustinevickky+11@gmail.com','tester@gmail.com','testing@gmail.com']:
                     code_obj.code = '1234'
                     code_obj.save()
 

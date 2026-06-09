@@ -555,13 +555,22 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                     if promo_info["is_applied"]:
                         # check if the promo affects delivery fee or not, if it does, we need to subtract the discount amount from the delivery fee, if not, we need to subtract the discount amount from the total price
                         if promo_info.get("affects_delivery"):
-                            order_total_price = float(order_total_price) - float(promo_info["discount_amount"]) 
+                            order_total_price = float(order_total_price) - float(promo_info["discount_amount"])
                         else:
                             order_total_price = (
                                     float(order_total_price_without_delivery_fee) - float(promo_info["discount_amount"])
                                 ) + float(delivery_fee)
 
-                    return klass.initiate_payment(request, order_total_price, order,is_mobile=True, promo_info=promo_info)
+                    # Web checkout sends is_mobile=false (plus a callback_url) to get a
+                    # Paystack redirect URL back ({data: {url}}). The mobile app omits the
+                    # flag, so it defaults to True and keeps returning payment metadata.
+                    is_mobile_raw = request.data.get('is_mobile', True)
+                    if isinstance(is_mobile_raw, str):
+                        is_mobile = is_mobile_raw.strip().lower() not in ('false', '0', 'no')
+                    else:
+                        is_mobile = bool(is_mobile_raw)
+
+                    return klass.initiate_payment(request, order_total_price, order, is_mobile=is_mobile, promo_info=promo_info)
 
 
 
