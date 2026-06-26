@@ -220,6 +220,12 @@ STATICFILES_DIRS = [
 
 FLUTTERWAVE_AUTH_TOKEN=os.getenv('FLUTTERWAVE_AUTH_TOKEN')
 PAYSTACK_SECRET_KEY=os.getenv('PAYSTACK_SECRET_KEY')
+
+# tawk.to live-chat secure mode. All three apps (customer, vendor, rider) share
+# one tawk.to property, so one API key (Admin > Property Settings) signs every
+# visitor's userId. The HMAC is computed server-side so the key never ships in
+# any app. Paste your tawk.to API key between the quotes below.
+TAWK_API_KEY = '1cdce7cfae7e6589792706293a6085cfe0e89e15'
 # MEDIA_URL = '/media/'
 # MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 

@@ -974,10 +974,50 @@ def unregister_fcm_token(request):
     
     return success_response(message=f'Removed {deleted_count} token(s)')
 
+class TawkSupportLoginView(APIView):
+    """Return the tawk.to secure-mode login payload for the current user.
+
+    The HMAC-SHA256 hash is computed server-side so the tawk.to API key is never
+    shipped to the mobile app. On the client, ``Tawk_API.login({userId, hash})``
+    uses this to reconnect the visitor to their *existing* conversation, so chat
+    history survives across sessions instead of starting a brand-new chat every
+    time the widget reloads or the inactivity timeout fires.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        import hmac, hashlib
+        from django.conf import settings
+
+        api_key = settings.TAWK_API_KEY
+        if not api_key:
+            return internal_server_error_response(
+                message='Live chat is not configured. Please try again later.'
+            )
+
+        user = request.user
+        user_id = str(user.id)
+        chat_hash = hmac.new(
+            key=api_key.encode('utf-8'),
+            msg=user_id.encode('utf-8'),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+
+        return success_response(
+            data={
+                'userId': user_id,
+                'hash': chat_hash,
+                'name': getattr(user, 'full_name', '') or '',
+                'email': user.email or '',
+            },
+            message='Tawk login payload generated.',
+        )
+
+
 class NotificationHistoryView(generics.ListAPIView):
     serializer_class = NotificationLogSerializer
     permission_classes = [IsAuthenticated]
-    
+
     def get_queryset(self):
         return PushNotificationLog.objects.filter(
             user=self.request.user

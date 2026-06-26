@@ -5,7 +5,8 @@ from account.views.account import (
     PasswordChangeView, ProfileImageUploadView, RegisterFCMTokenView,
     UserAddressUpdateView, UserDetailView, RiderAddressUpdateView,
     UpdateVenderBankAccount, GetAcceptedBanks, VendorOpeningHoursUpdateView, VendorProfileUpdateView, VendorStatusUpdateView,
-    VendorAddressUpdateView, AccountWithdrawalInitiate, unregister_fcm_token, DeleteAccountView
+    VendorAddressUpdateView, AccountWithdrawalInitiate, unregister_fcm_token, DeleteAccountView,
+    TawkSupportLoginView
 )
 
 
@@ -30,4 +31,5 @@ urlpatterns = [
     path('fcm/register/', RegisterFCMTokenView.as_view(), name='register_fcm_token'),
     path('fcm/unregister/', unregister_fcm_token, name='unregister_fcm_token'),
     path('delete/', DeleteAccountView.as_view(), name='delete-account'),
+    path('support/tawk-login/', TawkSupportLoginView.as_view(), name='tawk-support-login'),
 ]
