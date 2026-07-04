@@ -7,13 +7,8 @@ ENV PYTHONUNBUFFERED=1
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    && apt-get clean
-
 # Install Python dependencies
+# Note: psycopg2-binary ships prebuilt wheels, so no gcc/libpq-dev needed.
 COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout=120 -r requirements.txt
 
