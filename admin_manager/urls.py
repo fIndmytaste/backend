@@ -90,6 +90,8 @@ urlpatterns = [
 
     # riders
     path('riders/', admin_riders_view.AdminRiderListView.as_view(), name='admin_riders-list'),
+    path('riders/fund-requests/', admin_riders_view.AdminRiderFundRequestListView.as_view(), name='admin_rider_fund_requests'),
+    path('riders/fund-requests/<uuid:transaction_id>/action/', admin_riders_view.AdminRiderFundRequestActionView.as_view(), name='admin_rider_fund_request_action'),
     path('riders/performance-metrics/', admin_riders_view.AllRidersPerformanceMetricsView.as_view(),name='all-riders-performance-metrics'),
     path('riders/<uuid:id>/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_riders-list'),
     path('riders/<uuid:id>/suspend/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-suspend'),

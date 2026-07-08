@@ -8,6 +8,27 @@ logger = logging.getLogger(__name__)
 
 class FirebaseNotificationService:
 
+    @staticmethod
+    def _android_config():
+        return messaging.AndroidConfig(
+            priority='high',
+            notification=messaging.AndroidNotification(
+                color='#FF6B35',
+                sound='find_my_taste_sound',
+                default_sound=False,
+            )
+        )
+
+    @staticmethod
+    def _apns_config():
+        return messaging.APNSConfig(
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(
+                    sound='find_my_taste_sound.caf',
+                    badge=1
+                )
+            )
+        )
 
     @staticmethod
     def send_to_token(
@@ -24,15 +45,17 @@ class FirebaseNotificationService:
                     body=body,
                     image=image_url
                 ),
-                data=data or {},
-                token=token
+                data={str(k): str(v) for k, v in (data or {}).items()},
+                token=token,
+                android=FirebaseNotificationService._android_config(),
+                apns=FirebaseNotificationService._apns_config(),
             )
             response = messaging.send(message)
             return {"success": True, "response": response}
         except Exception as e:
             return {"success": False, "error": str(e)}
-        
-        
+
+
 
     @staticmethod
     def send_notification_to_token(token: str, title: str, body: str, data=None, image_url=None):
@@ -42,8 +65,10 @@ class FirebaseNotificationService:
                 body=body,
                 image=image_url
             ),
-            data=data or {},
-            token=token
+            data={str(k): str(v) for k, v in (data or {}).items()},
+            token=token,
+            android=FirebaseNotificationService._android_config(),
+            apns=FirebaseNotificationService._apns_config(),
         )
         response = messaging.send(message)
         return {"response": response}
@@ -107,9 +132,9 @@ class FirebaseNotificationService:
             android=messaging.AndroidConfig(
                 priority='high',
                 notification=messaging.AndroidNotification(
-                    icon='ic_notification',
                     color='#FF6B35',
-                    sound='find_my_taste_sound'
+                    sound='find_my_taste_sound',
+                    default_sound=False,
                 )
             ),
             apns=messaging.APNSConfig(
@@ -197,9 +222,9 @@ class FirebaseNotificationService:
             android=messaging.AndroidConfig(
                 priority='high',
                 notification=messaging.AndroidNotification(
-                    icon='ic_notification',
                     color='#FF6B35',
-                    sound='find_my_taste_sound'
+                    sound='find_my_taste_sound',
+                    default_sound=False,
                 )
             ),
             apns=messaging.APNSConfig(

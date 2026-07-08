@@ -33,10 +33,22 @@ class VendorImageUploadSerializer(serializers.Serializer):
 class SystemCategorySerializer(serializers.ModelSerializer):
     vendor_count = serializers.SerializerMethodField()
     has_vendors = serializers.SerializerMethodField()
+    logo = serializers.SerializerMethodField()
 
     class Meta:
         model = SystemCategory
         fields = '__all__'
+
+    def get_logo(self, obj):
+        if not obj.logo:
+            return None
+        try:
+            url = obj.logo.url
+        except Exception:
+            url = str(obj.logo)
+        if url and url.startswith('http://'):
+            url = 'https://' + url[len('http://'):]
+        return url
 
     def _count_vendors(self, obj):
         # Fast path: the view annotated the queryset with `active_vendor_count`.
@@ -49,6 +61,7 @@ class SystemCategorySerializer(serializers.ModelSerializer):
         return Vendor.objects.filter(
             category_id=obj.id,
             is_active=True,
+            approval_status='approved',
         ).count()
 
     def get_vendor_count(self, obj):

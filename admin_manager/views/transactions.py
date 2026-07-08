@@ -4,6 +4,7 @@ from django.db.models import Q
 
 from admin_manager.serializers.transactions import AdminWalletTransactionSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer,bad_request_response,success_response
+from helpers.date_range import filter_by_date_range
 from product.models import Product
 
 from wallet.models import WalletTransaction
@@ -36,6 +37,8 @@ class AdminGetTransactionsListView(generics.GenericAPIView):
             queryset = queryset.filter(status=status)
         if transaction_type:
             queryset = queryset.filter(transaction_type=transaction_type)
+
+        queryset = filter_by_date_range(self.request, queryset)
 
         return queryset.order_by('-created_at')
 

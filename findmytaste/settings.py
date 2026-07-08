@@ -344,6 +344,16 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    # Pay independent riders their accumulated earnings every Friday at 10:00.
+    'process-weekly-rider-payouts': {
+        'task': 'rider.process_weekly_rider_payouts',
+        'schedule': crontab(day_of_week='friday', hour=10, minute=0),
+    },
+}
+
 
 """Basic connection example.
 """

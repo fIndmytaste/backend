@@ -10,6 +10,7 @@ from admin_manager.serializers.lists import AdminRiderListSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from admin_manager.serializers.riders import RiderPerformanceMetricsSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response, internal_server_error_response
+from helpers.date_range import filter_by_date_range
 from product.models import Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi
@@ -56,6 +57,8 @@ class AdminRiderListView(generics.GenericAPIView):
             queryset = queryset.filter(document_status=document_status)
         if status:
             queryset = queryset.filter(status=status)
+
+        queryset = filter_by_date_range(self.request, queryset)
 
         return queryset.annotate(
             verification_priority=Case(
@@ -798,3 +801,101 @@ class RiderAdvancePaymentView(generics.GenericAPIView):
         )
 
         return success_response(message="Advance payment processed successfully.", data={"rider_id": str(rider.id), "amount": float(amount)})
+
+
+class AdminRiderFundRequestListView(generics.GenericAPIView):
+    """
+    List rider fund (withdrawal) requests.
+    Query params: status (default 'pending'), search.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from admin_manager.serializers.transactions import AdminWalletTransactionSerializer
+        from wallet.models import WalletTransaction
+
+        rider_user_ids = Rider.objects.values_list('user_id', flat=True)
+        queryset = (
+            WalletTransaction.objects
+            .select_related('user', 'wallet', 'wallet__user')
+            .filter(transaction_type='withdrawal', user_id__in=rider_user_ids)
+        )
+
+        status_filter = request.GET.get('status', 'pending').strip()
+        if status_filter and status_filter != 'all':
+            queryset = queryset.filter(status=status_filter)
+
+        search = request.GET.get('search', '').strip()
+        if search:
+            queryset = queryset.filter(
+                Q(reference_code__icontains=search) |
+                Q(user__full_name__icontains=search) |
+                Q(user__email__icontains=search)
+            )
+
+        return paginate_success_response_with_serializer(
+            request,
+            AdminWalletTransactionSerializer,
+            queryset.order_by('-created_at'),
+            page_size=int(request.GET.get('page_size', 20))
+        )
+
+
+class AdminRiderFundRequestActionView(generics.GenericAPIView):
+    """
+    Approve or reject a rider fund request.
+    POST body: { "action": "approve" | "reject", "reason": "optional string" }
+    Approving initiates a Paystack transfer to the rider's bank account;
+    rejecting releases the held funds back to the rider's wallet.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, transaction_id):
+        from helpers.paystack import PaystackManager
+        from wallet.models import WalletTransaction
+
+        action = str(request.data.get('action', '')).lower().strip()
+        if action not in ('approve', 'reject'):
+            return bad_request_response(message="Action must be 'approve' or 'reject'.")
+
+        txn = (
+            WalletTransaction.objects
+            .select_related('user', 'wallet')
+            .filter(id=transaction_id, transaction_type='withdrawal')
+            .first()
+        )
+        if not txn:
+            return bad_request_response(message="Fund request not found.", status_code=404)
+        if txn.status != 'pending':
+            return bad_request_response(message=f"Fund request is already {txn.status}.")
+        if txn.response_data:
+            return bad_request_response(message="A transfer has already been initiated for this request.")
+
+        rider = Rider.objects.filter(user=txn.user).select_related('user').first()
+        if not rider:
+            return bad_request_response(message="Rider not found for this request.", status_code=404)
+
+        from wallet.models import Wallet
+        wallet = txn.wallet or Wallet.objects.filter(user=txn.user).first()
+        if not wallet:
+            return bad_request_response(message="Wallet not found for this rider.", status_code=404)
+
+        if action == 'reject':
+            reason = request.data.get('reason', 'Fund request rejected')
+            txn.status = 'failed'
+            txn.description = f"{txn.description or 'Rider fund request'} — rejected: {reason}"
+            txn.save()
+            wallet.deposit(txn.amount)
+            return success_response(message="Fund request rejected and funds returned to the rider's wallet.")
+
+        success, message = PaystackManager().initiate_transfer(
+            user=txn.user,
+            vendor=None,
+            amount=txn.amount,
+            transaction_obj=txn,
+            reason='Rider fund request payout',
+        )
+        if not success:
+            return bad_request_response(message=message)
+
+        return success_response(message="Fund request approved. Transfer initiated to the rider's bank account.")

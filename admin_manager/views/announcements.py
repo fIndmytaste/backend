@@ -53,8 +53,21 @@ class AnnouncementListView(generics.ListAPIView):
         priority = self.request.query_params.get('priority')
         if priority:
             queryset = queryset.filter(priority=priority)
-        
-        return queryset.order_by('-priority', '-created_at')
+
+        # 'priority' is a CharField, so plain order_by sorts alphabetically
+        # (medium > low > high > critical). Rank it explicitly instead.
+        from django.db.models import Case, IntegerField, Value, When
+        queryset = queryset.annotate(
+            priority_rank=Case(
+                When(priority='critical', then=Value(4)),
+                When(priority='high', then=Value(3)),
+                When(priority='medium', then=Value(2)),
+                When(priority='low', then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+        return queryset.order_by('-priority_rank', '-created_at')
     
     @swagger_auto_schema(
         operation_summary="Get announcements for current user",
@@ -266,6 +279,10 @@ class AdminAnnouncementListCreateView(generics.ListCreateAPIView):
                     is_active=True
                 )
             
+            # The action link lives on the related AnnouncementLink model.
+            link = getattr(announcement, 'link', None)
+            action_url = link.url if link else ""
+
             # Send notifications asynchronously
             for user in users:
                 try:
@@ -277,7 +294,7 @@ class AdminAnnouncementListCreateView(generics.ListCreateAPIView):
                             "type": "announcement",
                             "announcement_id": str(announcement.id),
                             "priority": announcement.priority,
-                            "action_url": announcement.action_url or "",
+                            "action_url": action_url,
                             "screen": "announcements"
                         }
                     )

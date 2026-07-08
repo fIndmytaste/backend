@@ -7,6 +7,7 @@ from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
 from admin_manager.serializers.lists import AdminVendorListSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
+from helpers.date_range import filter_by_date_range
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi
 
@@ -87,6 +88,8 @@ class AdminVendorListView(generics.ListAPIView):
                 Q(state__icontains=search) |
                 Q(user__email__icontains=search)
             )
+
+        vendors = filter_by_date_range(request, vendors)
 
         vendors = vendors.order_by('-created_at')
         return paginate_success_response_with_serializer(
@@ -257,22 +260,48 @@ class AdminVendorOverviewView(generics.GenericAPIView):
             
             # Get orders for this vendor
             vendor_orders = Order.objects.filter(vendor=vendor)
-            
-            # Calculate order statistics
+
+            # Order statistics use the same status buckets as the vendor app's
+            # own overview (vendor/views.py) so both profiles report the same
+            # figures.
             total_orders = vendor_orders.count()
-            active_orders = vendor_orders.filter(status='pending').count()
+            active_orders = vendor_orders.filter(
+                status__in=[
+                    'pending',
+                    'confirmed',
+                    'preparing',
+                    'looking_for_rider',
+                    'rider_assigned',
+                    'picked_up',
+                    'in_transit',
+                    'near_delivery',
+                ]
+            ).count()
             completed_orders = vendor_orders.filter(status='delivered').count()
-            canceled_orders = vendor_orders.filter(status='canceled').count()
-            
-            # Calculate financial metrics
-            total_earnings = vendor_orders.filter(payment_status='paid').aggregate(
-                total=Sum('total_amount')
-            )['total'] or 0
-            
-            # Calculate payouts (assuming you have a Payout model or similar)
-            # This is a placeholder; adjust according to your actual payment tracking system
-            total_payouts = float(total_earnings) * 0.9  # Example: 90% of earnings go to vendor
-            pending_payouts = 0  # Placeholder - replace with actual calculation
+            canceled_orders = vendor_orders.filter(
+                status__in=['canceled', 'cancelled', 'rejected']
+            ).count()
+
+            # Earnings mirror the vendor app: settlement amounts of paid,
+            # delivered orders. Payouts come from real wallet withdrawals.
+            paid_delivered_orders = vendor_orders.filter(
+                status='delivered', payment_status='paid'
+            )
+            total_earnings = sum(
+                float(order.calculate_vendor_settlement_amount())
+                for order in paid_delivered_orders
+            )
+
+            from wallet.models import WalletTransaction
+            vendor_transactions = WalletTransaction.objects.filter(
+                wallet__user=vendor.user
+            )
+            total_payouts = vendor_transactions.filter(
+                transaction_type='withdrawal', status='completed'
+            ).aggregate(total=Sum('amount'))['total'] or 0
+            pending_payouts = vendor_transactions.filter(
+                transaction_type='withdrawal', status='pending'
+            ).aggregate(total=Sum('amount'))['total'] or 0
             
             # Get recent reports or issues (placeholder)
             reports_count = 0  # Replace with actual report count if you have such a feature
@@ -300,7 +329,7 @@ class AdminVendorOverviewView(generics.GenericAPIView):
             sales_performance = {
                 "total_earnings": float(total_earnings),
                 "total_payouts": float(total_payouts),
-                "pending_payouts": pending_payouts,
+                "pending_payouts": float(pending_payouts),
                 "time_frame": time_frame
             }
             

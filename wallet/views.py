@@ -147,7 +147,8 @@ class WithdrawalView(generics.GenericAPIView):
         # Get vendor details
         vendor = Vendor.objects.filter(user=user).first()
 
-        # Create a wallet transaction
+        # Create a wallet transaction and hold the funds so the balance
+        # reflects the pending withdrawal immediately.
         transaction = WalletTransaction.objects.create(
             wallet=wallet,
             user=user,
@@ -156,13 +157,22 @@ class WithdrawalView(generics.GenericAPIView):
             status='pending',
             description='Withdrawal from wallet'
         )
+        wallet.withdraw(amount)
+
         # Validate bank if provided in request
         if bank_code:
             is_valid, bank_result = paystack_manager.validate_bank(bank_code)
             if not is_valid:
                 transaction.status = 'failed'
                 transaction.save()
+                wallet.deposit(amount)
                 return bad_request_response(message=bank_result)
 
         # Process withdrawal
-        return paystack_manager.make_withdrawal(request, vendor, amount, transaction)
+        response = paystack_manager.make_withdrawal(request, vendor, amount, transaction)
+        if response.status_code >= 400:
+            # Transfer could not be initiated — release the held funds.
+            transaction.status = 'failed'
+            transaction.save()
+            wallet.deposit(amount)
+        return response

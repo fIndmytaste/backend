@@ -3,8 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
+
+from helpers.date_range import parse_date_range
 
 from account.models import Rider, StaffPagePermission, User, Vendor
 from account.serializers import RiderSerializer
@@ -273,21 +275,50 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         time_range = adjective_map.get(raw, raw)
 
         today = timezone.now()
-        if time_range == 'day':
-            delta = timedelta(days=1)
-        elif time_range == 'month':
-            delta = timedelta(days=30)
-        elif time_range == 'year':
-            delta = timedelta(days=365)
-        else:
-            time_range = 'week'
-            delta = timedelta(days=7)
 
-        start_date = today - delta
-        prev_start = start_date - delta
+        # Custom date range (start_date / end_date, YYYY-MM-DD) overrides the
+        # rolling period when provided.
+        custom_start, custom_end = parse_date_range(request)
+        if custom_start or custom_end:
+            time_range = 'custom'
+            tz = timezone.get_current_timezone()
+            start_date = (
+                timezone.make_aware(datetime.combine(custom_start, datetime.min.time()), tz)
+                if custom_start else None
+            )
+            # Upper bound is exclusive: midnight after the requested end day.
+            end_date = (
+                timezone.make_aware(
+                    datetime.combine(custom_end + timedelta(days=1), datetime.min.time()), tz
+                )
+                if custom_end else today
+            )
+            prev_start = start_date - (end_date - start_date) if start_date else None
+        else:
+            if time_range == 'day':
+                delta = timedelta(days=1)
+            elif time_range == 'month':
+                delta = timedelta(days=30)
+            elif time_range == 'year':
+                delta = timedelta(days=365)
+            else:
+                time_range = 'week'
+                delta = timedelta(days=7)
+
+            start_date = today - delta
+            end_date = None  # open-ended: up to now
+            prev_start = start_date - delta
+
+        def window_filter(field):
+            bounds = {}
+            if start_date:
+                bounds[f'{field}__gte'] = start_date
+            if end_date:
+                bounds[f'{field}__lt'] = end_date
+            return bounds
 
         # ── Orders ──────────────────────────────────────────────────────────
-        base_orders = Order.objects.filter(created_at__gte=start_date)
+        base_orders = Order.objects.filter(**window_filter('created_at'))
 
         completed_statuses = ['delivered']
         canceled_statuses = ['canceled', 'cancelled', 'rejected', 'failed', 'payment_failed']
@@ -309,10 +340,13 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         vendor_payouts = revenue_agg['vendor_payouts'] or 0
 
         # ── Previous period for growth indicators ───────────────────────────
-        prev_orders = Order.objects.filter(
-            created_at__gte=prev_start,
-            created_at__lt=start_date,
-        )
+        if prev_start and start_date:
+            prev_orders = Order.objects.filter(
+                created_at__gte=prev_start,
+                created_at__lt=start_date,
+            )
+        else:
+            prev_orders = Order.objects.none()
         prev_total = prev_orders.count()
         prev_earnings = prev_orders.filter(payment_status='paid').aggregate(
             total=Sum('total_amount')
@@ -325,16 +359,19 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         total_users = User.objects.count()
         total_customers = User.objects.filter(role='buyer').count()
 
-        active_users = User.objects.filter(is_active=True, last_login__gte=start_date).count()
-        new_users = User.objects.filter(created_at__gte=start_date).count()
+        active_users = User.objects.filter(is_active=True, **window_filter('last_login')).count()
+        new_users = User.objects.filter(**window_filter('created_at')).count()
         vendors_count = Vendor.objects.count()
         riders_count = Rider.objects.count()
 
-        prev_active_users = User.objects.filter(
-            is_active=True,
-            last_login__gte=prev_start,
-            last_login__lt=start_date,
-        ).count()
+        if prev_start and start_date:
+            prev_active_users = User.objects.filter(
+                is_active=True,
+                last_login__gte=prev_start,
+                last_login__lt=start_date,
+            ).count()
+        else:
+            prev_active_users = 0
         user_growth = active_users > 0 if prev_active_users == 0 else (active_users > prev_active_users)
 
         return success_response(data={
@@ -561,6 +598,7 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         'rider',
         'rider__user',
         'pickup_confirmed_by',
+        'promo_code',
     ).prefetch_related('vendor__marketplace_set').order_by('-created_at')
 
 

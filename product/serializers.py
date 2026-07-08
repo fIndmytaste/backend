@@ -420,6 +420,7 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
     pickup_time = serializers.SerializerMethodField()
     vendor_item_total = serializers.SerializerMethodField()
     items = serializers.SerializerMethodField()
+    promo = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -439,9 +440,21 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'pickup_time',
             'vendor_item_total',
             'items',
+            'promo',
             'created_at',
             'updated_at',
         ]
+
+    def get_promo(self, obj):
+        promo = obj.promo_code
+        if not promo:
+            return None
+        return {
+            'id': str(promo.id),
+            'code': promo.code,
+            'promo_type': promo.promo_type,
+            'promo_type_display': promo.get_promo_type_display(),
+        }
 
     def get_items(self, obj):
         items = list(obj.items.all())

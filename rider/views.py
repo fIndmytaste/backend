@@ -887,6 +887,10 @@ class RiderViewSet(viewsets.ModelViewSet):
         rider = Rider.objects.filter(user=request.user).first()
         if not rider:
             return bad_request_response(message='Rider profile not found', status_code=404)
+        if rider.is_in_house_rider:
+            return bad_request_response(
+                message='Marketplace riders are paid by salary and cannot request funds.'
+            )
         wallet, _ = Wallet.objects.get_or_create(user=rider.user)
 
         amount = request.data.get('amount')
@@ -918,21 +922,20 @@ class RiderViewSet(viewsets.ModelViewSet):
                 message='Insufficient balance.'
             )
 
-        # Create a pending withdrawal transaction
-        transaction = WalletTransaction.objects.create(
+        # Create a pending fund request and hold the funds so the rider
+        # cannot double-spend the balance while the request is reviewed.
+        WalletTransaction.objects.create(
             wallet=wallet,
             user=rider.user,
             amount=amount,
             transaction_type='withdrawal',
             status='pending',
-            description='Rider withdrawal request',
+            description='Rider fund request',
         )
-
-        # Optionally update wallet balance here if you deduct immediately,
-        # or wait until withdrawal is approved/completed
+        wallet.withdraw(amount)
 
         return success_response(
-            message='Withdrawal request submitted.',
+            message='Fund request submitted. You will be paid once it is approved.',
             status_code=201
         )
 

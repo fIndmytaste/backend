@@ -199,7 +199,7 @@ class SystemCategoryListView(generics.GenericAPIView):
         categories = SystemCategory.objects.annotate(
             active_vendor_count=Count(
                 'vendor',
-                filter=Q(vendor__is_active=True),
+                filter=Q(vendor__is_active=True, vendor__approval_status='approved'),
                 distinct=True,
             ),
         )

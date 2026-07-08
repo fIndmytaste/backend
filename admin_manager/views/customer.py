@@ -6,6 +6,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from account.models import User
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
+from helpers.date_range import filter_by_date_range
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
@@ -34,7 +35,6 @@ class AdminCustomerListView(generics.ListAPIView):
             'phone_number',
             'profile_image_url',
             'is_verified',
-            'is_banned',
             'created_at',
             'updated_at',
         ).order_by('-created_at')
@@ -75,7 +75,6 @@ class AdminCustomerListView(generics.ListAPIView):
         search = request.GET.get('search', '')
         if search:
             queryset = queryset.filter(
-                Q(username__icontains=search) | 
                 Q(full_name__icontains=search) |
                 Q(first_name__icontains=search) |
                 Q(last_name__icontains=search) |
@@ -88,11 +87,12 @@ class AdminCustomerListView(generics.ListAPIView):
         if status:
             if status.lower() == 'active':
                 queryset = queryset.filter(is_active=True)
-            elif status.lower() == 'suspended':
-                queryset = queryset.filter(is_active=False, is_banned=False)  # Assuming you have an is_banned field
-            elif status.lower() == 'banned':
-                queryset = queryset.filter(is_banned=True)  # Assuming you have an is_banned field
-        
+            elif status.lower() in ('suspended', 'banned'):
+                queryset = queryset.filter(is_active=False)
+
+        # Handle custom date range filtering (registration date)
+        queryset = filter_by_date_range(request, queryset)
+
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,

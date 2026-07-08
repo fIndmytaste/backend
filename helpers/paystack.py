@@ -44,7 +44,14 @@ class PaystackManager:
                 return bank.get('code')
         return None
 
-    def make_withdrawal(self, request, vendor: Vendor, amount, transaction_obj):
+    def initiate_transfer(self, user: User, vendor: Vendor, amount, transaction_obj,
+                          reason="Withdrawal from balance", bank_override=None):
+        """
+        Initiate a Paystack transfer to the vendor's/user's saved bank account.
+        Works outside a request cycle (celery tasks, admin approvals).
+        `bank_override` is an optional dict: {bank_code, account_number, account_name}.
+        Returns (success: bool, message: str).
+        """
         account_bank = None
         account_number = None
         account_name = None
@@ -52,27 +59,25 @@ class PaystackManager:
             account_bank = vendor.bank_name
             account_number = vendor.bank_account
             account_name = vendor.bank_account_name
+        elif user and user.bank_name and user.bank_account and user.bank_account_name:
+            account_bank = user.bank_name
+            account_number = user.bank_account
+            account_name = user.bank_account_name
+        elif bank_override and bank_override.get('bank_code') and bank_override.get('account_number'):
+            account_bank = bank_override['bank_code']
+            account_number = bank_override['account_number']
+            account_name = bank_override.get('account_name') or (user.full_name if user else None) or "Withdrawal Recipient"
         else:
-            user = request.user
-            if user.bank_name and user.bank_account and user.bank_account_name:
-                account_bank = user.bank_name
-                account_number = user.bank_account
-                account_name = user.bank_account_name
-            else:
-                if not (request.data.get('bank_code') and request.data.get('account_number')):
-                    return bad_request_response(message='You did not have an account attached to your profile, kindly add.')
-                account_bank = request.data['bank_code']
-                account_number = request.data['account_number']
-                account_name = request.data.get('account_name') or user.full_name or "Withdrawal Recipient"
+            return False, 'You do not have a bank account attached to your profile, kindly add one.'
 
         bank_code = self.resolve_bank_identifier(account_bank)
         if not bank_code:
-            return bad_request_response(message='Unable to resolve the selected bank. Please update your bank details and try again.')
+            return False, 'Unable to resolve the selected bank. Please update your bank details and try again.'
 
         # Resolve bank account to get recipient code
         is_valid, resolve_result = self.resolve_bank_account(account_number, bank_code)
         if not is_valid:
-            return bad_request_response(message=resolve_result)
+            return False, resolve_result
 
         # Create transfer recipient
         recipient_data = {
@@ -88,16 +93,16 @@ class PaystackManager:
             json=recipient_data
         )
         if not recipient_response.ok:
-            return bad_request_response(message='Failed to create transfer recipient')
+            return False, 'Failed to create transfer recipient'
 
         recipient_code = recipient_response.json()['data']['recipient_code']
 
         # Initiate transfer
         data = {
             "source": "balance",
-            "amount": int(amount * 100),  # Convert to kobo
+            "amount": int(Decimal(str(amount)) * 100),  # Convert to kobo
             "recipient": recipient_code,
-            "reason": "Withdrawal from balance",
+            "reason": reason,
             "reference": str(transaction_obj.id)
         }
         response = requests.post(
@@ -112,11 +117,28 @@ class PaystackManager:
                 transaction_obj.response_data = initiate_result
                 transaction_obj.status = 'pending'  # Paystack transfers may need webhook confirmation
                 transaction_obj.save()
-                return success_response(message='Withdrawal initiated successfully')
-            else:
-                return bad_request_response(message='Withdrawal creation failed')
-        else:
-            return bad_request_response(message='Withdrawal creation failed')
+                return True, 'Withdrawal initiated successfully'
+            return False, 'Withdrawal creation failed'
+        return False, 'Withdrawal creation failed'
+
+    def make_withdrawal(self, request, vendor: Vendor, amount, transaction_obj):
+        bank_override = None
+        if request.data.get('bank_code') and request.data.get('account_number'):
+            bank_override = {
+                'bank_code': request.data['bank_code'],
+                'account_number': request.data['account_number'],
+                'account_name': request.data.get('account_name'),
+            }
+        success, message = self.initiate_transfer(
+            user=request.user,
+            vendor=vendor,
+            amount=amount,
+            transaction_obj=transaction_obj,
+            bank_override=bank_override,
+        )
+        if success:
+            return success_response(message=message)
+        return bad_request_response(message=message)
 
 
     def validate_bank(self,bank_code):
