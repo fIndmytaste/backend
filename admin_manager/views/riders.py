@@ -10,7 +10,7 @@ from admin_manager.serializers.lists import AdminRiderListSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from admin_manager.serializers.riders import RiderPerformanceMetricsSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response, internal_server_error_response
-from helpers.date_range import filter_by_date_range
+from helpers.date_range import filter_by_date_range, parse_date_range
 from product.models import Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi
@@ -210,9 +210,29 @@ class RiderEarningMetricsView(generics.GenericAPIView):
         from wallet.models import Wallet
         wallet, _ = Wallet.objects.get_or_create(user=rider.user)
 
-        total_earnings = wallet.transactions.filter(transaction_type='earning', status='completed').aggregate(
-            sum_amount=Sum('amount'))['sum_amount'] or 0
-        total_payout = wallet.transactions.filter(transaction_type='withdrawal', status='completed').aggregate(
+        # Optional custom date range (start_date / end_date, YYYY-MM-DD).
+        range_start, range_end = parse_date_range(request)
+
+        # Delivered orders are the source of truth for earnings — this
+        # mirrors the rider app's own earnings summary. Wallet 'earning'
+        # transactions are not reliably created for every delivery.
+        delivered_orders = Order.objects.filter(rider=rider, status='delivered')
+        if range_start:
+            delivered_orders = delivered_orders.filter(delivered_at__date__gte=range_start)
+        if range_end:
+            delivered_orders = delivered_orders.filter(delivered_at__date__lte=range_end)
+
+        total_earnings = 0 if rider.is_in_house_rider else (
+            delivered_orders.aggregate(total=Sum('rider_earning'))['total'] or 0
+        )
+
+        withdrawals = wallet.transactions.filter(
+            transaction_type='withdrawal', status='completed')
+        if range_start:
+            withdrawals = withdrawals.filter(created_at__date__gte=range_start)
+        if range_end:
+            withdrawals = withdrawals.filter(created_at__date__lte=range_end)
+        total_payout = withdrawals.aggregate(
             sum_amount=Sum('amount'))['sum_amount'] or 0
 
         response = {
@@ -832,6 +852,9 @@ class AdminRiderFundRequestListView(generics.GenericAPIView):
                 Q(user__full_name__icontains=search) |
                 Q(user__email__icontains=search)
             )
+
+        # Optional custom date range (start_date / end_date, YYYY-MM-DD).
+        queryset = filter_by_date_range(request, queryset)
 
         return paginate_success_response_with_serializer(
             request,

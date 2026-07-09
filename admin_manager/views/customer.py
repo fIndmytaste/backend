@@ -117,16 +117,16 @@ class AdminCustomerDetailView(generics.GenericAPIView):
     def get(self, request, user_id):
         try:
             user = User.objects.get(id=user_id, role='buyer')
-            
+
             # Get user details
             serializer = self.serializer_class(user)
             user_data = serializer.data
-            
+
             # Calculate time since last login
             if user.last_login:
                 now = timezone.now()
                 time_diff = now - user.last_login
-                
+
                 # Format the time difference in a human-readable way
                 if time_diff.days > 0:
                     last_login = f"{time_diff.days} days ago"
@@ -138,28 +138,39 @@ class AdminCustomerDetailView(generics.GenericAPIView):
                     last_login = f"{time_diff.seconds} seconds ago"
             else:
                 last_login = "Never"
-            
+
             # Add last login information
             user_data['last_login_formatted'] = last_login
-            
-            # Get customer orders
-            orders = Order.objects.filter(user=user).order_by('-created_at')
-            order_serializer = OrderSerializer(orders, many=True)  # Assuming you have an OrderSerializer
-            
-            # Check if there are any reports for this customer
-            # reports_count = Report.objects.filter(user=user).count()  
-            
+
+            # Customer orders: only the plain columns the admin table renders.
+            # The full OrderSerializer (nested items, delivery-zone lookups,
+            # commission calcs) made this endpoint time out for customers
+            # with large order histories.
+            orders = list(
+                Order.objects.filter(user=user)
+                .order_by('-created_at')
+                .values(
+                    'id',
+                    'track_id',
+                    'total_amount',
+                    'status',
+                    'delivery_status',
+                    'payment_status',
+                    'created_at',
+                )
+            )
+            for order in orders:
+                order['id'] = str(order['id'])
+                order['total_amount'] = float(order['total_amount'] or 0)
+                order['created_at'] = order['created_at'].isoformat() if order['created_at'] else None
+
             response_data = {
                 "customer_details": user_data,
-                "orders": order_serializer.data,
-                # "reports": {
-                #     "count": reports_count,
-                #     "status": "None" if reports_count == 0 else "See details"
-                # }
+                "orders": orders,
             }
-            
+
             return success_response(data=response_data)
-            
+
         except User.DoesNotExist:
             return bad_request_response(message="Customer not found")
 
@@ -353,11 +364,25 @@ class AdminCustomerOrdersOverviewView(generics.ListAPIView):
             # Get orders for this vendor
             customer_orders = Order.objects.filter(user=user)
             
-            # Calculate order statistics
+            # Calculate order statistics (same status buckets as the vendor
+            # overview so "active" covers every in-progress state).
             total_orders = customer_orders.count()
-            active_orders = customer_orders.filter(status='pending').count()
+            active_orders = customer_orders.filter(
+                status__in=[
+                    'pending',
+                    'confirmed',
+                    'preparing',
+                    'looking_for_rider',
+                    'rider_assigned',
+                    'picked_up',
+                    'in_transit',
+                    'near_delivery',
+                ]
+            ).count()
             completed_orders = customer_orders.filter(status='delivered').count()
-            canceled_orders = customer_orders.filter(status='canceled').count()
+            canceled_orders = customer_orders.filter(
+                status__in=['canceled', 'cancelled', 'rejected']
+            ).count()
             
           
             # Order overview

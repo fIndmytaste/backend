@@ -421,45 +421,64 @@ class CustomerNotificationConsumer(AsyncWebsocketConsumer):
 
 class RiderConsumer(AsyncJsonWebsocketConsumer):
 
+    @staticmethod
+    @database_sync_to_async
+    def _resolve_rider_group_ids(raw_id):
+        """
+        Clients pass either the account User id or the Rider profile id in
+        `user_id`, while the backend broadcasts to riders_group_<User.id>.
+        Resolve both directions so the connection always joins the group the
+        server actually sends to.
+        """
+        from account.models import Rider
+
+        ids = {str(raw_id)}
+        try:
+            rider = Rider.objects.only('id', 'user_id').filter(id=raw_id).first()
+            if rider:
+                ids.add(str(rider.user_id))
+            else:
+                rider = Rider.objects.only('id', 'user_id').filter(user_id=raw_id).first()
+                if rider:
+                    ids.add(str(rider.id))
+        except Exception as e:
+            logging.warning(f"[RiderConsumer] Could not resolve rider groups for {raw_id}: {e}")
+        return ids
+
     async def connect(self):
-        # user = self.scope["user"]
-
-        # # Optional but strongly recommended
-        # if not user.is_authenticated:
-        #     await self.close()
-        #     return
-
         # Get query string parameters
         query_string = self.scope['query_string'].decode()
-        print(query_string)
         params = dict(qc.split('=') for qc in query_string.split('&') if '=' in qc)
         user_id = params.get('user_id')
-        
-        print(user_id)
-        # Optional: validate that user_id is a valid integer
+
         if not user_id:
             await self.close()
             return
 
-        # Create a unique group for this rider
+        group_ids = await self._resolve_rider_group_ids(user_id)
+        self.group_names = [f"riders_group_{gid}" for gid in group_ids]
+        # Kept for backwards compatibility with any code reading group_name.
         self.group_name = f"riders_group_{user_id}"
 
-        await self.channel_layer.group_add(
-            self.group_name,
-            self.channel_name
-        )
+        for group_name in self.group_names:
+            await self.channel_layer.group_add(
+                group_name,
+                self.channel_name
+            )
 
         await self.accept()
 
     async def disconnect(self, close_code):
-        group_name = getattr(self, 'group_name', None)
-        if group_name:
+        group_names = getattr(self, 'group_names', None) or (
+            [self.group_name] if getattr(self, 'group_name', None) else []
+        )
+        if not group_names:
+            logging.warning("[RiderConsumer] disconnect called but group_name not set.")
+        for group_name in group_names:
             await self.channel_layer.group_discard(
                 group_name,
                 self.channel_name
             )
-        else:
-            logging.warning("[RiderConsumer] disconnect called but group_name not set.")
 
     async def new_order_event(self, event):
         await self.send_json(event)
@@ -505,7 +524,16 @@ class LegacyNotificationConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4400)
             return
 
-        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        self.group_names = [self.group_name]
+        # Rider groups are keyed by User id server-side, but clients may pass
+        # a Rider profile id — join both so events are never missed.
+        if self.group_name.startswith('riders_group_'):
+            raw_id = self.group_name.removeprefix('riders_group_')
+            group_ids = await RiderConsumer._resolve_rider_group_ids(raw_id)
+            self.group_names = [f'riders_group_{gid}' for gid in group_ids]
+
+        for group_name in self.group_names:
+            await self.channel_layer.group_add(group_name, self.channel_name)
         await self.accept()
         await self.send_json({
             'type': 'connection_established',
@@ -516,8 +544,10 @@ class LegacyNotificationConsumer(AsyncJsonWebsocketConsumer):
         })
 
     async def disconnect(self, close_code):
-        group_name = getattr(self, 'group_name', None)
-        if group_name:
+        group_names = getattr(self, 'group_names', None) or (
+            [self.group_name] if getattr(self, 'group_name', None) else []
+        )
+        for group_name in group_names:
             await self.channel_layer.group_discard(group_name, self.channel_name)
 
     async def receive_json(self, content, **kwargs):

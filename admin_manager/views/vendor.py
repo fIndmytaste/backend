@@ -7,7 +7,7 @@ from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
 from admin_manager.serializers.lists import AdminVendorListSerializer
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
-from helpers.date_range import filter_by_date_range
+from helpers.date_range import filter_by_date_range, parse_date_range
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi
 
@@ -243,23 +243,22 @@ class AdminVendorOverviewView(generics.GenericAPIView):
         from django.utils import timezone
         try:
             vendor = Vendor.objects.get(id=vendor_id)
-            time_frame = request.GET.get('time_frame', 'weekly')
-            
-            # Get date range based on time_frame
-            end_date = timezone.now()
-            if time_frame == 'daily':
-                start_date = end_date - timedelta(days=1)
-            elif time_frame == 'weekly':
-                start_date = end_date - timedelta(days=7)
-            elif time_frame == 'monthly':
-                start_date = end_date - timedelta(days=30)
-            elif time_frame == 'yearly':
-                start_date = end_date - timedelta(days=365)
+
+            # Optional custom date range (start_date / end_date, YYYY-MM-DD).
+            # Without it the stats stay all-time so they keep matching the
+            # totals on the vendor app profile.
+            range_start, range_end = parse_date_range(request)
+            if range_start or range_end:
+                time_frame = f"{range_start or '…'} to {range_end or '…'}"
             else:
-                start_date = end_date - timedelta(days=7)  # Default to weekly
-            
+                time_frame = 'all time'
+
             # Get orders for this vendor
             vendor_orders = Order.objects.filter(vendor=vendor)
+            if range_start:
+                vendor_orders = vendor_orders.filter(created_at__date__gte=range_start)
+            if range_end:
+                vendor_orders = vendor_orders.filter(created_at__date__lte=range_end)
 
             # Order statistics use the same status buckets as the vendor app's
             # own overview (vendor/views.py) so both profiles report the same
@@ -296,6 +295,10 @@ class AdminVendorOverviewView(generics.GenericAPIView):
             vendor_transactions = WalletTransaction.objects.filter(
                 wallet__user=vendor.user
             )
+            if range_start:
+                vendor_transactions = vendor_transactions.filter(created_at__date__gte=range_start)
+            if range_end:
+                vendor_transactions = vendor_transactions.filter(created_at__date__lte=range_end)
             total_payouts = vendor_transactions.filter(
                 transaction_type='withdrawal', status='completed'
             ).aggregate(total=Sum('amount'))['total'] or 0
@@ -377,12 +380,15 @@ class AdminVendorProductListView(generics.ListAPIView):
         try:
             # Check if vendor exists
             vendor = Vendor.objects.get(id=vendor_id)
-            
+
             return paginate_success_response_with_serializer(
                 request,
                 self.serializer_class,
                 self.get_queryset(),
-                page_size=int(request.GET.get('page_size', 20))
+                page_size=int(request.GET.get('page_size', 20)),
+                # Admin should see the prices the vendor set, not the
+                # customer-facing price with the platform service charge.
+                extra_serializer_context={'is_vendor': True},
             )
         except Vendor.DoesNotExist:
             return bad_request_response(message= "Vendor not found")

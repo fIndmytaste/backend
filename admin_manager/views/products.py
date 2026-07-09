@@ -6,7 +6,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from helpers.date_range import parse_date_range
+from helpers.date_range import filter_by_date_range, parse_date_range
 
 from account.models import Rider, StaffPagePermission, User, Vendor
 from account.serializers import RiderSerializer
@@ -872,6 +872,14 @@ class AdminGetAllMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
                 queryset = queryset.filter(id__in=matching_ids)
             except DeliveryZone.DoesNotExist:
                 queryset = queryset.none()
+
+        # Optional custom date range (start_date / end_date on created_at).
+        queryset = filter_by_date_range(self.request, queryset)
+
+        if assignment_status == 'picked_up':
+            # Completed pickups read best in pickup order, not by the
+            # dispatch priority used for the live queue.
+            return queryset.order_by('-pickup_confirmed_at', '-created_at')
 
         return queryset.annotate(
             priority=Case(
