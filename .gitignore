@@ -82,6 +82,9 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 findmytaste-firebase-adminsdk.json
+# Firebase Admin service-account private keys
+*-firebase-adminsdk-*.json
+firebase-service-account*.json
 # IPython
 profile_default/
 ipython_config.py

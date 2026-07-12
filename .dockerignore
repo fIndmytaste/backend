@@ -36,6 +36,8 @@ db.sqlite3-journal
 
 # Environment variables
 .env
+*-firebase-adminsdk-*.json
+firebase-service-account*.json
 .venv
 env/
 venv/

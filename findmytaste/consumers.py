@@ -480,6 +480,25 @@ class RiderConsumer(AsyncJsonWebsocketConsumer):
                 self.channel_name
             )
 
+    async def receive_json(self, content, **kwargs):
+        """Handle rider-app control messages without dropping the socket.
+
+        The mobile client sends heartbeats and older builds also send an
+        explicit subscribe message. Group membership is established from the
+        authenticated rider id in the connection URL, so subscribe is an
+        acknowledgement-only operation here.
+        """
+        action = str(content.get('action') or content.get('type') or '').lower()
+        if action == 'ping':
+            await self.send_json({'type': 'pong'})
+        elif action == 'subscribe':
+            await self.send_json({
+                'type': 'subscribed',
+                'groups': getattr(self, 'group_names', []),
+            })
+        else:
+            logging.debug(f"[RiderConsumer] Ignored client message: {action}")
+
     async def new_order_event(self, event):
         await self.send_json(event)
         logging.info(f"[RiderConsumer] Sent new_order_event: {event['data']}")
