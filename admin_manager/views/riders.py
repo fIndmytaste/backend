@@ -158,7 +158,10 @@ class AdminRiderOrderListView(generics.GenericAPIView):
                 message="Rider not found",
                 status_code=404
             )
-        orders = Order.objects.filter(rider=rider).order_by('-created_at')
+        orders = filter_by_date_range(
+            request,
+            Order.objects.filter(rider=rider),
+        ).order_by('-updated_at', '-created_at')
         return paginate_success_response_with_serializer(
             request,
             OrderSerializer,

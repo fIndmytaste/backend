@@ -301,7 +301,8 @@ class AdminCustomerOrdersView(generics.ListAPIView):
     
     def get_queryset(self):
         user_id = self.kwargs.get('user_id')
-        return Order.objects.filter(user_id=user_id).order_by('-created_at')
+        queryset = Order.objects.filter(user_id=user_id).order_by('-created_at')
+        return filter_by_date_range(self.request, queryset)
     
     @swagger_auto_schema(
         operation_description="Get all orders made by a specific customer.",
@@ -362,7 +363,10 @@ class AdminCustomerOrdersOverviewView(generics.ListAPIView):
             end_date = timezone.now()
   
             # Get orders for this vendor
-            customer_orders = Order.objects.filter(user=user)
+            customer_orders = filter_by_date_range(
+                request,
+                Order.objects.filter(user=user),
+            )
             
             # Calculate order statistics (same status buckets as the vendor
             # overview so "active" covers every in-progress state).

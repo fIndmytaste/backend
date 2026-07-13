@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+import os
 import uuid
 
 User = get_user_model()
@@ -122,6 +123,28 @@ class AnnouncementImage(models.Model):
 
     def __str__(self):
         return f"Image for {self.announcement.title}"
+
+    def save(self, *args, **kwargs):
+        """Persist newly uploaded carousel images in the existing Backblaze bucket."""
+        image = self.image_file
+        if image and not getattr(image, '_committed', True):
+            from helpers.backblaze import upload_to_backblaze
+
+            extension = os.path.splitext(image.name)[1].lower()
+            filename = f"announcement_{uuid.uuid4().hex}{extension}"
+            result = upload_to_backblaze(
+                image.file,
+                filename,
+                folder='announcement_images',
+                content_type=getattr(image.file, 'content_type', None),
+            )
+            self.image_url = result['downloadUrl']
+            # Store the durable Backblaze URL, not a Render-local ImageField
+            # path. This also prevents Django's default storage from receiving
+            # the same upload a second time.
+            self.image_file = None
+
+        super().save(*args, **kwargs)
 
 
 class AnnouncementLink(models.Model):

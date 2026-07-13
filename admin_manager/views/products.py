@@ -521,7 +521,7 @@ class AdminGetMarketPlaceVendorOrdersAPIView(generics.GenericAPIView):
         if status:
             queryset = queryset.filter(status__iexact=status)
 
-        return queryset
+        return filter_by_date_range(self.request, queryset)
 
     @swagger_auto_schema(
         operation_summary="List All Orders (Admin)",
@@ -641,7 +641,7 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
                 marketplace_filter |= Q(vendor__marketplace__id=marketplace)
             queryset = queryset.filter(marketplace_filter).distinct()
 
-        return queryset
+        return filter_by_date_range(self.request, queryset)
 
     @swagger_auto_schema(
         operation_summary="List All Orders (Admin)",
@@ -740,7 +740,7 @@ class AdminPromoOrdersAPIView(generics.GenericAPIView):
         if promo_code:
             queryset = queryset.filter(promo__code__icontains=promo_code)
 
-        return queryset
+        return filter_by_date_range(self.request, queryset, field='used_at')
 
     def get(self, request):
         return paginate_success_response_with_serializer(

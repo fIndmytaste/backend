@@ -1022,7 +1022,7 @@ class RiderViewSet(viewsets.ModelViewSet):
             self.request,
             OrderSerializer,
             queryset,
-            page_size=10
+            page_size=min(max(int(request.GET.get('page_size', 20)), 1), 50)
         )
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
@@ -1191,12 +1191,12 @@ class RiderViewSet(viewsets.ModelViewSet):
         active_orders = rider.orders.filter(
             status__in=['rider_assigned', 'confirmed', 'ready_for_pickup',
                         'picked_up', 'in_transit', 'near_delivery']
-        )
+        ).order_by('-updated_at', '-created_at')
         return paginate_success_response_with_serializer(
             request,
             OrderSerializer,
             active_orders,
-            page_size=int(request.GET.get('page', 10)),
+            page_size=min(max(int(request.GET.get('page_size', 20)), 1), 50),
         )
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
@@ -1204,12 +1204,12 @@ class RiderViewSet(viewsets.ModelViewSet):
         rider = self.get_object()
         active_orders = rider.orders.filter(
             status__in=['delivered']
-        )
+        ).order_by('-delivered_at', '-updated_at', '-created_at')
         return paginate_success_response_with_serializer(
             request,
             OrderSerializer,
             active_orders,
-            page_size=int(request.GET.get('page', 10)),
+            page_size=min(max(int(request.GET.get('page_size', 20)), 1), 50),
         )
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated], url_path='pick_up_orders')
@@ -1217,12 +1217,12 @@ class RiderViewSet(viewsets.ModelViewSet):
         rider = self.get_object()
         active_orders = rider.orders.filter(
             status__in=['picked_up', 'near_delivery']
-        )
+        ).order_by('-updated_at', '-created_at')
         return paginate_success_response_with_serializer(
             request,
             OrderSerializer,
             active_orders,
-            page_size=int(request.GET.get('page', 10)),
+            page_size=min(max(int(request.GET.get('page_size', 20)), 1), 50),
         )
         # return Response(serializer.data)
 
