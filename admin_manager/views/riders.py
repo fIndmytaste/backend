@@ -3,21 +3,20 @@ from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.db.models import Case, IntegerField, Sum, Value, When
 from django.utils import timezone
-from django.db.models import Avg, Count, Q, DecimalField
+from django.db.models import Avg, Count, Q, DecimalField, Min
 from account.models import Rider, RiderRating, User
 from account.serializers import RiderDocumentverificationSerializer, RiderSerializer
 from admin_manager.serializers.lists import AdminRiderListSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
-from admin_manager.serializers.riders import RiderPerformanceMetricsSerializer
+from admin_manager.serializers.riders import AdminRiderOrderSerializer, RiderPerformanceMetricsSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response, bad_request_response, internal_server_error_response
 from helpers.date_range import filter_by_date_range, parse_date_range
-from product.models import Order, Product, Rating, SystemCategory
+from product.models import DeliveryTracking, Order, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi
 from datetime import timedelta, datetime
 from decimal import Decimal
 
-from product.serializers import OrderSerializer
 from helpers.websocket_notification import notify_rider_order_assignment
 from rider.serializers import RiderRatingCreateSerializer
 
@@ -161,10 +160,12 @@ class AdminRiderOrderListView(generics.GenericAPIView):
         orders = filter_by_date_range(
             request,
             Order.objects.filter(rider=rider),
+        ).annotate(
+            time_assigned_at=Min('product_delivery_trackings__created_at'),
         ).order_by('-updated_at', '-created_at')
         return paginate_success_response_with_serializer(
             request,
-            OrderSerializer,
+            AdminRiderOrderSerializer,
             orders,
             page_size=int(request.GET.get('page_size', 20))
         )
@@ -185,13 +186,15 @@ class AdminRiderReviewListView(generics.GenericAPIView):
                 status_code=404
             )
 
-        reviews = RiderRating.objects.filter(
-            rider=rider).order_by('-created_at')
+        reviews = filter_by_date_range(
+            request,
+            RiderRating.objects.filter(rider=rider),
+        ).order_by('-created_at')
         return paginate_success_response_with_serializer(
             request,
             self.serializer_class,
             reviews,
-            page_size=10
+            page_size=int(request.GET.get('page_size', 20))
         )
 
 
@@ -221,11 +224,20 @@ class RiderEarningMetricsView(generics.GenericAPIView):
         # transactions are not reliably created for every delivery.
         delivered_orders = Order.objects.filter(rider=rider, status='delivered')
         if range_start:
-            delivered_orders = delivered_orders.filter(delivered_at__date__gte=range_start)
+            delivered_orders = delivered_orders.filter(
+                Q(delivered_at__date__gte=range_start) |
+                Q(delivered_at__isnull=True, actual_delivery_time__date__gte=range_start)
+            )
         if range_end:
-            delivered_orders = delivered_orders.filter(delivered_at__date__lte=range_end)
+            delivered_orders = delivered_orders.filter(
+                Q(delivered_at__date__lte=range_end) |
+                Q(delivered_at__isnull=True, actual_delivery_time__date__lte=range_end)
+            )
 
-        total_earnings = 0 if rider.is_in_house_rider else (
+        # Show recorded earnings for every rider. Historical/manual in-house
+        # deliveries may contain a legitimate earning even if current policy
+        # uses a fixed salary.
+        total_earnings = (
             delivered_orders.aggregate(total=Sum('rider_earning'))['total'] or 0
         )
 
@@ -250,9 +262,8 @@ class RiderPerformanceMetricsView(generics.GenericAPIView):
     """
     Get performance metrics for a specific rider
     Query parameters:
-    - period: 'weekly', 'monthly', 'yearly' (default: 'weekly')
-    - start_date: YYYY-MM-DD (optional, overrides period)  
-    - end_date: YYYY-MM-DD (optional, overrides period)
+    - start_date: YYYY-MM-DD (optional; defaults to all time)
+    - end_date: YYYY-MM-DD (optional; defaults to all time)
     """
     permission_classes = [IsAuthenticated]
     serializer_class = RiderPerformanceMetricsSerializer
@@ -267,47 +278,22 @@ class RiderPerformanceMetricsView(generics.GenericAPIView):
                 status_code=404
             )
 
-        # Get date range
-        period = request.GET.get('period', 'weekly').lower()
-        start_date = request.GET.get('start_date')
-        end_date = request.GET.get('end_date')
-
-        if start_date and end_date:
-            try:
-                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-                period_text = f"{start_date} to {end_date}"
-            except ValueError:
-                return bad_request_response(
-                    message='Invalid date format. Use YYYY-MM-DD'
-                )
-        else:
-            # Calculate date range based on period
-            now = timezone.now().date()
-            if period == 'weekly':
-                start_date = now - timedelta(days=7)
-                period_text = "Last 7 days"
-            elif period == 'monthly':
-                start_date = now - timedelta(days=30)
-                period_text = "Last 30 days"
-            elif period == 'yearly':
-                start_date = now - timedelta(days=365)
-                period_text = "Last 365 days"
-            else:
-                start_date = now - timedelta(days=7)
-                period_text = "Last 7 days"
-
-            end_date = now
-
-        # Get orders in the specified period
-        orders_queryset = Order.objects.filter(
-            rider=rider,
-            created_at__date__gte=start_date,
-            created_at__date__lte=end_date
+        start_date, end_date = parse_date_range(request)
+        period_text = (
+            f"{start_date or 'Beginning'} to {end_date or 'Today'}"
+            if start_date or end_date
+            else "All time"
         )
+        orders_queryset = Order.objects.filter(rider=rider)
 
         # Calculate metrics
-        metrics = self._calculate_metrics(orders_queryset, rider, period_text)
+        metrics = self._calculate_metrics(
+            orders_queryset,
+            rider,
+            period_text,
+            start_date,
+            end_date,
+        )
 
         serializer = self.serializer_class(data=metrics)
         if serializer.is_valid():
@@ -320,55 +306,89 @@ class RiderPerformanceMetricsView(generics.GenericAPIView):
             message='Error calculating metrics'
         )
 
-    def _calculate_metrics(self, orders_queryset, rider, period_text):
+    def _calculate_metrics(
+        self,
+        orders_queryset,
+        rider,
+        period_text,
+        start_date=None,
+        end_date=None,
+    ):
         """Calculate performance metrics for the rider"""
 
-        # Total orders
-        total_orders = orders_queryset.count()
+        assigned_orders = orders_queryset
+        if start_date:
+            assigned_orders = assigned_orders.filter(created_at__date__gte=start_date)
+        if end_date:
+            assigned_orders = assigned_orders.filter(created_at__date__lte=end_date)
+        total_orders = assigned_orders.count()
 
-        # Completed orders (delivered)
-        completed_orders = orders_queryset.filter(status='delivered').count()
+        delivered_orders = orders_queryset.filter(status='delivered')
+        if start_date:
+            delivered_orders = delivered_orders.filter(
+                Q(delivered_at__date__gte=start_date) |
+                Q(delivered_at__isnull=True, actual_delivery_time__date__gte=start_date)
+            )
+        if end_date:
+            delivered_orders = delivered_orders.filter(
+                Q(delivered_at__date__lte=end_date) |
+                Q(delivered_at__isnull=True, actual_delivery_time__date__lte=end_date)
+            )
+        completed_orders = delivered_orders.count()
 
-        # Canceled orders
-        canceled_orders = orders_queryset.filter(status='canceled').count()
+        canceled = orders_queryset.filter(status='canceled')
+        if start_date:
+            canceled = canceled.filter(updated_at__date__gte=start_date)
+        if end_date:
+            canceled = canceled.filter(updated_at__date__lte=end_date)
+        canceled_orders = canceled.count()
 
-        # Completion rate
         completion_rate = Decimal('0.00')
         if total_orders > 0:
-            completion_rate = Decimal(
-                completed_orders) / Decimal(total_orders) * Decimal('100.00')
+            completion_rate = (
+                Decimal(completed_orders)
+                / Decimal(total_orders)
+                * Decimal('100.00')
+            ).quantize(Decimal('0.01'))
 
-        # Average delivery time (for completed orders only)
-        delivered_orders = orders_queryset.filter(
-            status='delivered',
-            actual_pickup_time__isnull=False,
-            actual_delivery_time__isnull=False
-        )
+        delivery_times = []
+        on_time_deliveries = 0
+        on_time_eligible_deliveries = 0
+        for order in delivered_orders:
+            delivered_time = order.actual_delivery_time or order.delivered_at
+            if order.actual_pickup_time and delivered_time:
+                seconds = (delivered_time - order.actual_pickup_time).total_seconds()
+                if seconds >= 0:
+                    delivery_times.append(seconds / 60)
+
+            deadline = order.estimated_dropoff_time
+            if (
+                deadline is None
+                and order.estimated_pickup_time
+                and order.new_estimated_delivery_time
+            ):
+                deadline = (
+                    order.estimated_pickup_time
+                    + order.new_estimated_delivery_time
+                )
+            if deadline and delivered_time:
+                on_time_eligible_deliveries += 1
+                if delivered_time <= deadline:
+                    on_time_deliveries += 1
 
         average_delivery_time = "N/A"
-        if delivered_orders.exists():
-            # Calculate average delivery time in minutes
-            delivery_times = []
-            for order in delivered_orders:
-                if order.actual_pickup_time and order.actual_delivery_time:
-                    time_diff = order.actual_delivery_time - order.actual_pickup_time
-                    # Convert to minutes
-                    delivery_times.append(time_diff.total_seconds() / 60)
+        if delivery_times:
+            average_minutes = round(sum(delivery_times) / len(delivery_times))
+            average_delivery_time = (
+                f"{average_minutes} min" if average_minutes == 1
+                else f"{average_minutes} mins"
+            )
 
-            if delivery_times:
-                avg_minutes = sum(delivery_times) / len(delivery_times)
-                average_delivery_time = f"{int(avg_minutes)}mins"
-
-        # On-time deliveries (delivered within estimated time)
-        on_time_deliveries = 0
-        for order in delivered_orders:
-            if (order.estimated_delivery_time and
-                order.actual_delivery_time and
-                    order.actual_delivery_time <= order.estimated_delivery_time):
-                on_time_deliveries += 1
-
-        # Overall rating
         ratings = RiderRating.objects.filter(rider=rider)
+        if start_date:
+            ratings = ratings.filter(created_at__date__gte=start_date)
+        if end_date:
+            ratings = ratings.filter(created_at__date__lte=end_date)
         overall_rating = ratings.aggregate(
             avg_rating=Avg('rating'))['avg_rating']
         if overall_rating is None:
@@ -384,6 +404,8 @@ class RiderPerformanceMetricsView(generics.GenericAPIView):
             'total_orders': total_orders,
             'completed_orders': completed_orders,
             'completion_rate': completion_rate,
+            'on_time_eligible_deliveries': on_time_eligible_deliveries,
+            'reports_count': ratings.count(),
             'period': period_text
         }
 
@@ -598,6 +620,7 @@ class AdminAssignOrderToRiderView(generics.GenericAPIView):
             locked_order.status = 'rider_assigned'
             locked_order.delivery_status = 'rider_assigned'
             locked_order.save()
+            DeliveryTracking.objects.get_or_create(order=locked_order)
             order = locked_order
 
         try:
@@ -770,6 +793,15 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
                     assigned,
                     ['rider', 'status', 'delivery_status', 'updated_at'],
                 )
+                existing_tracking_ids = set(
+                    DeliveryTracking.objects.filter(order__in=assigned)
+                    .values_list('order_id', flat=True)
+                )
+                DeliveryTracking.objects.bulk_create([
+                    DeliveryTracking(order=order)
+                    for order in assigned
+                    if order.id not in existing_tracking_ids
+                ])
 
         for order in assigned:
             try:
