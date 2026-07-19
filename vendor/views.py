@@ -1269,6 +1269,13 @@ class AllMarketPlaceCategoriesView(generics.GenericAPIView):
         return MarketPlace.objects.filter(is_active=True).order_by('-created_at')
 
     def get(self, request):
+        from helpers.marketplace_access import (
+            MARKETPLACE_UNAVAILABLE_MESSAGE,
+            marketplace_available_for_request,
+        )
+        if not marketplace_available_for_request(request):
+            return success_response([], message=MARKETPLACE_UNAVAILABLE_MESSAGE)
+
         marketplaces = self.get_queryset()
         data = self.serializer_class(marketplaces, many=True,context={'request': request}).data
         return success_response(data)
@@ -1279,6 +1286,13 @@ class SingleMarketPlaceCategoryView(generics.GenericAPIView):
 
 
     def get(self, request, category_id):
+        from helpers.marketplace_access import (
+            MARKETPLACE_UNAVAILABLE_MESSAGE,
+            marketplace_available_for_request,
+        )
+        if not marketplace_available_for_request(request):
+            return bad_request_response(message=MARKETPLACE_UNAVAILABLE_MESSAGE)
+
         try:
             marketplace = MarketPlace.objects.get(id=category_id)
         except:
@@ -1292,6 +1306,13 @@ class SingleMarketPlaceCategoryVendorsView(generics.GenericAPIView):
     serializer_class = BuyerVendorCardSerializer
 
     def get(self, request, category_id):
+        from helpers.marketplace_access import (
+            MARKETPLACE_UNAVAILABLE_MESSAGE,
+            marketplace_available_for_request,
+        )
+        if not marketplace_available_for_request(request):
+            return bad_request_response(message=MARKETPLACE_UNAVAILABLE_MESSAGE)
+
         try:
             marketplace = MarketPlace.objects.get(id=category_id)
         except:

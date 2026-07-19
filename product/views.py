@@ -729,6 +729,10 @@ class VendorBySystemCategoryView(generics.GenericAPIView):
         is_marketplace_category = system_category.name.lower() == 'marketplace'
 
         if is_marketplace_category:
+            from helpers.marketplace_access import marketplace_available_for_request
+            if not marketplace_available_for_request(self.request):
+                return Vendor.objects.none()
+
             marketplace_vendor_ids = MarketPlace.objects.filter(
                 is_active=True
             ).values_list('vendors', flat=True)

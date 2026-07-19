@@ -44,6 +44,43 @@ def _get_redis_client():
         return None
 
 
+def _rebuild_geo_index(r) -> int:
+    """
+    Repopulate the geo index from the database.
+
+    Render's Redis is not persistent: a restart or cache eviction can drop the
+    "vendors:geo" key at any time, which previously made every discovery
+    endpoint return an empty list ("no vendors nearby") until someone manually
+    ran populate_redis_geo. Rebuilding lazily here makes the index self-heal.
+
+    Returns the number of vendors indexed.
+    """
+    from account.models import Vendor
+
+    vendors = Vendor.objects.filter(
+        approval_status='approved',
+        is_active=True,
+        location_latitude__isnull=False,
+        location_longitude__isnull=False,
+    )
+
+    pipe = r.pipeline()
+    added = 0
+    for vendor in vendors.iterator():
+        try:
+            lon = float(vendor.location_longitude)
+            lat = float(vendor.location_latitude)
+        except (TypeError, ValueError):
+            continue
+        pipe.execute_command("GEOADD", GEO_KEY, lon, lat, str(vendor.id))
+        added += 1
+
+    if added:
+        pipe.execute()
+        logger.warning("vendors:geo was empty; rebuilt with %s vendors", added)
+    return added
+
+
 def geo_nearby_vendor_ids(
     user_lat: float,
     user_lon: float,
@@ -57,6 +94,17 @@ def geo_nearby_vendor_ids(
     """
     r = _get_redis_client()
     if r is None:
+        return None
+
+    try:
+        # An absent key means Redis lost the index (restart/eviction), not
+        # that there are no vendors — rebuild before querying. If the DB
+        # genuinely has no eligible vendors, fall back to Haversine so the
+        # caller's queryset remains the source of truth.
+        if not r.exists(GEO_KEY) and _rebuild_geo_index(r) == 0:
+            return None
+    except Exception as exc:
+        logger.warning("Redis geo index check/rebuild failed: %s", exc)
         return None
 
     try:
