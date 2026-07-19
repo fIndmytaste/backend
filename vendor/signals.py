@@ -5,11 +5,11 @@ Rules:
   - Vendor is approved + active + has coordinates  →  GEOADD  (add/update)
   - Vendor is deactivated, rejected, or loses coords  →  ZREM  (remove)
 
-This means populate_redis_geo only needs to run once on first deploy;
-after that the index stays current automatically.
+The discovery path automatically validates/backfills the index, and these
+signals keep it current as vendor records change afterward.
 """
 
-from django.db.models.signals import post_save
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 from account.models import Vendor
@@ -35,6 +35,16 @@ def sync_vendor_geo(sender, instance: Vendor, **kwargs):
             geo_remove_vendor(str(instance.id))
     except Exception:
         # Never let a Redis failure crash a vendor save
+        pass
+
+
+@receiver(post_delete, sender=Vendor)
+def remove_deleted_vendor_from_geo(sender, instance: Vendor, **kwargs):
+    """Remove deleted vendors and invalidate geo membership validation."""
+    try:
+        geo_remove_vendor(str(instance.id))
+    except Exception:
+        # Never let a Redis failure prevent a vendor deletion
         pass
 
 

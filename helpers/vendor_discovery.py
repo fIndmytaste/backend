@@ -119,8 +119,8 @@ def filter_and_sort_vendors_by_distance(
       - BROWSE_RADIUS_KM (10km) for home feed, hot-picks, featured, all-vendors
       - SEARCH_RADIUS_KM (500km) for keyword search (relevance drives results)
 
-    enforce_delivery_radius=True is used only for order placement eligibility.
-    For browsing, always False — we filter by radius_km instead.
+    enforce_delivery_radius=True applies each vendor's delivery radius in
+    addition to the endpoint's browse/search radius.
     """
     if user_latitude is None or user_longitude is None:
         return list(vendors)
@@ -144,7 +144,12 @@ def filter_and_sort_vendors_by_distance(
             vendor.distance_km = round(dist_km, 2)
             results.append((vendor, dist_km))
         results.sort(key=lambda item: (item[1], -(float(item[0].rating or 0)), item[0].name or ''))
-        return results
+        if results:
+            return results
+
+        # An empty result can also mean Redis is incomplete or contains only
+        # IDs outside this database queryset. Fall through to Haversine so a
+        # cache/index problem can never make every vendor disappear.
 
     # --- Path 2: Haversine fallback (Redis down) ---
     vendors_with_distance = []
@@ -162,8 +167,8 @@ def filter_and_sort_vendors_by_distance(
         if distance is None:
             continue
 
-        # Apply the same radius cap as Redis would
-        if distance > radius_km and not enforce_delivery_radius:
+        # Apply the same endpoint radius cap as Redis would.
+        if distance > radius_km:
             continue
 
         if enforce_delivery_radius and distance > float(vendor.delivery_radius_km):

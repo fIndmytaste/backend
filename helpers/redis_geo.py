@@ -4,10 +4,10 @@ Redis Geo service for vendor proximity queries.
 All vendor discovery views use this module so geo logic lives in one place.
 
 Key design decisions:
-- GEO index key: "vendors:geo"  (stores approved + active vendors with products)
+- GEO index key: "vendors:geo"  (stores approved + active vendors with coordinates)
 - Search radius: 500 km ceiling — wide enough for any real use, Redis filters fast
-- enforce_delivery_radius: False for browsing (hot-picks, featured, all vendors)
-                           True for order eligibility checks
+- enforce_delivery_radius: optionally applies each vendor's delivery cap in
+                           addition to the endpoint's browse/search radius
 - Fallback: if Redis is unreachable, falls back to the shared Haversine helper
             so the app never goes dark
 """
@@ -19,6 +19,8 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 GEO_KEY = "vendors:geo"
+GEO_INDEX_VALIDATION_KEY = "vendors:geo:validated"
+GEO_INDEX_VALIDATION_TTL_SECONDS = 5 * 60
 
 # Browsing radius: vendors shown on home feed, hot-picks, featured, all-vendors.
 # 10km matches what Chowdeck/Bolt Food use for Nigerian city density —
@@ -44,7 +46,28 @@ def _get_redis_client():
         return None
 
 
-def _rebuild_geo_index(r) -> int:
+def _eligible_geo_vendors():
+    """Return every vendor that should have coordinates in the geo index."""
+    from account.models import Vendor
+
+    return list(
+        Vendor.objects.filter(
+            approval_status='approved',
+            is_active=True,
+            location_latitude__isnull=False,
+            location_longitude__isnull=False,
+        ).exclude(
+            location_latitude='',
+            location_longitude='',
+        )
+    )
+
+
+def _decode_member(member) -> str:
+    return member.decode() if isinstance(member, bytes) else str(member)
+
+
+def _rebuild_geo_index(r, vendors=None) -> int:
     """
     Repopulate the geo index from the database.
 
@@ -55,18 +78,13 @@ def _rebuild_geo_index(r) -> int:
 
     Returns the number of vendors indexed.
     """
-    from account.models import Vendor
-
-    vendors = Vendor.objects.filter(
-        approval_status='approved',
-        is_active=True,
-        location_latitude__isnull=False,
-        location_longitude__isnull=False,
-    )
+    vendors = _eligible_geo_vendors() if vendors is None else list(vendors)
 
     pipe = r.pipeline()
+    # Delete and repopulate in one pipeline so stale members are removed too.
+    pipe.delete(GEO_KEY)
     added = 0
-    for vendor in vendors.iterator():
+    for vendor in vendors:
         try:
             lon = float(vendor.location_longitude)
             lat = float(vendor.location_latitude)
@@ -75,10 +93,43 @@ def _rebuild_geo_index(r) -> int:
         pipe.execute_command("GEOADD", GEO_KEY, lon, lat, str(vendor.id))
         added += 1
 
-    if added:
-        pipe.execute()
-        logger.warning("vendors:geo was empty; rebuilt with %s vendors", added)
+    # Execute even when there are no eligible vendors so a stale index is cleared.
+    pipe.execute()
+    logger.warning("Rebuilt vendors:geo with %s vendors", added)
     return added
+
+
+def _ensure_geo_index(r) -> bool:
+    """
+    Validate Redis membership against the database and repair it when needed.
+
+    Validation is cached briefly to keep the normal request path fast. Vendor
+    save/remove operations invalidate the marker, so ordinary data changes are
+    checked on the very next discovery request.
+    """
+    try:
+        if r.exists(GEO_KEY) and r.get(GEO_INDEX_VALIDATION_KEY):
+            return True
+
+        vendors = _eligible_geo_vendors()
+        expected_ids = {str(vendor.id) for vendor in vendors}
+        indexed_ids = {
+            _decode_member(member)
+            for member in r.zrange(GEO_KEY, 0, -1)
+        }
+
+        if indexed_ids != expected_ids:
+            _rebuild_geo_index(r, vendors=vendors)
+
+        r.set(
+            GEO_INDEX_VALIDATION_KEY,
+            "1",
+            ex=GEO_INDEX_VALIDATION_TTL_SECONDS,
+        )
+        return True
+    except Exception as exc:
+        logger.warning("Redis geo index validation/rebuild failed: %s", exc)
+        return False
 
 
 def geo_nearby_vendor_ids(
@@ -96,15 +147,9 @@ def geo_nearby_vendor_ids(
     if r is None:
         return None
 
-    try:
-        # An absent key means Redis lost the index (restart/eviction), not
-        # that there are no vendors — rebuild before querying. If the DB
-        # genuinely has no eligible vendors, fall back to Haversine so the
-        # caller's queryset remains the source of truth.
-        if not r.exists(GEO_KEY) and _rebuild_geo_index(r) == 0:
-            return None
-    except Exception as exc:
-        logger.warning("Redis geo index check/rebuild failed: %s", exc)
+    # Redis is an acceleration layer, never the source of truth. If validation
+    # cannot complete, let the caller use its database/Haversine fallback.
+    if not _ensure_geo_index(r):
         return None
 
     try:
@@ -140,8 +185,13 @@ def geo_add_vendor(vendor) -> bool:
         lat = float(vendor.location_latitude)
         lon = float(vendor.location_longitude)
         r.execute_command("GEOADD", GEO_KEY, lon, lat, str(vendor.id))
+        r.delete(GEO_INDEX_VALIDATION_KEY)
         return True
     except Exception as exc:
+        try:
+            r.delete(GEO_INDEX_VALIDATION_KEY)
+        except Exception:
+            pass
         logger.warning("geo_add_vendor failed for %s: %s", vendor.id, exc)
         return False
 
@@ -156,8 +206,13 @@ def geo_remove_vendor(vendor_id: str) -> bool:
 
     try:
         r.zrem(GEO_KEY, str(vendor_id))
+        r.delete(GEO_INDEX_VALIDATION_KEY)
         return True
     except Exception as exc:
+        try:
+            r.delete(GEO_INDEX_VALIDATION_KEY)
+        except Exception:
+            pass
         logger.warning("geo_remove_vendor failed for %s: %s", vendor_id, exc)
         return False
 
