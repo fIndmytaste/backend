@@ -334,10 +334,14 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         revenue_agg = base_orders.filter(payment_status='paid').aggregate(
             total_earnings=Sum('total_amount'),
             vendor_payouts=Sum('vendor_amount'),
+            # Rider earnings are only final after delivery. Before that point
+            # this field can still contain the pre-delivery estimate.
+            rider_payouts=Sum('rider_earning', filter=Q(status='delivered')),
             platform_earnings=Sum('platform_amount'),
         )
         total_earnings = revenue_agg['total_earnings'] or 0
         vendor_payouts = revenue_agg['vendor_payouts'] or 0
+        rider_payouts = revenue_agg['rider_payouts'] or 0
 
         # ── Previous period for growth indicators ───────────────────────────
         if prev_start and start_date:
@@ -385,6 +389,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             "revenue_summary": {
                 "total_earnings": {"value": float(total_earnings), "growth": earnings_growth},
                 "vendor_payouts": {"value": float(vendor_payouts)},
+                "rider_payouts": {"value": float(rider_payouts)},
                 "platform_earnings": {"value": float(revenue_agg['platform_earnings'] or 0)},
             },
             "user_metrics": {
