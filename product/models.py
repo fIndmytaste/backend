@@ -990,6 +990,27 @@ class Order(models.Model):
         max_digits=10, decimal_places=2, default=0.00, help_text="The delivery fee before any promo/discount was applied.")
     rider_earning = models.DecimalField(
         max_digits=10, decimal_places=2, default=0.00, help_text="The amount the rider earns from this order.")
+    rider_gross_earning = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Gross rider fare before platform commission. Null for legacy/unfinalized orders.",
+    )
+    rider_commission_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Platform commission retained from the rider fare. Null for legacy/unfinalized orders.",
+    )
+    rider_commission_percentage_applied = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Rider commission percentage captured when the delivery was completed.",
+    )
     delivery_latitude = models.DecimalField(
         max_digits=9, decimal_places=6, null=True, blank=True)
     delivery_longitude = models.DecimalField(
@@ -1045,6 +1066,16 @@ class Order(models.Model):
     )
     platform_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=0.00, help_text="The amount that goes to the platform as commission."
+    )
+    platform_marketplace_delivery_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=(
+            "Marketplace delivery fee retained by the platform. Null means the "
+            "financial snapshot predates this field."
+        ),
     )
 
     def __str__(self):
@@ -1161,18 +1192,28 @@ class Order(models.Model):
         if existing:
             return existing
 
-        vendor_earning = self.calculate_vendor_settlement_amount()
+        # Prefer the settlement captured when the order was priced/paid. Using
+        # current product prices here would rewrite historical vendor and
+        # platform amounts when a product or variant price later changes.
+        vendor_earning = Decimal(str(self.vendor_amount or 0)).quantize(Decimal('0.01'))
         if vendor_earning <= 0:
-            vendor_earning = Decimal(str(self.vendor_amount or 0)).quantize(Decimal('0.01'))
+            vendor_earning = self.calculate_vendor_settlement_amount()
         if vendor_earning <= 0:
             return None
 
         self.vendor_amount = vendor_earning
-        self.platform_amount = max(
-            Decimal('0.00'),
-            (Decimal(str(self.get_total_price() or 0)) - vendor_earning).quantize(Decimal('0.01')),
-        )
-        self.save(update_fields=['vendor_amount', 'platform_amount', 'updated_at'])
+        if Decimal(str(self.platform_amount or 0)) <= 0:
+            self.platform_amount = max(
+                Decimal('0.00'),
+                (Decimal(str(self.get_total_price() or 0)) - vendor_earning).quantize(Decimal('0.01')),
+            )
+        self.platform_marketplace_delivery_amount = self.calculate_marketplace_delivery_earning()
+        self.save(update_fields=[
+            'vendor_amount',
+            'platform_amount',
+            'platform_marketplace_delivery_amount',
+            'updated_at',
+        ])
 
         vendor_wallet, _ = Wallet.objects.get_or_create(user=self.vendor.user)
         vendor_wallet.deposit(vendor_earning)
@@ -1310,6 +1351,21 @@ class Order(models.Model):
         ]
         return max(candidate_amounts).quantize(Decimal('0.01'))
 
+    def calculate_marketplace_delivery_earning(self):
+        """Return the delivery revenue retained for a marketplace order."""
+        from decimal import Decimal
+
+        if not self.vendor_id:
+            return Decimal('0.00')
+
+        is_marketplace_order = bool(
+            self.vendor.is_marketplace or self.vendor.marketplace_set.exists()
+        )
+        if not is_marketplace_order:
+            return Decimal('0.00')
+
+        return Decimal(str(self.delivery_fee or 0)).quantize(Decimal('0.01'))
+
     def calculate_net_rider_earning(self, gross_earning=None):
         """
         Apply the platform's rider commission to the gross delivery earning.
@@ -1342,7 +1398,13 @@ class Order(models.Model):
                 Decimal('0.00'),
                 (gross_order_amount - total_vendor_amount).quantize(Decimal('0.01')),
             )
-            self.save()
+            self.platform_marketplace_delivery_amount = self.calculate_marketplace_delivery_earning()
+            self.save(update_fields=[
+                'vendor_amount',
+                'platform_amount',
+                'platform_marketplace_delivery_amount',
+                'updated_at',
+            ])
         except Exception as e:
             print(f"Error calculating vendor and platform amounts: {e}")    
 

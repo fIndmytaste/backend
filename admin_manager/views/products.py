@@ -4,6 +4,7 @@ from django.db import transaction
 from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 
 from helpers.date_range import filter_by_date_range, parse_date_range
@@ -12,7 +13,7 @@ from account.models import Rider, StaffPagePermission, User, Vendor
 from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
-from product.models import DeliveryZone, Order, Product, Rating, SystemCategory
+from product.models import DeliveryZone, Order, PlatformSettings, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
 from drf_yasg import openapi 
 
@@ -330,18 +331,86 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             canceled=Count('id', filter=Q(status__in=canceled_statuses) | Q(delivery_status__in=canceled_statuses)),
         )
 
-        # ── Revenue: use real vendor_amount field, fall back to sum of total_amount ──
-        revenue_agg = base_orders.filter(payment_status='paid').aggregate(
+        # ── Revenue ─────────────────────────────────────────────────────────
+        # Customer-facing product/variant prices already include the platform's
+        # flat service charge. `platform_amount` is the persisted difference
+        # between those prices and the vendor settlement amount.
+        paid_orders = base_orders.filter(payment_status='paid')
+        revenue_agg = paid_orders.aggregate(
             total_earnings=Sum('total_amount'),
             vendor_payouts=Sum('vendor_amount'),
-            # Rider earnings are only final after delivery. Before that point
-            # this field can still contain the pre-delivery estimate.
-            rider_payouts=Sum('rider_earning', filter=Q(status='delivered')),
-            platform_earnings=Sum('platform_amount'),
+            vendor_service_charges=Sum('platform_amount'),
         )
         total_earnings = revenue_agg['total_earnings'] or 0
         vendor_payouts = revenue_agg['vendor_payouts'] or 0
-        rider_payouts = revenue_agg['rider_payouts'] or 0
+        vendor_service_charges = revenue_agg['vendor_service_charges'] or 0
+
+        # Only independent riders receive per-delivery earnings. Marketplace
+        # riders are salaried, so their delivery fees belong to the platform's
+        # marketplace-delivery revenue instead.
+        independent_rider_orders = paid_orders.filter(
+            status='delivered',
+            rider__isnull=False,
+            rider__is_in_house_rider=False,
+        )
+        rider_agg = independent_rider_orders.aggregate(
+            rider_payouts=Sum('rider_earning'),
+            recorded_commissions=Sum(
+                'rider_commission_amount',
+                filter=Q(rider_commission_amount__isnull=False),
+            ),
+            legacy_rider_payouts=Sum(
+                'rider_earning',
+                filter=Q(rider_commission_amount__isnull=True),
+            ),
+        )
+        rider_payouts = rider_agg['rider_payouts'] or 0
+        rider_commissions = rider_agg['recorded_commissions'] or 0
+
+        # Legacy deliveries only persisted the rider's net earning. Rebuild
+        # their commission from the current configured percentage; newly
+        # completed orders use the exact snapshotted commission above.
+        legacy_rider_payouts = Decimal(str(rider_agg['legacy_rider_payouts'] or 0))
+        rider_commission_percentage = Decimal(str(
+            PlatformSettings.get_settings().rider_commission_percentage or 0
+        ))
+        if legacy_rider_payouts > 0 and 0 < rider_commission_percentage < 100:
+            legacy_commissions = (
+                legacy_rider_payouts
+                * rider_commission_percentage
+                / (Decimal('100') - rider_commission_percentage)
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            rider_commissions += legacy_commissions
+        elif rider_commission_percentage >= 100:
+            # With a 100% commission the persisted net is zero, so use the
+            # delivery charge snapshot as the best available legacy gross.
+            legacy_gross = independent_rider_orders.filter(
+                rider_commission_amount__isnull=True,
+            ).aggregate(total=Sum('original_delivery_fee'))['total'] or 0
+            rider_commissions += legacy_gross
+
+        # New orders snapshot marketplace delivery revenue on the order. For
+        # older rows where that snapshot is null, derive it from the vendor's
+        # marketplace membership without double-counting M2M joins.
+        recorded_marketplace_delivery = paid_orders.filter(
+            platform_marketplace_delivery_amount__isnull=False,
+        ).aggregate(total=Sum('platform_marketplace_delivery_amount'))['total'] or 0
+        legacy_marketplace_delivery = (
+            paid_orders
+            .filter(platform_marketplace_delivery_amount__isnull=True)
+            .filter(
+                Q(vendor__is_marketplace=True) |
+                Q(vendor__marketplace__isnull=False)
+            )
+            .distinct()
+            .aggregate(total=Sum('delivery_fee'))['total'] or 0
+        )
+        marketplace_delivery_fees = (
+            recorded_marketplace_delivery + legacy_marketplace_delivery
+        )
+        platform_earnings = (
+            vendor_service_charges + rider_commissions + marketplace_delivery_fees
+        )
 
         # ── Previous period for growth indicators ───────────────────────────
         if prev_start and start_date:
@@ -390,7 +459,14 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                 "total_earnings": {"value": float(total_earnings), "growth": earnings_growth},
                 "vendor_payouts": {"value": float(vendor_payouts)},
                 "rider_payouts": {"value": float(rider_payouts)},
-                "platform_earnings": {"value": float(revenue_agg['platform_earnings'] or 0)},
+                "platform_earnings": {
+                    "value": float(platform_earnings),
+                    "breakdown": {
+                        "vendor_service_charges": {"value": float(vendor_service_charges)},
+                        "rider_commissions": {"value": float(rider_commissions)},
+                        "marketplace_delivery_fees": {"value": float(marketplace_delivery_fees)},
+                    },
+                },
             },
             "user_metrics": {
                 "total_users": {"value": total_users},

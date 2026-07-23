@@ -24,7 +24,7 @@ from datetime import timedelta
 from account.models import Guarantor, Notification, Rider, RiderRating, User, MODE_OF_TRANSPORTATION
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
-from product.models import DeliveryTracking, Order, DeclinedOrder
+from product.models import DeliveryTracking, Order, DeclinedOrder, PlatformSettings
 from wallet.models import Wallet, WalletTransaction
 from wallet.serializers import get_minimum_withdrawal_for_user
 from .serializers import (
@@ -1344,10 +1344,22 @@ class RiderViewSet(viewsets.ModelViewSet):
         if rider.is_in_house_rider:
             rider_earning_amount = Decimal('0.00')
             order.rider_earning = rider_earning_amount
+            order.rider_gross_earning = Decimal('0.00')
+            order.rider_commission_amount = Decimal('0.00')
+            order.rider_commission_percentage_applied = Decimal('0.00')
         else:
             # Apply platform commission to get net amount credited to rider
             rider_earning_amount = order.calculate_net_rider_earning(gross_earning_amount)
             order.rider_earning = rider_earning_amount
+            commission_percentage = Decimal(str(
+                PlatformSettings.get_settings().rider_commission_percentage or 0
+            ))
+            order.rider_gross_earning = gross_earning_amount
+            order.rider_commission_amount = max(
+                Decimal('0.00'),
+                (gross_earning_amount - rider_earning_amount).quantize(Decimal('0.01')),
+            )
+            order.rider_commission_percentage_applied = commission_percentage
 
             try:
                 wallet, _ = Wallet.objects.get_or_create(user=rider.user)
