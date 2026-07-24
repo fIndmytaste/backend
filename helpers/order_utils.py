@@ -331,7 +331,19 @@ class DeliveryConfig:
 
     @property
     def BASE_PRICING_TIERS(self):
-        return self.get_config('base_pricing_tiers')
+        tiers = self.get_config('base_pricing_tiers') or []
+        normalized = []
+        for tier in tiers:
+            if not isinstance(tier, dict):
+                continue
+            max_distance = tier.get("max_distance")
+            # Config stored in the DB serialises the open-ended tier as the
+            # string "inf" (or null); coerce it back to a real number so the
+            # `distance <= max_distance` comparison in get_base_fee is safe.
+            if max_distance in ("inf", None):
+                max_distance = float("inf")
+            normalized.append({**tier, "max_distance": max_distance})
+        return normalized
 
     @property
     def PEAK_HOURS(self):

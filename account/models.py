@@ -1093,6 +1093,7 @@ class StaffPagePermission(models.Model):
         ('transactions', 'Transactions'),
         ('push-notifications', 'Push Notifications'),
         ('pricing', 'Pricing'),
+        ('delivery-settings', 'Delivery Settings'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

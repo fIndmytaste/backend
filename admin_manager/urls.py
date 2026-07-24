@@ -39,6 +39,10 @@ from admin_manager.views.service_charges import (
     AdminDeliveryZonePricingListView,
     AdminDeliveryZonePricingDetailView,
 )
+from admin_manager.views.delivery_settings import (
+    AdminPlatformSettingsView,
+    AdminDeliveryConfigView,
+)
 
 
 urlpatterns = [ 
@@ -165,4 +169,9 @@ urlpatterns = [
     path('pricing/buka-service-charges/', AdminBukaServiceChargeListView.as_view(), name='admin-buka-service-charge-list'),
     path('pricing/buka-service-charges/products/', AdminBukaVendorProductListView.as_view(), name='admin-buka-service-charge-products'),
     path('pricing/buka-service-charges/<uuid:charge_id>/', AdminBukaServiceChargeDetailView.as_view(), name='admin-buka-service-charge-detail'),
+
+    # Delivery settings: rider pay / commission (PlatformSettings) and the
+    # customer-facing surge-engine parameters (DeliveryConfiguration).
+    path('pricing/platform-settings/', AdminPlatformSettingsView.as_view(), name='admin-platform-settings'),
+    path('pricing/delivery-config/', AdminDeliveryConfigView.as_view(), name='admin-delivery-config'),
 ]
