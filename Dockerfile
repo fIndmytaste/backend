@@ -18,5 +18,6 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Apply pending migrations before starting Daphne for ASGI/WebSocket support.
-CMD ["sh", "-c", "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p 8000 findmytaste.asgi:application"]
+# Run migrations, then start Celery (worker + embedded beat) and Daphne.
+# The Celery beat scheduler here is what fires the weekly rider payout.
+CMD ["sh", "start.sh"]

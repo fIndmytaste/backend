@@ -3,7 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: sh -c "python manage.py migrate --noinput && daphne -b 0.0.0.0 -p 8000 findmytaste.asgi:application"
+    # Matches the Render container: migrate, then Celery worker + embedded beat
+    # (runs the weekly rider payout schedule) alongside Daphne. See start.sh.
+    command: sh start.sh
     volumes:
       - .:/app
       - ./findmytaste-cab38-firebase-adminsdk-fbsvc-68d256e978.json:/run/secrets/firebase-adminsdk.json:ro

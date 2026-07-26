@@ -174,13 +174,16 @@ class DeliveryConfig:
 
     # Fallback configurations (used when database is not available)
     _FALLBACK_CONFIG = {
+        # per_km_rate is the charge per 0.5 km beyond the first 2 km (billed in
+        # rounded-up half-km steps). Values are half the old per-km rates so the
+        # effective price per full km is unchanged.
         'base_pricing_tiers': [
-            {"max_distance": 2, "base_fee": 1000, "per_km_rate": 50},
-            {"max_distance": 5, "base_fee": 1200, "per_km_rate": 80},
-            {"max_distance": 10, "base_fee": 1500, "per_km_rate": 100},
-            {"max_distance": 20, "base_fee": 2000, "per_km_rate": 120},
+            {"max_distance": 2, "base_fee": 1000, "per_km_rate": 25},
+            {"max_distance": 5, "base_fee": 1200, "per_km_rate": 40},
+            {"max_distance": 10, "base_fee": 1500, "per_km_rate": 50},
+            {"max_distance": 20, "base_fee": 2000, "per_km_rate": 60},
             {"max_distance": float('inf'), "base_fee": 2500,
-             "per_km_rate": 150}
+             "per_km_rate": 75}
         ],
         'peak_hours': [
             {"start": "07:00", "end": "09:30",
@@ -505,11 +508,13 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
         # Use highest tier as fallback
         tier = DeliveryConfig.BASE_PRICING_TIERS[-1]
 
-    # Calculate base fee
+    # Calculate base fee. Distance beyond the first 2 km is billed in 0.5 km
+    # steps, rounded up — tier["per_km_rate"] is the charge per 0.5 km.
     base_fee = tier["base_fee"]
-    if distance_km > 2:  # Add per-km charges beyond 2km
-        extra_distance = distance_km - 2
-        base_fee += extra_distance * tier["per_km_rate"]
+    if distance_km > 2:
+        import math
+        half_km_steps = math.ceil((distance_km - 2) / 0.5)
+        base_fee += half_km_steps * tier["per_km_rate"]
 
     # Apply time-based pricing
     peak_multiplier = 1.0

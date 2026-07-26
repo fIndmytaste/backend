@@ -139,12 +139,14 @@ CONFIG_META = {
     'base_pricing_tiers': {
         'category': 'pricing', 'data_type': 'json',
         'description': 'Base pricing tiers for different distance ranges',
+        # per_km_rate == charge per 0.5 km beyond the first 2 km (half the old
+        # per-km values so effective per-km pricing is unchanged).
         'default': [
-            {"max_distance": 2, "base_fee": 1000, "per_km_rate": 50},
-            {"max_distance": 5, "base_fee": 1200, "per_km_rate": 80},
-            {"max_distance": 10, "base_fee": 1500, "per_km_rate": 100},
-            {"max_distance": 20, "base_fee": 2000, "per_km_rate": 120},
-            {"max_distance": "inf", "base_fee": 2500, "per_km_rate": 150},
+            {"max_distance": 2, "base_fee": 1000, "per_km_rate": 25},
+            {"max_distance": 5, "base_fee": 1200, "per_km_rate": 40},
+            {"max_distance": 10, "base_fee": 1500, "per_km_rate": 50},
+            {"max_distance": 20, "base_fee": 2000, "per_km_rate": 60},
+            {"max_distance": "inf", "base_fee": 2500, "per_km_rate": 75},
         ],
     },
     'peak_hours': {

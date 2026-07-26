@@ -1,10 +1,21 @@
 from decimal import Decimal
 import json
+import logging
 import requests
 from findmytaste import settings
 from account.models import User, Vendor, VirtualAccount
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 from wallet.models import Wallet, WalletTransaction
+
+logger = logging.getLogger(__name__)
+
+
+def _paystack_error(response, fallback):
+    """Extract Paystack's real error message from a failed response for logging/UX."""
+    try:
+        return response.json().get('message') or fallback
+    except Exception:
+        return (response.text or fallback)[:300]
 
 
 
@@ -93,7 +104,12 @@ class PaystackManager:
             json=recipient_data
         )
         if not recipient_response.ok:
-            return False, 'Failed to create transfer recipient'
+            error = _paystack_error(recipient_response, 'Failed to create transfer recipient')
+            logger.error(
+                "Paystack recipient creation failed (%s) for txn %s: %s",
+                recipient_response.status_code, transaction_obj.id, error,
+            )
+            return False, error
 
         recipient_code = recipient_response.json()['data']['recipient_code']
 
@@ -111,15 +127,42 @@ class PaystackManager:
             json=data
         )
 
-        if response.ok:
-            initiate_result = response.json()
-            if initiate_result['status'] == 'success':
-                transaction_obj.response_data = initiate_result
-                transaction_obj.status = 'pending'  # Paystack transfers may need webhook confirmation
-                transaction_obj.save()
-                return True, 'Withdrawal initiated successfully'
-            return False, 'Withdrawal creation failed'
-        return False, 'Withdrawal creation failed'
+        if not response.ok:
+            # Surface Paystack's real reason (e.g. "You cannot initiate third
+            # party payouts as a starter business", insufficient balance, etc.)
+            error = _paystack_error(response, 'Withdrawal creation failed')
+            logger.error(
+                "Paystack transfer failed (%s) for txn %s: %s",
+                response.status_code, transaction_obj.id, error,
+            )
+            return False, error
+
+        initiate_result = response.json()
+        transfer_status = (initiate_result.get('data') or {}).get('status')
+        # A freshly-initiated Paystack transfer is normally 'pending' or
+        # 'queued' (it settles later via webhook); 'success' is the instant
+        # case. Only 'otp' / 'failed' are genuine problems here.
+        if transfer_status in ('success', 'pending', 'queued', 'received', 'processing'):
+            transaction_obj.response_data = initiate_result
+            transaction_obj.status = 'pending'  # confirmed via transfer.success webhook
+            transaction_obj.save()
+            return True, 'Withdrawal initiated successfully'
+        if transfer_status == 'otp':
+            logger.error(
+                "Paystack transfer requires OTP for txn %s — disable Transfers OTP "
+                "in the Paystack dashboard (Settings > Preferences) so payouts can "
+                "complete via the API. Response: %s",
+                transaction_obj.id, initiate_result,
+            )
+            return False, (
+                'Payouts require OTP, which blocks automatic transfers. Please '
+                'disable transfer OTP in your Paystack dashboard settings.'
+            )
+        logger.error(
+            "Paystack transfer returned unexpected status '%s' for txn %s: %s",
+            transfer_status, transaction_obj.id, initiate_result,
+        )
+        return False, f"Withdrawal could not be completed (status: {transfer_status or 'unknown'})."
 
     def make_withdrawal(self, request, vendor: Vendor, amount, transaction_obj):
         bank_override = None
