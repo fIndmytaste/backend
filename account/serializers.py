@@ -344,7 +344,7 @@ class RegisterSerializer(serializers.Serializer):
         referral_code = validated_data.pop('referral_code', None)
         referred_by = None
         if referral_code:
-            referred_by = User.objects.get(referral_code=referral_code)
+            referred_by = User.objects.filter(referral_code=referral_code).first()
 
         # Create a User object
         user = User.objects.create(

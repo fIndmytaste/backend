@@ -17,6 +17,18 @@ from datetime import timedelta
 import re
 
 
+def _first_error_message(errors):
+    """Reduce DRF serializer errors to a single human-readable message so the
+    app can show it directly (instead of the raw {field: [msg]} shape)."""
+    if isinstance(errors, (list, tuple)):
+        return _first_error_message(errors[0]) if errors else "Invalid request."
+    if isinstance(errors, dict):
+        if not errors:
+            return "Invalid request."
+        return _first_error_message(next(iter(errors.values())))
+    return str(errors)
+
+
 class LoginAPIView(generics.GenericAPIView):
     """
     View to handle user login via email.
@@ -277,15 +289,16 @@ class RegisterAPIView(generics.GenericAPIView):
         print("RegisterAPIView called with data:", request.data)  # Debug statement
         print("RegisterAPIView called with data:", request.data)  # Debug statement
         serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return bad_request_response(message=_first_error_message(serializer.errors))
         email = serializer.validated_data['email'].lower()
         # check if email already exists
         if User.objects.filter(email=email).exists():
             return bad_request_response(message='Email already exists.')
         user = serializer.save()
-        # save date of birth if in request data
-        if 'dob' in request.data:
-            dob_value = request.data['dob']
+        # save date of birth if in request data (the app sends 'date_of_birth')
+        dob_value = request.data.get('dob') or request.data.get('date_of_birth')
+        if dob_value:
             # Validate MM-DD format
             if re.match(r'^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$', dob_value):
                 # Additional validation for valid month-day combinations
@@ -496,7 +509,8 @@ class ResendOTPAPIView(generics.GenericAPIView):
     )
     def post(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return bad_request_response(message=_first_error_message(serializer.errors))
         email = serializer.validated_data['email'].lower()
 
         try:
@@ -543,7 +557,8 @@ class ResendOTPLoginAPIView(generics.GenericAPIView):
     )
     def post(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return bad_request_response(message=_first_error_message(serializer.errors))
         email = serializer.validated_data['email'].lower()
 
         try:
