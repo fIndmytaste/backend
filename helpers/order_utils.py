@@ -174,17 +174,10 @@ class DeliveryConfig:
 
     # Fallback configurations (used when database is not available)
     _FALLBACK_CONFIG = {
-        # per_km_rate is the charge per 0.5 km beyond the first 2 km (billed in
-        # rounded-up half-km steps). Values are half the old per-km rates so the
-        # effective price per full km is unchanged.
-        'base_pricing_tiers': [
-            {"max_distance": 2, "base_fee": 1000, "per_km_rate": 25},
-            {"max_distance": 5, "base_fee": 1200, "per_km_rate": 40},
-            {"max_distance": 10, "base_fee": 1500, "per_km_rate": 50},
-            {"max_distance": 20, "base_fee": 2000, "per_km_rate": 60},
-            {"max_distance": float('inf'), "base_fee": 2500,
-             "per_km_rate": 75}
-        ],
+        # Simple dynamic distance pricing: flat base + a per-0.5 km charge
+        # applied from 0 km (rounded up to the next half-km).
+        'base_delivery_fee': 800,
+        'per_half_km_rate': 100,
         'peak_hours': [
             {"start": "07:00", "end": "09:30",
                 "multiplier": 1.3, "name": "Morning Rush"},
@@ -333,20 +326,12 @@ class DeliveryConfig:
         return self.get_config('max_delivery_fee')
 
     @property
-    def BASE_PRICING_TIERS(self):
-        tiers = self.get_config('base_pricing_tiers') or []
-        normalized = []
-        for tier in tiers:
-            if not isinstance(tier, dict):
-                continue
-            max_distance = tier.get("max_distance")
-            # Config stored in the DB serialises the open-ended tier as the
-            # string "inf" (or null); coerce it back to a real number so the
-            # `distance <= max_distance` comparison in get_base_fee is safe.
-            if max_distance in ("inf", None):
-                max_distance = float("inf")
-            normalized.append({**tier, "max_distance": max_distance})
-        return normalized
+    def BASE_DELIVERY_FEE(self):
+        return self.get_config('base_delivery_fee', 800)
+
+    @property
+    def PER_HALF_KM_RATE(self):
+        return self.get_config('per_half_km_rate', 100)
 
     @property
     def PEAK_HOURS(self):
@@ -497,24 +482,14 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
     if distance_km <= 0:
         distance_km = 0.1  # Minimum distance
 
-    # Find appropriate pricing tier
-    tier = None
-    for pricing_tier in DeliveryConfig.BASE_PRICING_TIERS:
-        if distance_km <= pricing_tier["max_distance"]:
-            tier = pricing_tier
-            break
-
-    if not tier:
-        # Use highest tier as fallback
-        tier = DeliveryConfig.BASE_PRICING_TIERS[-1]
-
-    # Calculate base fee. Distance beyond the first 2 km is billed in 0.5 km
-    # steps, rounded up — tier["per_km_rate"] is the charge per 0.5 km.
-    base_fee = tier["base_fee"]
-    if distance_km > 2:
-        import math
-        half_km_steps = math.ceil((distance_km - 2) / 0.5)
-        base_fee += half_km_steps * tier["per_km_rate"]
+    # Simple, dynamic base fee: a flat base plus a per-0.5 km charge applied
+    # from the very first metre (rounded up to the next half-km). No distance
+    # tiers, no free portion — so the price rises predictably with distance.
+    import math
+    base_delivery_fee = DeliveryConfig.BASE_DELIVERY_FEE
+    per_half_km_rate = DeliveryConfig.PER_HALF_KM_RATE
+    half_km_steps = math.ceil(distance_km / 0.5)
+    base_fee = base_delivery_fee + (half_km_steps * per_half_km_rate)
 
     # Apply time-based pricing
     peak_multiplier = 1.0
@@ -538,7 +513,7 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
     return {
         "base_fee": round(base_fee, 2),
         "distance_km": round(distance_km, 2),
-        "pricing_tier": tier,
+        "half_km_steps": half_km_steps,
         "peak_period": peak_period,
         "peak_multiplier": peak_multiplier,
         "time_adjusted_fee": round(time_adjusted_fee, 2)
