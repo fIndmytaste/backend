@@ -461,7 +461,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 
                 # order_total_price = float(order.get_total_price()) + order.delivery_fee + order.service_fee
 
-                if request.data.get('payment_method') != 'wallet' and order.payment_method == 'wallet':
+                if order.payment_method == 'wallet':
                     wallet, _ = Wallet.objects.get_or_create(user=user)
                     
                     if float(order_total_price) > float(wallet.balance):
@@ -1740,7 +1740,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                  
                 # order_total_price = float(order.get_total_price()) + order.delivery_fee + order.service_fee
 
-                if request.data.get('payment_method') != 'wallet' and order.payment_method == 'wallet':
+                if order.payment_method == 'wallet':
                     wallet, _ = Wallet.objects.get_or_create(user=user)
                     
                     if float(order_total_price) > float(wallet.balance):
