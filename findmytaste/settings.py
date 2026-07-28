@@ -314,6 +314,14 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'support@findmytaste.com.ng
 # }
 
 
+# Live delivery-condition APIs. These MUST be declared here — the surge code
+# checks `hasattr(settings, 'GOOGLE_MAPS_API_KEY')`, so setting the env var on
+# Render alone does nothing until Django reads it into settings. Empty string
+# = no live data, and the engine falls back to neutral (1.0x) multipliers.
+GOOGLE_MAPS_API_KEY = config('GOOGLE_MAPS_API_KEY', default='')
+OPENWEATHER_API_KEY = config('OPENWEATHER_API_KEY', default='')
+
+
 # Redis, Cache & Channels Configuration
 REDIS_URL = config('REDIS_URL', default='redis://redis:6379/1')
 

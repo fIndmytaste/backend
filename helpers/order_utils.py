@@ -504,26 +504,43 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
     if distance_km <= 0:
         distance_km = 0.1  # Minimum distance
 
-    # Tiered base fee. Find the tier whose range contains the distance; a tier
-    # owns (previous tier's max, this tier's max]. Within that tier the fee is
-    # the tier's base_fee plus its per_half_km_rate for every started 0.5 km
-    # past the tier's start. Crossing a tier boundary switches to the next
-    # tier's base_fee (and its own 0.5 km climb).
+    # Tiered base fee.
+    #
+    #   * A tier's base_fee is FLAT for its whole range — the first tier
+    #     (0 -> its max) costs exactly its base_fee, nothing added on top.
+    #   * The per_half_km_rate only accrues for distance past the tier's
+    #     starting point (the previous tier's max). So inside tier 2 the
+    #     climb is measured from where tier 1 ended.
+    #   * Beyond the last tier's max, that last tier keeps climbing per 0.5 km.
+    #
+    # Example (tier1 0-1.2km @800/100, tier2 1.2-5km @1200/80):
+    #   1.0km -> 800   (flat, first tier)
+    #   1.7km -> 1280  (1200 + 1 step x 80)
+    #   5.0km -> 1840  (1200 + 8 steps x 80)
     import math
     tiers = DeliveryConfig.BASE_PRICING_TIERS or [
-        {'max_distance': float('inf'), 'base_fee': 800, 'per_half_km_rate': 100}
+        {'max_distance': 5.0, 'base_fee': 800, 'per_half_km_rate': 100}
     ]
-    tier_start = 0.0
-    chosen = tiers[-1]
-    chosen_start = tiers[-2]['max_distance'] if len(tiers) > 1 else 0.0
-    for tier in tiers:
-        if distance_km <= tier['max_distance']:
-            chosen = tier
-            chosen_start = tier_start
-            break
-        tier_start = tier['max_distance']
 
-    half_km_steps = math.ceil(max(0.0, distance_km - chosen_start) / 0.5)
+    index = len(tiers) - 1
+    for i, tier in enumerate(tiers):
+        if distance_km <= tier['max_distance']:
+            index = i
+            break
+
+    chosen = tiers[index]
+    if index == 0:
+        # First tier's base covers 0 -> max; only charge past its own max
+        # (which happens only when it is also the last tier).
+        climb_from = chosen['max_distance']
+    else:
+        climb_from = tiers[index - 1]['max_distance']
+
+    # Round before ceil: floating-point noise (2.2 - 1.2 = 1.0000000000000002)
+    # otherwise rounds UP an extra half-km step and silently adds money.
+    half_km_steps = math.ceil(
+        round(max(0.0, distance_km - climb_from) / 0.5, 6)
+    )
     base_fee = chosen['base_fee'] + (half_km_steps * chosen['per_half_km_rate'])
 
     # Apply time-based pricing
