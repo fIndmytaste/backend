@@ -31,10 +31,11 @@ def validate_pricing_tiers(value: Any) -> None:
         if not isinstance(tier['per_half_km_rate'], (int, float)) or tier['per_half_km_rate'] < 0:
             raise ValidationError(f"Tier {i+1} per_half_km_rate must be a non-negative number")
         
-        # Validate max_distance
+        # Validate max_distance — every tier needs a real 'up to' distance;
+        # beyond the last tier the engine keeps adding its per-0.5 km rate.
         max_dist = tier['max_distance']
-        if max_dist != 'inf' and (not isinstance(max_dist, (int, float)) or max_dist <= 0):
-            raise ValidationError(f"Tier {i+1} max_distance must be a positive number or 'inf'")
+        if not isinstance(max_dist, (int, float)) or max_dist <= 0:
+            raise ValidationError(f"Tier {i+1} max_distance must be a positive number of km")
 
 
 def validate_peak_hours(value: Any) -> None:

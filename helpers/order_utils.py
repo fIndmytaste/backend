@@ -177,11 +177,11 @@ class DeliveryConfig:
         # Distance tiers. Each tier owns the range (previous tier's max, this
         # max]; within its own range the fee is base_fee + per_half_km_rate for
         # every started 0.5 km past the tier's start. Crossing into the next
-        # tier switches to that tier's base_fee. Last tier ("inf") is open-ended.
+        # tier switches to that tier's base_fee. Beyond the LAST tier's max the
+        # last tier simply keeps climbing per 0.5 km — no separate open tier.
         'base_pricing_tiers': [
             {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
             {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
-            {"max_distance": float('inf'), "base_fee": 1800, "per_half_km_rate": 100},
         ],
         'peak_hours': [
             {"start": "07:00", "end": "09:30",
@@ -203,8 +203,11 @@ class DeliveryConfig:
         'rider_availability_multipliers': {
             "high": 0.9, "normal": 1.0, "low": 1.3, "critical": 1.8
         },
+        # Neutral by default: a hidden per-category markup made real prices
+        # diverge from the admin's Live Example. Admin can raise these
+        # deliberately from the Delivery Settings page.
         'vendor_type_multipliers': {
-            "restaurant": 1.0, "grocery": 1.1, "pharmacy": 1.2, "electronics": 1.3, "fragile_items": 1.5
+            "restaurant": 1.0, "grocery": 1.0, "pharmacy": 1.0, "electronics": 1.0, "fragile_items": 1.0
         },
         'loyalty_discounts': {
             "bronze": 0.05, "silver": 0.10, "gold": 0.15, "platinum": 0.20
@@ -680,22 +683,17 @@ def _fetch_google_traffic(origin: Tuple[float, float], destination: Tuple[float,
 
 
 def _simulate_traffic_conditions(origin: Tuple[float, float], destination: Tuple[float, float]) -> Dict[str, Any]:
-    """Simulate traffic conditions based on time and location"""
-    current_time = datetime.now().time()
+    """Neutral traffic fallback when no live traffic source is configured.
 
-    # Higher traffic during peak hours
-    is_peak = any(
-        peak["start"] <= current_time <= peak["end"]
-        for peak in DeliveryConfig.PEAK_HOURS
-    )
-
-    level = "moderate" if is_peak else "light"
-
+    Guessing "moderate/light" here silently inflated every fee by 10-30%
+    (an unexplained ~₦400 on typical orders). Without real data the only
+    honest multiplier is 1.0 — peak-hour pricing is already handled
+    separately (and predictably) in get_base_fee.
+    """
     return {
-        "level": level,
-        "multiplier": DeliveryConfig.TRAFFIC_MULTIPLIERS[level],
+        "level": "free_flow",
+        "multiplier": DeliveryConfig.TRAFFIC_MULTIPLIERS.get("free_flow", 1.0),
         "source": "simulated",
-        "is_peak_hour": is_peak
     }
 
 
@@ -848,22 +846,17 @@ def _get_real_rider_availability() -> Optional[Dict[str, Any]]:
 
 
 def _simulate_rider_availability() -> Dict[str, Any]:
-    """Simulate rider availability based on time"""
-    current_time = datetime.now().time()
+    """Neutral rider-availability fallback.
 
-    # Lower availability during peak hours
-    is_peak = any(
-        peak["start"] <= current_time <= peak["end"]
-        for peak in DeliveryConfig.PEAK_HOURS
-    )
-
-    level = "low" if is_peak else "normal"
-
+    _get_real_rider_availability is stubbed (returns None), so this fallback
+    runs on EVERY order. Guessing "low" at peak silently added a 1.3x surge
+    nobody could account for. Until real rider counts are wired in, report
+    "normal" so the multiplier is exactly what the admin configured for it.
+    """
     return {
-        "level": level,
-        "multiplier": DeliveryConfig.RIDER_AVAILABILITY_MULTIPLIERS[level],
+        "level": "normal",
+        "multiplier": DeliveryConfig.RIDER_AVAILABILITY_MULTIPLIERS.get("normal", 1.0),
         "source": "simulated",
-        "is_peak_hour": is_peak
     }
 
 

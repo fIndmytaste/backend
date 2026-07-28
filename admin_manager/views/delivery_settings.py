@@ -138,11 +138,13 @@ class AdminPlatformSettingsView(APIView):
 CONFIG_META = {
     'base_pricing_tiers': {
         'category': 'pricing', 'data_type': 'json',
-        'description': 'Distance tiers: base fee + per-0.5 km rate within each range',
+        'description': (
+            'Distance tiers: base fee + per-0.5 km rate within each range. '
+            'Beyond the last tier the last rate keeps climbing per 0.5 km.'
+        ),
         'default': [
             {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
             {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
-            {"max_distance": "inf", "base_fee": 1800, "per_half_km_rate": 100},
         ],
     },
     'peak_hours': {
@@ -174,8 +176,9 @@ CONFIG_META = {
     'vendor_type_multipliers': {
         'category': 'multipliers', 'data_type': 'json',
         'description': 'Vendor type multipliers',
-        'default': {"restaurant": 1.0, "grocery": 1.1, "pharmacy": 1.2,
-                    "electronics": 1.3, "fragile_items": 1.5},
+        # Neutral by default so real prices match the Live Example exactly.
+        'default': {"restaurant": 1.0, "grocery": 1.0, "pharmacy": 1.0,
+                    "electronics": 1.0, "fragile_items": 1.0},
     },
     'loyalty_discounts': {
         'category': 'multipliers', 'data_type': 'json',
@@ -239,7 +242,8 @@ CONFIG_KEYS = list(CONFIG_META.keys())
 
 
 def _tiers_out(tiers):
-    """Fallback/DB tiers -> wire format (open-ended max_distance as null)."""
+    """Fallback/DB tiers -> wire format. Legacy open-ended ('inf') rows are
+    surfaced with max_distance=null so the UI prompts for a real number."""
     out = []
     for tier in tiers or []:
         if not isinstance(tier, dict):
@@ -257,7 +261,9 @@ def _tiers_out(tiers):
 
 
 def _tiers_in(tiers):
-    """Wire tiers -> storage format (null/last max_distance stored as 'inf')."""
+    """Wire tiers -> storage. Every tier needs a numeric 'up to' distance —
+    beyond the last tier the engine keeps adding its per-0.5 km rate, so no
+    open-ended tier exists any more."""
     if not isinstance(tiers, list) or not tiers:
         raise ValueError("At least one distance tier is required.")
     cleaned = []
@@ -265,12 +271,14 @@ def _tiers_in(tiers):
         if not isinstance(tier, dict):
             raise ValueError("Each distance tier must be an object.")
         md = tier.get('max_distance')
-        md = 'inf' if md in (None, '', 'inf') else float(md)
+        if md in (None, '', 'inf'):
+            raise ValueError("Each tier needs an 'up to' distance in km.")
         cleaned.append({
-            'max_distance': md,
+            'max_distance': float(md),
             'base_fee': float(tier.get('base_fee')),
             'per_half_km_rate': float(tier.get('per_half_km_rate')),
         })
+    cleaned.sort(key=lambda t: t['max_distance'])
     return cleaned
 
 

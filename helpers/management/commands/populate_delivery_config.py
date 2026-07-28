@@ -25,15 +25,16 @@ class Command(BaseCommand):
                 'data_type': 'json',
                 'value': json.dumps([
                     {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
-                    {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
-                    {"max_distance": "inf", "base_fee": 1800, "per_half_km_rate": 100}
+                    {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80}
                 ]),
                 'default_value': json.dumps([
                     {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
-                    {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
-                    {"max_distance": "inf", "base_fee": 1800, "per_half_km_rate": 100}
+                    {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80}
                 ]),
-                'description': 'Distance tiers: base fee + per-0.5 km rate within each range',
+                'description': (
+                    'Distance tiers: base fee + per-0.5 km rate within each range; '
+                    'the last tier keeps climbing per 0.5 km beyond its max'
+                ),
             },
             
             # Peak hours configuration
@@ -131,19 +132,19 @@ class Command(BaseCommand):
                 'data_type': 'json',
                 'value': json.dumps({
                     "restaurant": 1.0,
-                    "grocery": 1.1,
-                    "pharmacy": 1.2,
-                    "electronics": 1.3,
-                    "fragile_items": 1.5
+                    "grocery": 1.0,
+                    "pharmacy": 1.0,
+                    "electronics": 1.0,
+                    "fragile_items": 1.0
                 }),
                 'default_value': json.dumps({
                     "restaurant": 1.0,
-                    "grocery": 1.1,
-                    "pharmacy": 1.2,
-                    "electronics": 1.3,
-                    "fragile_items": 1.5
+                    "grocery": 1.0,
+                    "pharmacy": 1.0,
+                    "electronics": 1.0,
+                    "fragile_items": 1.0
                 }),
-                'description': 'Vendor type multipliers',
+                'description': 'Vendor type multipliers (neutral by default)',
             },
             
             # Loyalty discounts
