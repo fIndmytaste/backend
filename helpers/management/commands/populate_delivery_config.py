@@ -24,20 +24,16 @@ class Command(BaseCommand):
                 'category': 'pricing',
                 'data_type': 'json',
                 'value': json.dumps([
-                    {"max_distance": 2, "base_fee": 1000, "per_km_rate": 50},
-                    {"max_distance": 5, "base_fee": 1200, "per_km_rate": 80},
-                    {"max_distance": 10, "base_fee": 1500, "per_km_rate": 100},
-                    {"max_distance": 20, "base_fee": 2000, "per_km_rate": 120},
-                    {"max_distance": "inf", "base_fee": 2500, "per_km_rate": 150}
+                    {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
+                    {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
+                    {"max_distance": "inf", "base_fee": 1800, "per_half_km_rate": 100}
                 ]),
                 'default_value': json.dumps([
-                    {"max_distance": 2, "base_fee": 1000, "per_km_rate": 50},
-                    {"max_distance": 5, "base_fee": 1200, "per_km_rate": 80},
-                    {"max_distance": 10, "base_fee": 1500, "per_km_rate": 100},
-                    {"max_distance": 20, "base_fee": 2000, "per_km_rate": 120},
-                    {"max_distance": "inf", "base_fee": 2500, "per_km_rate": 150}
+                    {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
+                    {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
+                    {"max_distance": "inf", "base_fee": 1800, "per_half_km_rate": 100}
                 ]),
-                'description': 'Base pricing tiers for different distance ranges',
+                'description': 'Distance tiers: base fee + per-0.5 km rate within each range',
             },
             
             # Peak hours configuration

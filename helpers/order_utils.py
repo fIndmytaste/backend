@@ -174,10 +174,15 @@ class DeliveryConfig:
 
     # Fallback configurations (used when database is not available)
     _FALLBACK_CONFIG = {
-        # Simple dynamic distance pricing: flat base + a per-0.5 km charge
-        # applied from 0 km (rounded up to the next half-km).
-        'base_delivery_fee': 800,
-        'per_half_km_rate': 100,
+        # Distance tiers. Each tier owns the range (previous tier's max, this
+        # max]; within its own range the fee is base_fee + per_half_km_rate for
+        # every started 0.5 km past the tier's start. Crossing into the next
+        # tier switches to that tier's base_fee. Last tier ("inf") is open-ended.
+        'base_pricing_tiers': [
+            {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
+            {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
+            {"max_distance": float('inf'), "base_fee": 1800, "per_half_km_rate": 100},
+        ],
         'peak_hours': [
             {"start": "07:00", "end": "09:30",
                 "multiplier": 1.3, "name": "Morning Rush"},
@@ -326,12 +331,26 @@ class DeliveryConfig:
         return self.get_config('max_delivery_fee')
 
     @property
-    def BASE_DELIVERY_FEE(self):
-        return self.get_config('base_delivery_fee', 800)
-
-    @property
-    def PER_HALF_KM_RATE(self):
-        return self.get_config('per_half_km_rate', 100)
+    def BASE_PRICING_TIERS(self):
+        """Normalised, ascending list of distance tiers. Each: max_distance
+        (float, inf for the open-ended last tier), base_fee, per_half_km_rate."""
+        tiers = self.get_config('base_pricing_tiers') or []
+        normalized = []
+        for tier in tiers:
+            if not isinstance(tier, dict):
+                continue
+            max_distance = tier.get('max_distance')
+            if max_distance in ('inf', None):
+                max_distance = float('inf')
+            normalized.append({
+                'max_distance': float(max_distance),
+                'base_fee': float(tier.get('base_fee', 0)),
+                'per_half_km_rate': float(
+                    tier.get('per_half_km_rate', tier.get('per_km_rate', 0))
+                ),
+            })
+        normalized.sort(key=lambda t: t['max_distance'])
+        return normalized
 
     @property
     def PEAK_HOURS(self):
@@ -482,14 +501,27 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
     if distance_km <= 0:
         distance_km = 0.1  # Minimum distance
 
-    # Simple, dynamic base fee: a flat base plus a per-0.5 km charge applied
-    # from the very first metre (rounded up to the next half-km). No distance
-    # tiers, no free portion — so the price rises predictably with distance.
+    # Tiered base fee. Find the tier whose range contains the distance; a tier
+    # owns (previous tier's max, this tier's max]. Within that tier the fee is
+    # the tier's base_fee plus its per_half_km_rate for every started 0.5 km
+    # past the tier's start. Crossing a tier boundary switches to the next
+    # tier's base_fee (and its own 0.5 km climb).
     import math
-    base_delivery_fee = DeliveryConfig.BASE_DELIVERY_FEE
-    per_half_km_rate = DeliveryConfig.PER_HALF_KM_RATE
-    half_km_steps = math.ceil(distance_km / 0.5)
-    base_fee = base_delivery_fee + (half_km_steps * per_half_km_rate)
+    tiers = DeliveryConfig.BASE_PRICING_TIERS or [
+        {'max_distance': float('inf'), 'base_fee': 800, 'per_half_km_rate': 100}
+    ]
+    tier_start = 0.0
+    chosen = tiers[-1]
+    chosen_start = tiers[-2]['max_distance'] if len(tiers) > 1 else 0.0
+    for tier in tiers:
+        if distance_km <= tier['max_distance']:
+            chosen = tier
+            chosen_start = tier_start
+            break
+        tier_start = tier['max_distance']
+
+    half_km_steps = math.ceil(max(0.0, distance_km - chosen_start) / 0.5)
+    base_fee = chosen['base_fee'] + (half_km_steps * chosen['per_half_km_rate'])
 
     # Apply time-based pricing
     peak_multiplier = 1.0

@@ -19,17 +19,17 @@ def validate_pricing_tiers(value: Any) -> None:
         if not isinstance(tier, dict):
             raise ValidationError(f"Tier {i+1} must be a dictionary")
         
-        required_fields = ['max_distance', 'base_fee', 'per_km_rate']
+        required_fields = ['max_distance', 'base_fee', 'per_half_km_rate']
         for field in required_fields:
             if field not in tier:
                 raise ValidationError(f"Tier {i+1} missing required field: {field}")
-        
+
         # Validate numeric values
         if not isinstance(tier['base_fee'], (int, float)) or tier['base_fee'] < 0:
             raise ValidationError(f"Tier {i+1} base_fee must be a positive number")
-        
-        if not isinstance(tier['per_km_rate'], (int, float)) or tier['per_km_rate'] < 0:
-            raise ValidationError(f"Tier {i+1} per_km_rate must be a positive number")
+
+        if not isinstance(tier['per_half_km_rate'], (int, float)) or tier['per_half_km_rate'] < 0:
+            raise ValidationError(f"Tier {i+1} per_half_km_rate must be a non-negative number")
         
         # Validate max_distance
         max_dist = tier['max_distance']

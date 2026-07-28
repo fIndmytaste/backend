@@ -136,15 +136,14 @@ class AdminPlatformSettingsView(APIView):
 # key-specific validators and min/max ranges). service_fee_percentage /
 # max_service_fee are not in the seed command, so they are defined here.
 CONFIG_META = {
-    'base_delivery_fee': {
-        'category': 'pricing', 'data_type': 'float',
-        'description': 'Flat base delivery fee before distance charges',
-        'default': 800, 'min_value': 0, 'max_value': 100000,
-    },
-    'per_half_km_rate': {
-        'category': 'pricing', 'data_type': 'float',
-        'description': 'Charge added per 0.5 km of distance (from 0 km, rounded up)',
-        'default': 100, 'min_value': 0, 'max_value': 100000,
+    'base_pricing_tiers': {
+        'category': 'pricing', 'data_type': 'json',
+        'description': 'Distance tiers: base fee + per-0.5 km rate within each range',
+        'default': [
+            {"max_distance": 1.2, "base_fee": 800, "per_half_km_rate": 100},
+            {"max_distance": 5, "base_fee": 1200, "per_half_km_rate": 80},
+            {"max_distance": "inf", "base_fee": 1800, "per_half_km_rate": 100},
+        ],
     },
     'peak_hours': {
         'category': 'timing', 'data_type': 'json',
@@ -239,6 +238,42 @@ CONFIG_META = {
 CONFIG_KEYS = list(CONFIG_META.keys())
 
 
+def _tiers_out(tiers):
+    """Fallback/DB tiers -> wire format (open-ended max_distance as null)."""
+    out = []
+    for tier in tiers or []:
+        if not isinstance(tier, dict):
+            continue
+        md = tier.get('max_distance')
+        if md in ('inf', None) or (isinstance(md, float) and md == float('inf')):
+            md = None
+        out.append({
+            'max_distance': md,
+            'base_fee': tier.get('base_fee'),
+            'per_half_km_rate': tier.get(
+                'per_half_km_rate', tier.get('per_km_rate')),
+        })
+    return out
+
+
+def _tiers_in(tiers):
+    """Wire tiers -> storage format (null/last max_distance stored as 'inf')."""
+    if not isinstance(tiers, list) or not tiers:
+        raise ValueError("At least one distance tier is required.")
+    cleaned = []
+    for tier in tiers:
+        if not isinstance(tier, dict):
+            raise ValueError("Each distance tier must be an object.")
+        md = tier.get('max_distance')
+        md = 'inf' if md in (None, '', 'inf') else float(md)
+        cleaned.append({
+            'max_distance': md,
+            'base_fee': float(tier.get('base_fee')),
+            'per_half_km_rate': float(tier.get('per_half_km_rate')),
+        })
+    return cleaned
+
+
 def _serialize(value, data_type):
     if data_type == 'json':
         return json.dumps(value)
@@ -267,7 +302,8 @@ class AdminDeliveryConfigView(APIView):
         config = _current_config()
         data = {}
         for key in CONFIG_KEYS:
-            data[key] = config.get(key, CONFIG_META[key]['default'])
+            value = config.get(key, CONFIG_META[key]['default'])
+            data[key] = _tiers_out(value) if key == 'base_pricing_tiers' else value
         return success_response(message="Delivery configuration retrieved.", data=data)
 
     def patch(self, request):
@@ -283,7 +319,9 @@ class AdminDeliveryConfigView(APIView):
             for key, raw in data.items():
                 if key not in CONFIG_META:
                     continue  # silently ignore unknown keys
-                if CONFIG_META[key]['data_type'] == 'json':
+                if key == 'base_pricing_tiers':
+                    pending[key] = _tiers_in(raw)
+                elif CONFIG_META[key]['data_type'] == 'json':
                     pending[key] = raw
                 elif CONFIG_META[key]['data_type'] == 'int':
                     pending[key] = int(raw)
