@@ -504,44 +504,53 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
     if distance_km <= 0:
         distance_km = 0.1  # Minimum distance
 
-    # Tiered base fee.
+    # Tiered base fee. A tier row's numbers TAKE EFFECT AT its distance:
     #
-    #   * A tier's base_fee is FLAT for its whole range — the first tier
-    #     (0 -> its max) costs exactly its base_fee, nothing added on top.
-    #   * The per_half_km_rate only accrues for distance past the tier's
-    #     starting point (the previous tier's max). So inside tier 2 the
-    #     climb is measured from where tier 1 ended.
-    #   * Beyond the last tier's max, that last tier keeps climbing per 0.5 km.
+    #   * Row 0's base_fee is flat from 0 km up to row 0's distance.
+    #   * After row 0's distance, row 0's per_half_km_rate climbs (per started
+    #     0.5 km) until row 1's distance is reached.
+    #   * At row 1's distance, row 1's base_fee takes over and row 1's rate
+    #     climbs from there — and so on. The last row keeps climbing forever.
+    #   * A running "carry" floor keeps the price from ever DROPPING when a
+    #     later row's base is lower than the price already reached.
     #
-    # Example (tier1 0-1.2km @800/100, tier2 1.2-5km @1200/80):
-    #   1.0km -> 800   (flat, first tier)
-    #   1.7km -> 1280  (1200 + 1 step x 80)
-    #   5.0km -> 1840  (1200 + 8 steps x 80)
+    # Example (row0 1.2km @500 + 200/0.5km, row1 5km @500 + 500/0.5km):
+    #   1.0km ->  500   (row0 base, flat)
+    #   1.7km ->  700   (500 + 1 step x 200)
+    #   5.0km -> 2100   (500 + 8 steps x 200)
+    #   5.5km -> 2100   (row1 would give 1000; held at the carry floor)
     import math
     tiers = DeliveryConfig.BASE_PRICING_TIERS or [
         {'max_distance': 5.0, 'base_fee': 800, 'per_half_km_rate': 100}
     ]
 
-    index = len(tiers) - 1
-    for i, tier in enumerate(tiers):
-        if distance_km <= tier['max_distance']:
-            index = i
-            break
+    def _steps(span):
+        # Round before ceil: float noise (2.2 - 1.2 = 1.0000000000000002)
+        # would otherwise add a phantom half-km step and silently add money.
+        return math.ceil(round(max(0.0, span) / 0.5, 6))
 
-    chosen = tiers[index]
-    if index == 0:
-        # First tier's base covers 0 -> max; only charge past its own max
-        # (which happens only when it is also the last tier).
-        climb_from = chosen['max_distance']
+    first = tiers[0]
+    if distance_km <= first['max_distance']:
+        base_fee = first['base_fee']
     else:
-        climb_from = tiers[index - 1]['max_distance']
-
-    # Round before ceil: floating-point noise (2.2 - 1.2 = 1.0000000000000002)
-    # otherwise rounds UP an extra half-km step and silently adds money.
-    half_km_steps = math.ceil(
-        round(max(0.0, distance_km - climb_from) / 0.5, 6)
-    )
-    base_fee = chosen['base_fee'] + (half_km_steps * chosen['per_half_km_rate'])
+        # Walk the segments, carrying forward the highest price reached so the
+        # curve is always non-decreasing.
+        carry = first['base_fee']
+        base_fee = carry
+        for i, tier in enumerate(tiers):
+            lower = tier['max_distance']
+            upper = tiers[i + 1]['max_distance'] if i + 1 < len(tiers) else float('inf')
+            if distance_km <= upper:
+                base_fee = max(
+                    tier['base_fee'] + _steps(distance_km - lower) * tier['per_half_km_rate'],
+                    carry,
+                )
+                break
+            carry = max(
+                tier['base_fee'] + _steps(upper - lower) * tier['per_half_km_rate'],
+                carry,
+            )
+            base_fee = carry
 
     # Apply time-based pricing
     peak_multiplier = 1.0
