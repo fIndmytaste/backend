@@ -487,6 +487,12 @@ def get_distance_between_two_location(lat1: float, lon1: float, lat2: float, lon
         return None
 
 
+class DeliveryDistanceExceeded(ValueError):
+    """Raised when a route is longer than the configured maximum delivery
+    distance. Distinct from a calculation failure so callers can tell the
+    customer "too far" instead of quoting a fallback price."""
+
+
 def get_road_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> Optional[float]:
     """
     Actual driving distance (km) from the Google Directions API.
@@ -1374,7 +1380,9 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
                 "Could not calculate distance between coordinates")
 
         if distance_km > DeliveryConfig.MAX_DISTANCE_KM:
-            raise ValueError(
+            # Business rule, not a failure: must surface to the customer as
+            # "we can't deliver that far", never as a fallback price.
+            raise DeliveryDistanceExceeded(
                 f"Distance {distance_km:.2f}km exceeds maximum allowed distance of {DeliveryConfig.MAX_DISTANCE_KM}km")
 
         logger.debug(
@@ -1664,6 +1672,17 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
             f"Delivery fee calculation {calculation_id} completed successfully: ₦{final_fee:.2f} for {distance_km:.2f}km route (processing time: {calculation_time:.3f}s)")
         return result
 
+    except DeliveryDistanceExceeded as e:
+        # Out of range is a definite answer, not something to price around.
+        logger.info(f"Delivery rejected for {calculation_id}: {e}")
+        return {
+            "error": str(e),
+            "out_of_range": True,
+            "calculation_id": calculation_id,
+            "timestamp": datetime.now().isoformat(),
+            "success": False,
+        }
+
     except Exception as e:
         logger.error(
             f"Error in enhanced delivery fee calculation {calculation_id}: {e}", exc_info=True)
@@ -1679,8 +1698,16 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
                 logger.warning(
                     f"Using default fallback distance for calculation {calculation_id}")
 
-            fallback_fee = max(DeliveryConfig.MIN_DELIVERY_FEE,
-                               fallback_distance * 200)  # 200 NGN per km
+            # Use the admin's configured tier pricing rather than an invented
+            # per-km rate, so a fallback still charges a believable amount.
+            try:
+                fallback_fee = max(
+                    DeliveryConfig.MIN_DELIVERY_FEE,
+                    get_base_fee(fallback_distance)['base_fee'],
+                )
+            except Exception:
+                fallback_fee = max(DeliveryConfig.MIN_DELIVERY_FEE,
+                                   fallback_distance * 200)
             logger.info(
                 f"Fallback calculation {calculation_id} completed: ₦{fallback_fee:.2f}")
 

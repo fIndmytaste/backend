@@ -1239,6 +1239,10 @@ class GetDeliveryFeeView(generics.GenericAPIView):
                 customer_id=str(user.id) if user else None,
                 vendor_id=str(vendor.id),
             )
+            if delivery_fee_info.get('out_of_range'):
+                return bad_request_response(
+                    message="This vendor cannot deliver to your location — it is too far."
+                )
             delivery_fee = delivery_fee_info['total_fee']
             promo_details = delivery_fee_info.get('promo_details')
         else:
