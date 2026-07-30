@@ -212,10 +212,9 @@ class DeliveryConfig:
         'loyalty_discounts': {
             "bronze": 0.05, "silver": 0.10, "gold": 0.15, "platinum": 0.20
         },
-        # Google Directions travel mode used to measure delivery distance.
-        # 'walking' approximates okada routing; 'driving' gives car routes
-        # (noticeably longer). bicycling/two_wheeler are unsupported in NG.
-        'route_travel_mode': 'walking',
+        # Routes API travel mode for measuring delivery distance.
+        # TWO_WHEELER = real motorbike routing (works in Nigeria); DRIVE = car.
+        'route_travel_mode': 'TWO_WHEELER',
         'max_distance_km': 50,
         'min_delivery_fee': 500,
         'max_delivery_fee': 10000,
@@ -339,8 +338,9 @@ class DeliveryConfig:
 
     @property
     def ROUTE_TRAVEL_MODE(self):
-        mode = str(self.get_config('route_travel_mode', 'walking') or 'walking').lower()
-        return mode if mode in ('walking', 'driving', 'bicycling') else 'walking'
+        """Routes API travel mode. TWO_WHEELER = real motorbike routing."""
+        mode = str(self.get_config('route_travel_mode', 'TWO_WHEELER') or '').upper()
+        return mode if mode in ('TWO_WHEELER', 'DRIVE') else 'TWO_WHEELER'
 
     @property
     def BASE_PRICING_TIERS(self):
@@ -517,44 +517,46 @@ def get_road_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> 
     if not api_key:
         return None
 
-    # Deliveries go by motorbike, which routes very differently from a car —
-    # okadas use links and one-ways a car must detour around. Google has no
-    # motorbike mode here: 'bicycling' returns ZERO_RESULTS in Nigeria and
-    # 'two_wheeler' is only supported in a few Asian countries (it silently
-    # returns car routes). 'walking' is the closest available approximation.
-    # Configurable via the 'route_travel_mode' setting; falls back to driving.
-    mode = DeliveryConfig.ROUTE_TRAVEL_MODE
-    modes = [mode] + [m for m in ('driving',) if m != mode]
-
+    # Deliveries go by motorbike, which routes differently from a car — okadas
+    # take links and one-ways a car must detour around. The Routes API (v2)
+    # supports a real TWO_WHEELER mode in Nigeria; the legacy Directions API
+    # does NOT (its 'two_wheeler' silently returns car routes, and 'bicycling'
+    # returns ZERO_RESULTS). Never use 'walking' as a bike stand-in: it cannot
+    # cross bridges, so Yaba -> Lagos Island measures 161km instead of 7.7km.
+    mode = DeliveryConfig.ROUTE_TRAVEL_MODE          # TWO_WHEELER | DRIVE
     cache_key = f"road_distance_{mode}_{lat1}_{lon1}_{lat2}_{lon2}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
 
-    for attempt in modes:
+    for attempt in [mode] + (['DRIVE'] if mode != 'DRIVE' else []):
         try:
-            response = requests.get(
-                "https://maps.googleapis.com/maps/api/directions/json",
-                params={
-                    'origin': f"{lat1},{lon1}",
-                    'destination': f"{lat2},{lon2}",
-                    'mode': attempt,
-                    'key': api_key,
+            response = requests.post(
+                "https://routes.googleapis.com/directions/v2:computeRoutes",
+                json={
+                    "origin": {"location": {"latLng": {
+                        "latitude": lat1, "longitude": lon1}}},
+                    "destination": {"location": {"latLng": {
+                        "latitude": lat2, "longitude": lon2}}},
+                    "travelMode": attempt,
                 },
-                timeout=5,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": api_key,
+                    "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+                },
+                timeout=6,
             )
-            data = response.json()
-            if data.get('status') == 'OK' and data.get('routes'):
-                meters = data['routes'][0]['legs'][0]['distance']['value']
-                distance = round(meters / 1000.0, 2)
+            routes = (response.json() or {}).get('routes') or []
+            if routes and routes[0].get('distanceMeters') is not None:
+                distance = round(routes[0]['distanceMeters'] / 1000.0, 2)
                 cache.set(cache_key, distance, DeliveryConfig.ROUTE_CACHE_TIMEOUT)
-                logger.debug(
-                    f"Route distance {distance}km via Google Directions ({attempt})")
+                logger.debug(f"Route distance {distance}km via Routes API ({attempt})")
                 return distance
 
             logger.warning(
-                "Google Directions '%s' returned no route (status=%s)",
-                attempt, data.get('status'),
+                "Routes API '%s' returned no route (HTTP %s)",
+                attempt, response.status_code,
             )
         except Exception as e:
             logger.warning(f"Route distance lookup ({attempt}) failed: {e}")
