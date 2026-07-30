@@ -487,6 +487,63 @@ def get_distance_between_two_location(lat1: float, lon1: float, lat2: float, lon
         return None
 
 
+def get_road_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> Optional[float]:
+    """
+    Actual driving distance (km) from the Google Directions API.
+
+    Haversine measures a straight line, which under-states real Lagos trips by
+    roughly 30-40% (one-ways, bridges, no through-roads) — so riders cover
+    ground the customer was never charged for. This uses the real route.
+
+    Returns None when no API key is set or the lookup fails, so callers can
+    fall back to the straight-line distance.
+    """
+    api_key = getattr(settings, 'GOOGLE_MAPS_API_KEY', '')
+    if not api_key:
+        return None
+
+    cache_key = f"road_distance_{lat1}_{lon1}_{lat2}_{lon2}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        response = requests.get(
+            "https://maps.googleapis.com/maps/api/directions/json",
+            params={
+                'origin': f"{lat1},{lon1}",
+                'destination': f"{lat2},{lon2}",
+                'mode': 'driving',
+                'key': api_key,
+            },
+            timeout=5,
+        )
+        data = response.json()
+        if data.get('status') == 'OK' and data.get('routes'):
+            meters = data['routes'][0]['legs'][0]['distance']['value']
+            distance = round(meters / 1000.0, 2)
+            cache.set(cache_key, distance, DeliveryConfig.ROUTE_CACHE_TIMEOUT)
+            logger.debug(f"Road distance {distance}km via Google Directions")
+            return distance
+
+        logger.warning(
+            "Google Directions returned no route (status=%s); "
+            "falling back to straight-line distance", data.get('status')
+        )
+    except Exception as e:
+        logger.warning(f"Road distance lookup failed, using straight line: {e}")
+
+    return None
+
+
+def get_delivery_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> Optional[float]:
+    """Distance used for pricing: real road distance, straight line as fallback."""
+    return (
+        get_road_distance_km(lat1, lon1, lat2, lon2)
+        or get_distance_between_two_location(lat1, lon1, lat2, lon2)
+    )
+
+
 # -------------------------
 # 2. Enhanced Base Fee Calculation
 # -------------------------
@@ -1304,10 +1361,11 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
 
     try:
 
-        # 1. Calculate distance
+        # 1. Calculate distance — real driving distance, straight line if the
+        # Directions lookup is unavailable.
         logger.debug(
             f"Step 1: Calculating distance for calculation {calculation_id}")
-        distance_km = get_distance_between_two_location(
+        distance_km = get_delivery_distance_km(
             origin_lat, origin_lon, dest_lat, dest_lon)
         if distance_km is None:
             raise ValueError(
