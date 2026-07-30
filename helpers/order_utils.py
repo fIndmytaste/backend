@@ -587,6 +587,7 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
         return math.ceil(round(max(0.0, span) / 0.5, 6))
 
     first = tiers[0]
+    half_km_steps = 0
     if distance_km <= first['max_distance']:
         base_fee = first['base_fee']
     else:
@@ -598,8 +599,9 @@ def get_base_fee(distance_km: float, current_time: Optional[datetime] = None) ->
             lower = tier['max_distance']
             upper = tiers[i + 1]['max_distance'] if i + 1 < len(tiers) else float('inf')
             if distance_km <= upper:
+                half_km_steps = _steps(distance_km - lower)
                 base_fee = max(
-                    tier['base_fee'] + _steps(distance_km - lower) * tier['per_half_km_rate'],
+                    tier['base_fee'] + half_km_steps * tier['per_half_km_rate'],
                     carry,
                 )
                 break
