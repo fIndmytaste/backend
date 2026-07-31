@@ -463,19 +463,26 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
 
                 if order.payment_method == 'wallet':
                     wallet, _ = Wallet.objects.get_or_create(user=user)
-                    
-                    if float(order_total_price) > float(wallet.balance):
+
+                    # order_total_price is a float; wallet.balance is a Decimal.
+                    # Subtracting one from the other raises TypeError, so convert
+                    # via str to avoid binary-float artefacts.
+                    wallet_charge = Decimal(str(order_total_price)).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP
+                    )
+
+                    if wallet_charge > wallet.balance:
                         raise ValueError('Insufficient balance. Please top up your wallet')
-                    
+
                     # proceed the payment
-                    wallet.balance -= order_total_price
+                    wallet.balance -= wallet_charge
                     wallet.save()
                     order.payment_status = 'paid'
                     order.save()
 
                     WalletTransaction.objects.create(
-                        wallet=wallet, 
-                        amount=order_total_price,
+                        wallet=wallet,
+                        amount=wallet_charge,
                         transaction_type='purchase',
                         description='Payment for order',
                         status='completed',
@@ -582,6 +589,11 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
 
         except ValidationError as ve:
             return bad_request_response(message=resolve_validation_error_message(ve))
+        except ValueError as ve:
+            # Business rules raise ValueError (insufficient wallet balance,
+            # distance out of range). Surface the reason instead of a generic
+            # 500 the customer can do nothing with.
+            return bad_request_response(message=str(ve))
         except Exception as e:
             import traceback
             traceback_str = traceback.format_exc()
@@ -1502,6 +1514,10 @@ class CustomerCreateOrderView(generics.GenericAPIView):
 
         except ValidationError as ve:
             return bad_request_response(message=resolve_validation_error_message(ve))
+        except ValueError as ve:
+            # Business rules raise ValueError (insufficient wallet balance,
+            # distance out of range) — return the reason, not a generic 500.
+            return bad_request_response(message=str(ve))
 
         except Exception as e:
             traceback_str = traceback.format_exc()
@@ -1746,19 +1762,26 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
                 if order.payment_method == 'wallet':
                     wallet, _ = Wallet.objects.get_or_create(user=user)
-                    
-                    if float(order_total_price) > float(wallet.balance):
+
+                    # order_total_price is a float; wallet.balance is a Decimal.
+                    # Subtracting one from the other raises TypeError, so convert
+                    # via str to avoid binary-float artefacts.
+                    wallet_charge = Decimal(str(order_total_price)).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP
+                    )
+
+                    if wallet_charge > wallet.balance:
                         raise ValueError('Insufficient balance. Please top up your wallet')
-                    
+
                     # proceed the payment
-                    wallet.balance -= order_total_price
+                    wallet.balance -= wallet_charge
                     wallet.save()
                     order.payment_status = 'paid'
                     order.save()
 
                     WalletTransaction.objects.create(
-                        wallet=wallet, 
-                        amount=order_total_price,
+                        wallet=wallet,
+                        amount=wallet_charge,
                         transaction_type='purchase',
                         description='Payment for order',
                         status='completed',
