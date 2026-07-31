@@ -538,16 +538,19 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                     try:
                         thread = notification_helper.send_to_user_async(
                             user=order.user,
-                            title="Order Confirmed!",
-                            body="Your order has been successfully placed. We'll notify you when it's on the way 🚚",
+                            title="Order Placed!",
+                            body="Your order has been sent to the vendor. We'll let you know as soon as they accept it 🧑‍🍳",
                             data={"event": "order_created", "order_id": order.id}
                         )
                     except Exception as e:
                         print(e)
 
-                    try:
-                        send_order_accepted_notification_customer(order)
-                    except:pass
+                    # NOTE: do NOT tell the customer the vendor accepted here.
+                    # This runs on successful wallet payment, which only means
+                    # the money moved — the order is still status='pending' and
+                    # awaiting the vendor. send_order_accepted_notification_customer
+                    # belongs solely in the vendor's accept endpoint, which is
+                    # where it is now called from.
 
                     return success_response(
                         data=OrderSerializer(order).data,
@@ -1837,16 +1840,19 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                     try:
                         thread = notification_helper.send_to_user_async(
                             user=order.user,
-                            title="Order Confirmed!",
-                            body="Your order has been successfully placed. We'll notify you when it's on the way 🚚",
+                            title="Order Placed!",
+                            body="Your order has been sent to the vendor. We'll let you know as soon as they accept it 🧑‍🍳",
                             data={"event": "order_created", "order_id": order.id}
                         )
                     except Exception as e:
                         print(e)
 
-                    try:
-                        send_order_accepted_notification_customer(order)
-                    except:pass
+                    # NOTE: do NOT tell the customer the vendor accepted here.
+                    # This runs on successful wallet payment, which only means
+                    # the money moved — the order is still status='pending' and
+                    # awaiting the vendor. send_order_accepted_notification_customer
+                    # belongs solely in the vendor's accept endpoint, which is
+                    # where it is now called from.
 
                     respnse_data = OrderSerializer(order).data
                     respnse_data['promo_info'] = promo_info
