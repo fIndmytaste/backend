@@ -1321,25 +1321,12 @@ class RiderViewSet(viewsets.ModelViewSet):
 
         order.credit_vendor_earning_once(description=f"Earning from Order #{order.track_id}")
 
+        # The rider is paid out of the delivery fee the customer actually paid,
+        # minus the platform's rider commission. The old code took the MAX of
+        # that fee and a separate distance-based fare, so a N424 delivery could
+        # pay the rider N450 — more than was collected, with the commission
+        # having no effect.
         gross_earning_amount = order.calculate_rider_earning_amount()
-        try:
-            dist = 0.5
-            vendor_lat = getattr(order.vendor, 'location_latitude', None)
-            vendor_lng = getattr(order.vendor, 'location_longitude', None)
-            user_address = getattr(order, 'user_address', None)
-            if vendor_lat and vendor_lng and user_address:
-                dist = get_distance_between_two_location(
-                    float(vendor_lat),
-                    float(vendor_lng),
-                    float(user_address.latitude),
-                    float(user_address.longitude)
-                ) or 0.5
-            gross_earning_amount = max(
-                order.calculate_rider_earning_amount(),
-                Decimal(str(calculate_rider_fare(dist))),
-            )
-        except Exception as earning_error:
-            print(f"Error calculating rider earning for {order.track_id}: {earning_error}")
 
         if rider.is_in_house_rider:
             rider_earning_amount = Decimal('0.00')

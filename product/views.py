@@ -434,10 +434,12 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 
                 
                 dist = distance_in_km or 0.0
-                order.rider_earning = max(
-                    Decimal(str(calculate_rider_fare(dist))),
-                    Decimal(str(delivery_fee or 0)),
-                    Decimal(str(original_delivery_fee or 0)),
+                # What the rider will actually receive: the delivery fee the
+                # customer paid, less the platform's rider commission. Showing
+                # a distance-based fare here made the rider app display more
+                # than the customer was charged.
+                order.rider_earning = order.calculate_net_rider_earning(
+                    Decimal(str(delivery_fee or original_delivery_fee or 0))
                 )
                 
                 order.payment_method = request.data.get('payment_method','wallet')
@@ -1491,10 +1493,12 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 order.delivery_fee = delivery_fee
                 order.original_delivery_fee = original_delivery_fee
                 from helpers.order_utils import calculate_rider_fare
-                order.rider_earning = max(
-                    Decimal(str(calculate_rider_fare(dist))),
-                    Decimal(str(delivery_fee or 0)),
-                    Decimal(str(original_delivery_fee or 0)),
+                # What the rider will actually receive: the delivery fee the
+                # customer paid, less the platform's rider commission. Showing
+                # a distance-based fare here made the rider app display more
+                # than the customer was charged.
+                order.rider_earning = order.calculate_net_rider_earning(
+                    Decimal(str(delivery_fee or original_delivery_fee or 0))
                 )
                 order.save()
 
@@ -1736,11 +1740,10 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 order.note = request.data.get('note',request.data.get('notes'))
                 order.delivery_fee = delivery_fee
                 order.original_delivery_fee = original_delivery_fee
-                from helpers.order_utils import calculate_rider_fare
-                order.rider_earning = max(
-                    Decimal(str(calculate_rider_fare(distance_in_km))),
-                    Decimal(str(delivery_fee or 0)),
-                    Decimal(str(original_delivery_fee or 0)),
+                # Net of the platform's rider commission, based on the delivery
+                # fee the customer paid — not a separate distance fare.
+                order.rider_earning = order.calculate_net_rider_earning(
+                    Decimal(str(delivery_fee or original_delivery_fee or 0))
                 )
                 order.save()
                 order.save_vendor_and_commision()
@@ -2197,7 +2200,11 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                         lon2=float(location_longitude),
                     )
                 except: pass
-                order.rider_earning = calculate_rider_fare(dist)
+                # Net of the platform's rider commission, based on the delivery
+                # fee the customer paid — not a separate distance fare.
+                order.rider_earning = order.calculate_net_rider_earning(
+                    order.calculate_rider_earning_amount()
+                )
                 
                 order.save()
 

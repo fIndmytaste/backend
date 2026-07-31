@@ -1341,15 +1341,17 @@ class Order(models.Model):
         return settlement_total.quantize(Decimal('0.01'))
 
     def calculate_rider_earning_amount(self):
-        """Calculate what should be credited to the rider for this order."""
+        """Gross delivery revenue for this order, before platform commission.
+
+        This is simply what the customer paid for delivery. It used to take the
+        MAX of the delivery fee and a separate distance-based rider fare, which
+        let the rider be paid more than the customer was charged (e.g. a N424
+        delivery paying out N450) and made the commission meaningless.
+        """
         from decimal import Decimal
 
-        candidate_amounts = [
-            Decimal(str(self.rider_earning or 0)),
-            Decimal(str(self.delivery_fee or 0)),
-            Decimal(str(self.original_delivery_fee or 0)),
-        ]
-        return max(candidate_amounts).quantize(Decimal('0.01'))
+        amount = self.delivery_fee or self.original_delivery_fee or 0
+        return Decimal(str(amount)).quantize(Decimal('0.01'))
 
     def calculate_marketplace_delivery_earning(self):
         """Return the delivery revenue retained for a marketplace order."""
