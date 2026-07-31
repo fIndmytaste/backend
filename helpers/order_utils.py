@@ -1731,6 +1731,9 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
             except Exception:
                 fallback_fee = max(DeliveryConfig.MIN_DELIVERY_FEE,
                                    fallback_distance * 200)
+            # Respect the configured ceiling too — this path only applied the
+            # floor, so a long fallback trip could exceed the admin's maximum.
+            fallback_fee = min(fallback_fee, DeliveryConfig.MAX_DELIVERY_FEE)
             logger.info(
                 f"Fallback calculation {calculation_id} completed: ₦{fallback_fee:.2f}")
 
@@ -1826,6 +1829,7 @@ def get_delivery_fee_estimate(distance_km: float, vendor_type: str = 'restaurant
     except Exception as e:
         logger.error(f"Error in delivery fee estimate: {e}")
         fallback_fee = max(DeliveryConfig.MIN_DELIVERY_FEE, distance_km * 200)
+        fallback_fee = min(fallback_fee, DeliveryConfig.MAX_DELIVERY_FEE)
         return {
             "estimated_fee": round(fallback_fee, 2),
             "fee_range": {

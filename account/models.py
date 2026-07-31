@@ -614,6 +614,21 @@ class Vendor(models.Model):
             if delivery_fee is None:
                 delivery_fee = Decimal('0.00')
 
+            # Apply the same minimum/maximum delivery fee configured in Delivery
+            # Settings. Zone pricing bypassed these limits entirely, so a zone
+            # could charge below the floor or above the ceiling the admin set.
+            # Applied before promo, so a promo can still discount past the floor.
+            if delivery_fee > 0:
+                try:
+                    from helpers.order_utils import DeliveryConfig
+                    min_fee = Decimal(str(DeliveryConfig.MIN_DELIVERY_FEE))
+                    max_fee = Decimal(str(DeliveryConfig.MAX_DELIVERY_FEE))
+                    delivery_fee = max(min_fee, min(Decimal(delivery_fee), max_fee))
+                except Exception as limit_error:
+                    logger.warning(
+                        "[delivery_fee] could not apply min/max limits: %s", limit_error
+                    )
+
             if promo_code and delivery_fee > 0:
                 distance_km = 0.0
                 if dest_lat and dest_lon:
