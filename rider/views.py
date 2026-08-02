@@ -10,6 +10,7 @@ from helpers.websocket_notification import (
     notify_rider_order_assignment,
     notify_order_unavailable_to_riders,
     send_order_accepted_notification_customer,
+    send_order_status_update_notification_vendor,
 )
 from django.db import transaction
 from django.db.models import Sum, Q
@@ -686,6 +687,12 @@ class RiderViewSet(viewsets.ModelViewSet):
         except Exception as e:
             print(f"WebSocket notification to customer error: {e}")
 
+        # Keep the vendor in the loop on rider progress.
+        try:
+            send_order_status_update_notification_vendor(order, order.status)
+        except Exception as e:
+            print(f"Vendor notification error: {e}")
+
         if new_status == 'near_delivery':
             try:
                 send_order_status_update_notification(
@@ -1161,6 +1168,12 @@ class RiderViewSet(viewsets.ModelViewSet):
             )
         except Exception as e:
             print(f"WebSocket notification to customer error: {e}")
+
+        # Tell the vendor a rider is coming for pickup.
+        try:
+            send_order_status_update_notification_vendor(order, 'rider_assigned')
+        except Exception as e:
+            print(f"Vendor notification error: {e}")
 
         return success_response(
             message='Order accepted successfully'

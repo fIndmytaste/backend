@@ -261,6 +261,60 @@ def send_order_status_update_notification(order: Order, status: str, message: Op
         print(f"Push notification error: {e}")
 
 
+def send_order_status_update_notification_vendor(
+    order: Order, status: str, message: Optional[str] = None
+):
+    """
+    Tell the VENDOR that one of their orders changed status.
+
+    Rider progress (picked up, in transit, delivered) was only ever pushed to
+    the customer, so vendors had no idea what was happening to orders they had
+    already handed over. Sends both the websocket event the vendor app listens
+    for and a push notification.
+    """
+    vendor_user = getattr(getattr(order, 'vendor', None), 'user', None)
+    if vendor_user is None:
+        return
+
+    if not message:
+        message = {
+            'rider_assigned': f"A rider is on the way to pick up order #{order.track_id}.",
+            'picked_up': f"Order #{order.track_id} has been picked up by the rider.",
+            'in_transit': f"Order #{order.track_id} is on its way to the customer.",
+            'near_delivery': f"The rider has almost reached the customer for order #{order.track_id}.",
+            'delivered': f"Order #{order.track_id} has been delivered.",
+            'cancelled': f"Order #{order.track_id} was cancelled.",
+        }.get(status, f"Order #{order.track_id} status updated to {status}.")
+
+    payload = {
+        'order_id': str(order.id),
+        'track_id': str(order.track_id),
+        'status': status,
+        'message': message,
+    }
+
+    # Websocket event for the vendor app's live order list.
+    try:
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'vendor_{vendor_user.id}',
+            {'type': 'order_status_update', 'data': payload},
+        )
+    except Exception as e:
+        print(f"WebSocket notification to vendor error: {e}")
+
+    # Push notification so it lands even when the app is closed.
+    try:
+        notification_helper.send_to_user_async(
+            user=vendor_user,
+            title=f"Order {status.replace('_', ' ').title()}",
+            body=message,
+            data={'type': 'order_status_update', **payload},
+        )
+    except Exception as e:
+        print(f"Push notification to vendor error: {e}")
+
+
 def notify_rider_order_assignment(order: Order, rider: Rider, message: Optional[str] = None):
     """
     Notify a specific rider that an order has been assigned to them.
