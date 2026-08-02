@@ -240,6 +240,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
         delivery_fee_id = request.data.get('delivery_fee_id')
 
         delivery_fee = None
+        quoted_service_fee = 0
         if delivery_fee_id:
             try:
                 delivery_fee_record = DeliveryFee.objects.get(id=delivery_fee_id, user=user, vendor=vendor, is_active=True )
@@ -257,6 +258,8 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             
 
             delivery_fee = delivery_fee_record.amount
+            # Platform's cut of that fee; the rider is paid the remainder.
+            quoted_service_fee = delivery_fee_record.service_fee or 0
 
         location_latitude = None
         location_longitude = None
@@ -430,6 +433,9 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 order.location_latitude = location_latitude
                 order.location_longitude = location_longitude
                 order.delivery_fee = delivery_fee
+                # Platform's service-fee share of that delivery fee; the rider is paid
+                # the rest, so this must ride along with the order.
+                order.service_fee = quoted_service_fee
                 order.original_delivery_fee = original_delivery_fee
                 
                 
@@ -1281,6 +1287,9 @@ class GetDeliveryFeeView(generics.GenericAPIView):
             user=user,
             amount=float(delivery_fee),
             original_amount=float(delivery_fee_info.get('original_fee', delivery_fee)),
+            # Kept so the order (and therefore the rider's pay) knows how much
+            # of this fee is the platform's service fee.
+            service_fee=float(delivery_fee_info.get('service_fee', 0) or 0),
             vendor=vendor
         )
         return success_response(
@@ -1463,6 +1472,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 delivery_fee = delivery_fee_response["total_fee"]
                 original_delivery_fee = delivery_fee_response["original_fee"]
                 promo_info = delivery_fee_response["promo_info"]
+                quoted_service_fee = delivery_fee_response.get("service_fee", 0) or 0
                 
                 # Check for other benefits if it's an order-level promo
                 from helpers.order_utils import apply_promo_code, get_distance_between_two_location
@@ -1491,6 +1501,9 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 order.location_longitude = location_longitude
                 order.note = request.data.get('note',request.data.get('notes'))
                 order.delivery_fee = delivery_fee
+                # Platform's service-fee share of that delivery fee; the rider is paid
+                # the rest, so this must ride along with the order.
+                order.service_fee = quoted_service_fee
                 order.original_delivery_fee = original_delivery_fee
                 from helpers.order_utils import calculate_rider_fare
                 # What the rider will actually receive: the delivery fee the
@@ -1559,9 +1572,12 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
 
         # Get user address
         delivery_fee = None
+        quoted_service_fee = 0
         if delivery_fee_id:
             delivery_fee_record = DeliveryFee.objects.get(id=delivery_fee_id, user=user, vendor=vendor, is_active=True )
             delivery_fee = delivery_fee_record.amount
+            # Platform's cut of that fee; the rider is paid the remainder.
+            quoted_service_fee = delivery_fee_record.service_fee or 0
 
         location_latitude = None
         location_longitude = None
@@ -1739,6 +1755,9 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 order.payment_method = request.data.get('payment_method','wallet')
                 order.note = request.data.get('note',request.data.get('notes'))
                 order.delivery_fee = delivery_fee
+                # Platform's service-fee share of that delivery fee; the rider is paid
+                # the rest, so this must ride along with the order.
+                order.service_fee = quoted_service_fee
                 order.original_delivery_fee = original_delivery_fee
                 # Net of the platform's rider commission, based on the delivery
                 # fee the customer paid — not a separate distance fare.
@@ -2177,6 +2196,7 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                 delivery_fee = delivery_fee_info['total_fee']
                 original_delivery_fee = delivery_fee_info['original_fee']
                 promo_info = delivery_fee_info.get('promo_info', {"is_applied": False, "discount_amount": 0})
+                quoted_service_fee = delivery_fee_info.get('service_fee', 0) or 0
                 
                 if promo_info["is_applied"]:
                     from product.promo_models import PromoCode
@@ -2188,6 +2208,9 @@ class CustomerUpdateOrderView(generics.GenericAPIView):
                 order.location_latitude = location_latitude
                 order.location_longitude = location_longitude
                 order.delivery_fee = delivery_fee
+                # Platform's service-fee share of that delivery fee; the rider is paid
+                # the rest, so this must ride along with the order.
+                order.service_fee = quoted_service_fee
                 order.original_delivery_fee = original_delivery_fee
                 
                 from helpers.order_utils import get_distance_between_two_location, calculate_rider_fare

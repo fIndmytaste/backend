@@ -1341,17 +1341,18 @@ class Order(models.Model):
         return settlement_total.quantize(Decimal('0.01'))
 
     def calculate_rider_earning_amount(self):
-        """Gross delivery revenue for this order, before platform commission.
+        """What the rider is paid: the delivery fee minus the service fee.
 
-        This is simply what the customer paid for delivery. It used to take the
-        MAX of the delivery fee and a separate distance-based rider fare, which
-        let the rider be paid more than the customer was charged (e.g. a N424
-        delivery paying out N450) and made the commission meaningless.
+        `delivery_fee` is the whole amount the customer paid for delivery, which
+        already includes the platform service fee. The service fee is the
+        platform's margin, so the rider receives the transport portion — no
+        separate commission is taken on top.
         """
         from decimal import Decimal
 
-        amount = self.delivery_fee or self.original_delivery_fee or 0
-        return Decimal(str(amount)).quantize(Decimal('0.01'))
+        amount = Decimal(str(self.delivery_fee or self.original_delivery_fee or 0))
+        service_fee = Decimal(str(self.service_fee or 0))
+        return max(Decimal('0.00'), amount - service_fee).quantize(Decimal('0.01'))
 
     def calculate_marketplace_delivery_earning(self):
         """Return the delivery revenue retained for a marketplace order."""
@@ -1370,20 +1371,21 @@ class Order(models.Model):
 
     def calculate_net_rider_earning(self, gross_earning=None):
         """
-        Apply the platform's rider commission to the gross delivery earning.
+        What the rider actually receives.
 
-        The admin sets PlatformSettings.rider_commission_percentage (e.g. 10 for 10%).
-        Rider receives: gross_earning * (1 - commission / 100).
-        If commission is 0 or disabled the full gross amount is returned.
+        The platform's margin on delivery is the SERVICE FEE, which
+        calculate_rider_earning_amount already excludes — so nothing further is
+        deducted here. PlatformSettings.rider_commission_percentage is no longer
+        applied; taking it as well would charge the rider twice for the same
+        delivery.
         """
         from decimal import Decimal
-        gross = Decimal(str(gross_earning)) if gross_earning is not None else self.calculate_rider_earning_amount()
-        settings = PlatformSettings.get_settings()
-        commission_pct = Decimal(str(settings.rider_commission_percentage or 0))
-        if commission_pct <= 0:
-            return gross.quantize(Decimal('0.01'))
-        net = gross * (1 - commission_pct / Decimal('100'))
-        return max(Decimal('0.00'), net).quantize(Decimal('0.01'))
+        gross = (
+            Decimal(str(gross_earning))
+            if gross_earning is not None
+            else self.calculate_rider_earning_amount()
+        )
+        return max(Decimal('0.00'), gross).quantize(Decimal('0.01'))
 
 
     def save_vendor_and_commision(self, gross_order_amount=None):
@@ -1655,6 +1657,13 @@ class DeliveryFee(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True)
     amount = models.FloatField(default=0)
     original_amount = models.FloatField(default=0)
+    service_fee = models.FloatField(
+        default=0,
+        help_text=(
+            "Platform service-fee portion of `amount`. Carried through to the "
+            "order so the rider can be paid the transport part only."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
