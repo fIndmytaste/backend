@@ -531,6 +531,27 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                     except Exception as e:
                         print(f"Failed to create vendor in-app notification: {e}")
 
+                    # Push notification for the new order. Until now the vendor
+                    # only got a websocket event (which needs the app open) and
+                    # an in-app row, so a closed app meant no alert at all.
+                    try:
+                        notification_helper.send_to_user_async(
+                            user=vendor.user,
+                            title="New Order Received! 🛎️",
+                            body=(
+                                f"Order #{order.track_id} from {order.user.full_name}. "
+                                "Tap to review and accept."
+                            ),
+                            data={
+                                "event": "new_order",
+                                "type": "new_order_notification",
+                                "order_id": str(order.id),
+                                "track_id": str(order.track_id),
+                            },
+                        )
+                    except Exception as e:
+                        print(f"Failed to send vendor new-order push: {e}")
+
                     try:
 
                         send_order_payment_success_notification(
@@ -1846,6 +1867,27 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         )
                     except Exception as e:
                         print(f"Failed to create vendor in-app notification: {e}")
+
+                    # Push notification for the new order. Until now the vendor
+                    # only got a websocket event (which needs the app open) and
+                    # an in-app row, so a closed app meant no alert at all.
+                    try:
+                        notification_helper.send_to_user_async(
+                            user=vendor.user,
+                            title="New Order Received! 🛎️",
+                            body=(
+                                f"Order #{order.track_id} from {order.user.full_name}. "
+                                "Tap to review and accept."
+                            ),
+                            data={
+                                "event": "new_order",
+                                "type": "new_order_notification",
+                                "order_id": str(order.id),
+                                "track_id": str(order.track_id),
+                            },
+                        )
+                    except Exception as e:
+                        print(f"Failed to send vendor new-order push: {e}")
 
                     try:
 
