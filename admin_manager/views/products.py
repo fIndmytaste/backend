@@ -353,41 +353,35 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             rider__isnull=False,
             rider__is_in_house_rider=False,
         )
-        rider_agg = independent_rider_orders.aggregate(
-            rider_payouts=Sum('rider_earning'),
-            recorded_commissions=Sum(
-                'rider_commission_amount',
-                filter=Q(rider_commission_amount__isnull=False),
-            ),
-            legacy_rider_payouts=Sum(
-                'rider_earning',
-                filter=Q(rider_commission_amount__isnull=True),
-            ),
-        )
-        rider_payouts = rider_agg['rider_payouts'] or 0
-        rider_commissions = rider_agg['recorded_commissions'] or 0
+        rider_payouts = independent_rider_orders.aggregate(
+            total=Sum('rider_earning'),
+        )['total'] or 0
 
-        # Legacy deliveries only persisted the rider's net earning. Rebuild
-        # their commission from the current configured percentage; newly
-        # completed orders use the exact snapshotted commission above.
-        legacy_rider_payouts = Decimal(str(rider_agg['legacy_rider_payouts'] or 0))
-        rider_commission_percentage = Decimal(str(
-            PlatformSettings.get_settings().rider_commission_percentage or 0
-        ))
-        if legacy_rider_payouts > 0 and 0 < rider_commission_percentage < 100:
-            legacy_commissions = (
-                legacy_rider_payouts
-                * rider_commission_percentage
-                / (Decimal('100') - rider_commission_percentage)
-            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            rider_commissions += legacy_commissions
-        elif rider_commission_percentage >= 100:
-            # With a 100% commission the persisted net is zero, so use the
-            # delivery charge snapshot as the best available legacy gross.
-            legacy_gross = independent_rider_orders.filter(
-                rider_commission_amount__isnull=True,
-            ).aggregate(total=Sum('original_delivery_fee'))['total'] or 0
-            rider_commissions += legacy_gross
+        # Platform's margin on delivery is now the SERVICE FEE, not a cut of the
+        # rider's pay: the rider receives the delivery fee minus the service fee.
+        # Marketplace orders are excluded here because the platform keeps their
+        # entire delivery fee, counted separately below — including the service
+        # fee inside it, which would otherwise be double counted.
+        marketplace_filter = (
+            Q(vendor__is_marketplace=True) | Q(vendor__marketplace__isnull=False)
+        )
+        non_marketplace_paid = paid_orders.exclude(marketplace_filter).distinct()
+
+        delivery_service_fees = non_marketplace_paid.aggregate(
+            total=Sum('service_fee'),
+        )['total'] or 0
+
+        # Orders placed before the service fee was stored have service_fee = 0.
+        # Fall back to the rider commission recorded at the time so historical
+        # revenue doesn't collapse to zero after the model change.
+        legacy_delivery_margin = non_marketplace_paid.filter(
+            Q(service_fee__isnull=True) | Q(service_fee=0),
+            rider_commission_amount__isnull=False,
+        ).aggregate(total=Sum('rider_commission_amount'))['total'] or 0
+
+        delivery_service_fees = (
+            Decimal(str(delivery_service_fees)) + Decimal(str(legacy_delivery_margin))
+        )
 
         # New orders snapshot marketplace delivery revenue on the order. For
         # older rows where that snapshot is null, derive it from the vendor's
@@ -409,7 +403,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             recorded_marketplace_delivery + legacy_marketplace_delivery
         )
         platform_earnings = (
-            vendor_service_charges + rider_commissions + marketplace_delivery_fees
+            vendor_service_charges + delivery_service_fees + marketplace_delivery_fees
         )
 
         # ── Previous period for growth indicators ───────────────────────────
@@ -463,7 +457,11 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                     "value": float(platform_earnings),
                     "breakdown": {
                         "vendor_service_charges": {"value": float(vendor_service_charges)},
-                        "rider_commissions": {"value": float(rider_commissions)},
+                        # Delivery margin = service fee kept from the delivery
+                        # charge. Key retained for backwards compatibility with
+                        # existing dashboard clients.
+                        "rider_commissions": {"value": float(delivery_service_fees)},
+                        "delivery_service_fees": {"value": float(delivery_service_fees)},
                         "marketplace_delivery_fees": {"value": float(marketplace_delivery_fees)},
                     },
                 },
