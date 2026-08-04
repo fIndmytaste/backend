@@ -1306,11 +1306,12 @@ class VendorOrderSerializer(serializers.ModelSerializer):
             variant_selections = list(item.variant_selections.all()) if hasattr(item, 'variant_selections') else []
 
             variants_data = []
-            variant_total = 0.0
+            # Variant cost for ONE unit of this product.
+            variant_unit_total = 0.0
             for vs in variant_selections:
                 variant_obj = vs.variant
                 variant_price = float(variant_obj.price)
-                variant_total += variant_price * vs.quantity
+                variant_unit_total += variant_price * vs.quantity
                 variants_data.append({
                     'id': str(variant_obj.id),
                     'variant_category_name': getattr(
@@ -1323,7 +1324,14 @@ class VendorOrderSerializer(serializers.ModelSerializer):
                 })
 
             item_price = float(product.price)
-            vendor_items_total += item_price * item.quantity + variant_total
+            # Variants belong to each unit, so they scale with the quantity.
+            # Previously they were added once per order line, which under-billed
+            # the vendor's view: 2 x (product 500 + variant 350) showed 1350
+            # instead of 1700.
+            variant_total = variant_unit_total * item.quantity
+            line_unit_price = item_price + variant_unit_total
+            line_total = line_unit_price * item.quantity
+            vendor_items_total += line_total
 
             items_list.append({
                 'product': {
@@ -1334,6 +1342,12 @@ class VendorOrderSerializer(serializers.ModelSerializer):
                 },
                 'price': item_price,
                 'unit_price': item_price,
+                # Price for one unit including its variants, and the full line
+                # total for the ordered quantity, so the app never has to
+                # reconstruct either and miss the variants.
+                'unit_price_with_variants': round(line_unit_price, 2),
+                'total_price': round(line_total, 2),
+                'variants_total': round(variant_total, 2),
                 'quantity': item.quantity,
                 'variants': variants_data,
             })
