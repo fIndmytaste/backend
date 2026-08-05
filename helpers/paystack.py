@@ -4,6 +4,7 @@ import logging
 import requests
 from findmytaste import settings
 from account.models import User, Vendor, VirtualAccount
+from helpers.paystack_fees import record_collection_fee, record_payout_fee
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 from wallet.models import Wallet, WalletTransaction
 
@@ -146,6 +147,16 @@ class PaystackManager:
             transaction_obj.response_data = initiate_result
             transaction_obj.status = 'pending'  # confirmed via transfer.success webhook
             transaction_obj.save()
+            if transfer_status == 'success':
+                # Instant settlement: no transfer.success webhook is guaranteed
+                # to follow, so bank the fee now. Recording is idempotent, so a
+                # webhook arriving later just refreshes this row.
+                record_payout_fee(
+                    initiate_result,
+                    wallet_transaction=transaction_obj,
+                    user=user,
+                    source='verify',
+                )
             return True, 'Withdrawal initiated successfully'
         if transfer_status == 'otp':
             logger.error(
@@ -253,6 +264,51 @@ class PaystackManager:
             return True , response.json()['data']
         return False , "Account could not be resolve"
 
+
+    def balance_ledger(self, page=1, per_page=100, start_date=None, end_date=None):
+        """
+        Paystack's balance ledger — the authoritative record of every credit and
+        debit against our balance, each with the fee Paystack took. It is the
+        only endpoint that reports fees on transfers, so it is what corrects the
+        estimated payout fees written by the transfer webhook.
+
+        Returns (success: bool, entries: list | error message).
+        """
+        params = {'page': page, 'perPage': per_page}
+        if start_date:
+            params['from'] = start_date
+        if end_date:
+            params['to'] = end_date
+        try:
+            response = requests.get(
+                f'{self.base_url}/balance/ledger',
+                headers=self.get_header(),
+                params=params,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            logger.error("Paystack balance ledger request failed: %s", exc)
+            return False, str(exc)
+
+        if response.ok:
+            return True, response.json().get('data') or []
+        error = _paystack_error(response, 'Could not fetch balance ledger')
+        logger.error("Paystack balance ledger error (%s): %s", response.status_code, error)
+        return False, error
+
+
+    @staticmethod
+    def _drop_payout_fee_record(reference):
+        """Remove a payout fee row after Paystack gave the money back."""
+        if not reference:
+            return
+        try:
+            from wallet.models import PaystackFeeRecord
+            PaystackFeeRecord.objects.filter(
+                direction='payout', reference=str(reference)).delete()
+        except Exception:
+            logger.exception("Could not drop Paystack payout fee for %s", reference)
+
     
 
 
@@ -282,7 +338,7 @@ class PaystackManager:
                         if v_account:
                             wallet = Wallet.objects.get(user=v_account.user)
 
-                            WalletTransaction.objects.create(
+                            wallet_transaction = WalletTransaction.objects.create(
                                 wallet=wallet,
                                 amount=Decimal(process_amount),
                                 transaction_type='deposit',
@@ -290,6 +346,15 @@ class PaystackManager:
                                 status='completed',
                                 response_data=payload,
                                 description = "Deposit from bank"
+                            )
+
+                            # Bank the fee Paystack took out of this deposit so
+                            # platform revenue can be reported net of it.
+                            record_collection_fee(
+                                payload,
+                                wallet_transaction=wallet_transaction,
+                                user=v_account.user,
+                                source='webhook',
                             )
 
                             # update the user wallet balance
@@ -313,15 +378,27 @@ class PaystackManager:
                     transaction.status = 'completed'
                     transaction.response_data = payload
                     transaction.save()
+                    # Paystack charges a transfer fee on every payout. Its
+                    # transfer payloads rarely report it, so this row is
+                    # usually an estimate until the balance-ledger sync runs.
+                    record_payout_fee(
+                        payload,
+                        wallet_transaction=transaction,
+                        source='webhook',
+                    )
                     return success_response(message="Withdrawal confirmed successfully")
                 return bad_request_response(message="Transaction already processed or not found")
             except Exception:
                 return internal_server_error_response()
 
-        elif event_type == "transfer.failed":
+        elif event_type in ("transfer.failed", "transfer.reversed"):
             try:
                 data = payload.get('data')
                 reference = data.get('reference')
+                # A failed or reversed transfer returns both the money and the
+                # fee to our balance, so the fee row must not linger and
+                # depress reported revenue.
+                self._drop_payout_fee_record(reference)
                 transaction = WalletTransaction.objects.filter(id=reference, transaction_type='withdrawal').first()
                 if transaction:
                     transaction.status = 'failed'

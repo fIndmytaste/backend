@@ -23,6 +23,7 @@ from helpers.flutterwave import FlutterwaveManager
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 from helpers.backblaze import upload_to_backblaze
+from wallet.models import Wallet, WalletTransaction
 from django.db import transaction
 import logging,time
 
@@ -879,14 +880,46 @@ class AccountWithdrawalInitiate(generics.GenericAPIView):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        
-        klass = PaystackManager()
-        return klass.make_withdrawal(
-            request,
-            serializer.validated_data['amount'],
+        user = request.user
+        if Rider.objects.filter(user=user, is_in_house_rider=True).exists():
+            return bad_request_response(
+                message='Marketplace riders are paid by salary and cannot request wallet withdrawals.'
+            )
 
+        amount = serializer.validated_data['amount']
+
+        try:
+            wallet = Wallet.objects.get(user=user)
+        except Wallet.DoesNotExist:
+            return bad_request_response(message="Wallet not found for this user.")
+
+        if wallet.balance < amount:
+            return bad_request_response(message="Insufficient funds in wallet.")
+
+        vendor = Vendor.objects.filter(user=user).first()
+
+        # Create a wallet transaction and hold the funds so the balance
+        # reflects the pending withdrawal immediately.
+        withdrawal_transaction = WalletTransaction.objects.create(
+            wallet=wallet,
+            user=user,
+            amount=amount,
+            transaction_type='withdrawal',
+            status='pending',
+            description='Withdrawal from wallet'
         )
-    
+        wallet.withdraw(amount)
+
+        klass = PaystackManager()
+        response = klass.make_withdrawal(request, vendor, amount, withdrawal_transaction)
+        if response.status_code >= 400:
+            # Transfer could not be initiated — release the held funds.
+            withdrawal_transaction.status = 'failed'
+            withdrawal_transaction.save()
+            wallet.deposit(amount)
+        return response
+
+
 
 
 class RegisterFCMTokenView(generics.CreateAPIView):

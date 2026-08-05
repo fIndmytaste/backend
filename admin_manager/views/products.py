@@ -20,6 +20,7 @@ from drf_yasg import openapi
 from product.promo_models import PromoUsage
 from product.serializers import AdminOrderListSerializer, AdminPromoOrderSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
+from wallet.models import PaystackFeeRecord
 
 
 def _is_uuid(value):
@@ -406,6 +407,39 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             vendor_service_charges + delivery_service_fees + marketplace_delivery_fees
         )
 
+        # ── Paystack fees ───────────────────────────────────────────────────
+        # Everything above is money we *billed*. Paystack takes a cut of every
+        # naira that moves: a processing fee on collections (deducted before
+        # settlement) and a transfer fee on payouts (debited from our balance).
+        # Neither is visible on Order, so platform_earnings overstates what we
+        # actually keep. Fees are windowed on when Paystack processed them.
+        fee_window = {}
+        if start_date:
+            fee_window['paid_at__gte'] = start_date
+        if end_date:
+            fee_window['paid_at__lt'] = end_date
+        fee_records = PaystackFeeRecord.objects.filter(**fee_window)
+
+        # `estimated_*` is scoped to the same two directions that make up the
+        # total, so the reported/estimated split always adds back up.
+        billable = Q(direction__in=['collection', 'payout'])
+        fee_agg = fee_records.aggregate(
+            collection_fees=Sum('fee_amount', filter=Q(direction='collection')),
+            payout_fees=Sum('fee_amount', filter=Q(direction='payout')),
+            gross_collected=Sum('gross_amount', filter=Q(direction='collection')),
+            net_settled=Sum('net_amount', filter=Q(direction='collection')),
+            estimated_fees=Sum('fee_amount', filter=billable & Q(is_estimated=True)),
+            movements=Count('id', filter=billable),
+            estimated_movements=Count('id', filter=billable & Q(is_estimated=True)),
+        )
+        collection_fees = Decimal(str(fee_agg['collection_fees'] or 0))
+        payout_fees = Decimal(str(fee_agg['payout_fees'] or 0))
+        estimated_fees = Decimal(str(fee_agg['estimated_fees'] or 0))
+        total_paystack_fees = collection_fees + payout_fees
+
+        # What the platform actually keeps once Paystack has been paid.
+        net_platform_revenue = Decimal(str(platform_earnings)) - total_paystack_fees
+
         # ── Previous period for growth indicators ───────────────────────────
         if prev_start and start_date:
             prev_orders = Order.objects.filter(
@@ -465,6 +499,28 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                         "marketplace_delivery_fees": {"value": float(marketplace_delivery_fees)},
                     },
                 },
+                # What Paystack took out of the money that moved this period.
+                "paystack_fees": {
+                    "value": float(total_paystack_fees),
+                    "breakdown": {
+                        "collection_fees": {"value": float(collection_fees)},
+                        "payout_fees": {"value": float(payout_fees)},
+                    },
+                    "gross_collected": {"value": float(fee_agg['gross_collected'] or 0)},
+                    "net_settled": {"value": float(fee_agg['net_settled'] or 0)},
+                    # How much of the figure above is Paystack-reported vs.
+                    # derived from our fee schedule. Run
+                    # `sync_paystack_fees` to replace estimates with actuals.
+                    "confidence": {
+                        "estimated_amount": float(estimated_fees),
+                        "reported_amount": float(total_paystack_fees - estimated_fees),
+                        "movements": fee_agg['movements'] or 0,
+                        "estimated_movements": fee_agg['estimated_movements'] or 0,
+                    },
+                },
+                # Platform earnings after Paystack has been paid — the number
+                # that actually reaches the bank.
+                "net_platform_revenue": {"value": float(net_platform_revenue)},
             },
             "user_metrics": {
                 "total_users": {"value": total_users},

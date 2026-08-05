@@ -22,6 +22,11 @@ from admin_manager.views.announcements import (
     admin_publish_announcement
 )
 from admin_manager.views.notifications import AdminBulkPushNotificationView
+from admin_manager.views.paystack_fees import (
+    AdminPaystackFeeAnalyticsView,
+    AdminPaystackFeeTransactionListView,
+    AdminPaystackFeeSyncView,
+)
 from admin_manager.views.product_creation_lock import (
     AdminCategoryProductLockSettingView,
     AdminVendorGrantProductCreationView,
@@ -146,6 +151,14 @@ urlpatterns = [
     path('analytics/user-locations/', AdminUserLocationAnalyticsView.as_view(), name='analytics-user-locations'),
     path('analytics/order-heatmap/', AdminOrderHeatmapView.as_view(), name='analytics-order-heatmap'),
     path('analytics/vendor-coverage-gaps/', AdminVendorCoverageGapView.as_view(), name='analytics-vendor-coverage-gaps'),
+
+    # Paystack fees → what the payment processor takes, and platform revenue net of it
+    # GET  /admin-manager/analytics/paystack-fees/              → totals, channels, daily series
+    # GET  /admin-manager/analytics/paystack-fees/transactions/ → line-by-line fee ledger
+    # POST /admin-manager/analytics/paystack-fees/sync/         → reconcile with Paystack's ledger
+    path('analytics/paystack-fees/', AdminPaystackFeeAnalyticsView.as_view(), name='analytics-paystack-fees'),
+    path('analytics/paystack-fees/transactions/', AdminPaystackFeeTransactionListView.as_view(), name='analytics-paystack-fee-transactions'),
+    path('analytics/paystack-fees/sync/', AdminPaystackFeeSyncView.as_view(), name='analytics-paystack-fees-sync'),
 
     # Notifications
     path('notifications/bulk-push/', AdminBulkPushNotificationView.as_view(), name='admin-bulk-push'),

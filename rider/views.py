@@ -23,6 +23,7 @@ from django.utils.dateparse import parse_date
 from datetime import timedelta
 from account.models import Guarantor, Notification, Rider, RiderRating, User, MODE_OF_TRANSPORTATION
 from helpers.paystack import PaystackManager
+from helpers.paystack_fees import record_collection_fee
 from helpers.response.response_format import success_response, bad_request_response, internal_server_error_response, paginate_success_response_with_serializer
 from product.models import DeliveryTracking, Order, DeclinedOrder, PlatformSettings
 from wallet.models import Wallet, WalletTransaction
@@ -432,6 +433,16 @@ class ConfirmOrderPaymentAPIView(generics.GenericAPIView):
                     trx_extist.description = 'Order Payment'
                     trx_extist.save()
 
+                    # The verify response carries Paystack's actual `fees` for
+                    # this charge — capture it so platform revenue can be shown
+                    # net of what Paystack kept.
+                    record_collection_fee(
+                        response,
+                        wallet_transaction=trx_extist,
+                        order=order,
+                        source='verify',
+                    )
+
                     # send websocket notification to buyer
                     try:
                         channel_layer = get_channel_layer()
@@ -551,6 +562,13 @@ class OrderPaymentWebhookView(generics.GenericAPIView):
                 trx_extist.response_data = data
                 trx_extist.description = 'Order Payment'
                 trx_extist.save()
+
+                record_collection_fee(
+                    data,
+                    wallet_transaction=trx_extist,
+                    order=order,
+                    source='webhook',
+                )
                 return success_response(
                     message="Transaction processed successfully"
                 )
