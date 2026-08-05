@@ -2,6 +2,36 @@
 
 This document explains how the platform tracks what Paystack charges, and how that turns "platform earnings" into a number that matches the bank.
 
+## First: Paystack money is not your revenue
+
+This is the most important thing on the page, because getting it wrong overstates the business by an order of magnitude.
+
+When a customer pays ₦10,000 for an order, Paystack settles roughly ₦9,750 into the company bank account. **That ₦9,750 is not revenue.** Almost all of it is other people's money that you are holding briefly:
+
+```
+₦10,000   customer pays
+ −  ₦250  Paystack collection fee
+ ────────
+  ₦9,750  settled into your bank        ← float, not revenue
+ −₦7,500  owed to the vendor            (vendor_amount)
+ −₦1,200  owed to the rider             (rider_earning)
+ ────────
+  ₦1,050  platform earnings             ← revenue
+ −  ₦250  Paystack collection fee
+ −  ₦25   Paystack payout fee (to pay the vendor/rider out)
+ ────────
+   ₦775   net platform revenue          ← what you actually keep
+```
+
+So:
+
+- **Paystack balance / settlements** = gross float. Mostly a liability — you owe it onward. Never report this as revenue.
+- **Platform earnings** = your commission slice: `platform_amount` + `service_fee` + marketplace delivery fees. This is **revenue**.
+- **Net platform revenue** = platform earnings − Paystack fees. This is revenue after payment processing costs.
+- **Profit** = net platform revenue − your other costs: in-house rider salaries, staff, infrastructure, marketing, support. Those live outside this system, so **nothing here is profit** — the dashboard reports revenue, and you subtract operating costs to get profit.
+
+A useful sanity check: if "net platform revenue" ever approaches the settlement total, something is wrong — the two should differ by roughly the vendor and rider share.
+
 ## The problem this solves
 
 Every naira that moves through Paystack pays a toll:
@@ -95,11 +125,31 @@ Every recorder is best-effort and swallows its own errors: **a fee-capture failu
 GET  /admin-manager/analytics/paystack-fees/
 GET  /admin-manager/analytics/paystack-fees/transactions/
 POST /admin-manager/analytics/paystack-fees/sync/
+GET  /admin-manager/analytics/paystack-settlements/
 ```
 
 The first returns headline totals, the **effective collection rate** (what share of everything customers paid ends up with Paystack — the single number to watch month over month), a per-channel breakdown showing which payment method costs most, a daily series for charting, and the costliest individual movements.
 
-All three accept `period=day|week|month|year` or `start_date`/`end_date`.
+`sync/` accepts `{"source": "transactions" | "ledger" | "both"}` (default `both`): `transactions` pulls collection fees from Paystack's Transaction List, `ledger` corrects payout estimates from the balance ledger.
+
+`paystack-settlements/` reads live from Paystack and shows what actually reached the bank account. Remember it is float, not revenue — see the top of this document.
+
+All accept `period=day|week|month|year` or `start_date`/`end_date`.
+
+## Which Paystack endpoint tells you what
+
+| Endpoint | Reports fees? | Use for |
+|---|---|---|
+| `GET /transaction` (List) | **Yes** — `fees` per transaction, in kobo | Authoritative collection fees; complete history; immune to missed webhooks |
+| `GET /transaction/verify/:ref` | **Yes** — `fees` | Per-payment capture at confirmation time |
+| `GET /balance/ledger` | **Yes** — on *every* movement, including transfers | The only source of real payout fees |
+| `GET /settlement` | No fee field | What actually hit the bank (already net of fees) |
+| `GET /transaction/totals` | **No** — only `total_transactions`, `total_volume`, `pending_transfers` | Volume sanity checks only. It cannot tell you fees |
+| `GET /transfer` | Rarely | Payout status; fees must come from the ledger |
+
+The practical consequence: **never compute fees from `transaction/totals`** — it has no fee field. Collections come from the Transaction API, payouts from the balance ledger.
+
+Paystack's own guidance is not to hardcode fee percentages or caps, but to read the fee from the transaction response. That is exactly what this system does — the fee schedule in `DEFAULT_FEE_SCHEDULE` is a clearly-flagged fallback, never the primary path.
 
 ## Windowing
 
@@ -113,19 +163,27 @@ Fees are windowed on `paid_at` (when Paystack processed the movement); platform 
 python manage.py migrate wallet
 ```
 
-**2. Backfill history.** Fee capture only records from the moment it ships, which would leave every past order looking fee-free. But the raw Paystack payloads are already stored in `WalletTransaction.response_data` — this replays them:
+**2. Import history from Paystack.** This is the one that matters, and it should be run before the others. It walks Paystack's Transaction List API and records the reported fee on every successful charge — including payments whose webhook never arrived and anything predating fee capture. No estimates:
 
 ```bash
-python manage.py backfill_paystack_fees --dry-run
+python manage.py import_paystack_transactions --dry-run
 ```
+
+```bash
+python manage.py import_paystack_transactions --since 2025-01-01
+```
+
+The output reports an `unlinked` count: transactions whose fee was recorded but which couldn't be matched to one of our orders. A few are normal (test charges, dashboard payments). A lot suggests reference drift worth investigating.
+
+**3. Backfill from stored payloads (optional).** Replays the Paystack payloads already in `WalletTransaction.response_data`. Largely redundant once step 2 has run, but it also covers payouts and can fill in orders the Transaction API window missed:
 
 ```bash
 python manage.py backfill_paystack_fees --estimate-missing
 ```
 
-`--estimate-missing` additionally covers paid orders with no stored payload by applying the fee schedule, flagged as estimates.
+`--estimate-missing` covers paid orders with no stored payload by applying the fee schedule, flagged as estimates.
 
-**3. Reconcile with Paystack's actuals:**
+**4. Reconcile with Paystack's actuals:**
 
 ```bash
 python manage.py sync_paystack_fees

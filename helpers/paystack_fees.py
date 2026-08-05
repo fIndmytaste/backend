@@ -334,6 +334,91 @@ def record_payout_fee(payload, *, wallet_transaction=None, user=None,
 
 
 # ---------------------------------------------------------------------------
+# Import from Paystack's Transaction List API
+# ---------------------------------------------------------------------------
+
+def _link_collection_to_platform(data):
+    """
+    Work out which of our records a Paystack transaction belongs to.
+
+    Paystack's reference is stored on `WalletTransaction.external_reference`,
+    and our own transaction id is echoed back in the charge metadata as
+    `reference` — either route gets us to the order. Returns
+    (wallet_transaction, order, user), any of which may be None: a fee is
+    worth recording even when we can't attribute it.
+    """
+    from wallet.models import WalletTransaction
+
+    txn = None
+    reference = data.get('reference')
+    if reference:
+        txn = WalletTransaction.objects.filter(
+            external_reference=reference).select_related('order', 'user', 'wallet').first()
+
+    if txn is None:
+        metadata = data.get('metadata')
+        if isinstance(metadata, dict):
+            our_id = metadata.get('reference')
+            if our_id:
+                txn = WalletTransaction.objects.filter(
+                    id=our_id).select_related('order', 'user', 'wallet').first()
+
+    if txn is None:
+        return None, None, None
+
+    user = txn.user or (txn.wallet.user if txn.wallet_id else None)
+    return txn, txn.order, user
+
+
+def import_fees_from_transactions_api(start_date=None, end_date=None,
+                                      per_page=100, max_pages=50,
+                                      dry_run=False):
+    """
+    Walk Paystack's Transaction List and record the fee on every successful
+    charge.
+
+    Unlike replaying our stored webhook payloads, this cannot have gaps —
+    it reads Paystack's own record of what happened. Use it to backfill
+    history and to catch anything a missed webhook would have lost.
+
+    Returns {'scanned': n, 'recorded': n, 'unlinked': n, 'pages': n}.
+    """
+    from helpers.paystack import PaystackManager
+
+    stats = {'scanned': 0, 'recorded': 0, 'unlinked': 0, 'pages': 0}
+    manager = PaystackManager()
+
+    for page in range(1, max_pages + 1):
+        ok, transactions = manager.list_transactions(
+            page=page, per_page=per_page,
+            start_date=start_date, end_date=end_date, status='success',
+        )
+        if not ok or not transactions:
+            break
+        stats['pages'] += 1
+
+        for data in transactions:
+            stats['scanned'] += 1
+            parsed = read_collection(data)
+            if not parsed or not parsed.get('reference'):
+                continue
+
+            txn, order, user = _link_collection_to_platform(data)
+            if txn is None:
+                stats['unlinked'] += 1
+
+            if not dry_run:
+                _record('collection', parsed, wallet_transaction=txn,
+                        order=order, user=user, source='verify', payload=data)
+            stats['recorded'] += 1
+
+        if len(transactions) < per_page:
+            break
+
+    return stats
+
+
+# ---------------------------------------------------------------------------
 # Reconciliation against Paystack's balance ledger
 # ---------------------------------------------------------------------------
 

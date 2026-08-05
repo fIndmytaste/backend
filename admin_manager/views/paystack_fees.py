@@ -377,22 +377,115 @@ class AdminPaystackFeeSyncView(generics.GenericAPIView):
         responses={200: 'Sync result', 401: 'Unauthorized'},
     )
     def post(self, request):
-        from helpers.paystack_fees import sync_payout_fees_from_ledger
+        from helpers.paystack_fees import (
+            import_fees_from_transactions_api,
+            sync_payout_fees_from_ledger,
+        )
 
         start_date = request.data.get('start_date') or None
         end_date = request.data.get('end_date') or None
+        # 'ledger' fixes payout estimates; 'transactions' pulls collection fees
+        # straight from Paystack (catching anything our webhooks missed).
+        source = (request.data.get('source') or 'both').lower()
+        if source not in ('ledger', 'transactions', 'both'):
+            return bad_request_response(
+                message="source must be one of: ledger, transactions, both.")
+
+        result = {}
         try:
-            stats = sync_payout_fees_from_ledger(
-                start_date=start_date, end_date=end_date)
+            if source in ('transactions', 'both'):
+                result['transactions'] = import_fees_from_transactions_api(
+                    start_date=start_date, end_date=end_date)
+            if source in ('ledger', 'both'):
+                result['ledger'] = sync_payout_fees_from_ledger(
+                    start_date=start_date, end_date=end_date)
         except Exception as e:
             print(f"[AdminPaystackFeeSyncView] Error: {e}")
-            return bad_request_response(
-                message="Could not reach the Paystack balance ledger.")
+            return bad_request_response(message="Could not reach the Paystack API.")
+
+        parts = []
+        if 'transactions' in result:
+            parts.append(
+                f"{result['transactions']['recorded']} collection fees imported "
+                f"from {result['transactions']['scanned']} transactions")
+        if 'ledger' in result:
+            parts.append(
+                f"{result['ledger']['updated']} fees corrected and "
+                f"{result['ledger']['created']} added from the balance ledger")
 
         return success_response(
-            message=(
-                f"Reconciled {stats['scanned']} ledger entries — "
-                f"{stats['updated']} corrected, {stats['created']} added."
-            ),
-            data=stats,
+            message="Reconciled with Paystack — " + "; ".join(parts) + ".",
+            data=result,
         )
+
+
+class AdminPaystackSettlementView(generics.GenericAPIView):
+    """
+    GET /admin-manager/analytics/paystack-settlements/
+
+    The payouts Paystack actually made into the company bank account.
+
+    This is the reality check on every other number: settlements are gross
+    collections minus fees minus refunds and chargebacks, so they are the only
+    figure that represents money that genuinely arrived. Read live from
+    Paystack — nothing here is stored.
+
+    Note this is *not* platform revenue. A settlement is mostly money held on
+    behalf of vendors and riders, which then flows out as payouts. Platform
+    revenue is the commission slice, reported by the endpoints above.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Paystack settlements (money that reached the bank)",
+        manual_parameters=[
+            openapi.Parameter('start_date', openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                              description='YYYY-MM-DD'),
+            openapi.Parameter('end_date', openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                              description='YYYY-MM-DD'),
+            openapi.Parameter('status', openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                              enum=['success', 'processing', 'pending', 'failed']),
+        ],
+        responses={200: 'Settlements', 401: 'Unauthorized'},
+    )
+    def get(self, request):
+        from helpers.paystack import PaystackManager
+
+        start, end, _period = resolve_window(request)
+        ok, settlements = PaystackManager().settlements(
+            start_date=start.date().isoformat() if start else None,
+            end_date=end.date().isoformat() if end else None,
+            status=request.GET.get('status') or None,
+        )
+        if not ok:
+            return bad_request_response(
+                message="Could not fetch settlements from Paystack.")
+
+        rows = []
+        total = Decimal('0')
+        for entry in settlements:
+            # Paystack reports settlement amounts in kobo.
+            amount = Decimal(str(entry.get('amount') or 0)) / Decimal('100')
+            total += amount
+            rows.append({
+                'id': entry.get('id'),
+                'amount': float(amount),
+                'currency': entry.get('currency') or 'NGN',
+                'status': entry.get('status'),
+                'settled_by': entry.get('settled_by'),
+                'settlement_date': entry.get('settlement_date'),
+                'created_at': entry.get('createdAt') or entry.get('created_at'),
+            })
+
+        return success_response(data={
+            'summary': {
+                'settlement_count': len(rows),
+                'total_settled': float(total),
+                'note': (
+                    'Money Paystack paid into the company bank account. This is '
+                    'gross float, not revenue — most of it is owed onward to '
+                    'vendors and riders.'
+                ),
+            },
+            'settlements': rows,
+        })

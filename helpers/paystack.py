@@ -297,6 +297,78 @@ class PaystackManager:
         return False, error
 
 
+    def list_transactions(self, page=1, per_page=100, start_date=None,
+                          end_date=None, status='success'):
+        """
+        Paystack's Transaction List — every transaction on the integration,
+        each carrying its own `fees` (in kobo).
+
+        This is the authoritative source for collection fees and, unlike our
+        webhooks, it cannot have missed anything: a webhook that never arrived,
+        a payment taken on the Paystack dashboard, a retried charge — they are
+        all here. It is what makes a true backfill possible.
+
+        Returns (success: bool, transactions: list | error message).
+        """
+        params = {'perPage': per_page, 'page': page}
+        if status:
+            params['status'] = status
+        if start_date:
+            params['from'] = start_date
+        if end_date:
+            params['to'] = end_date
+        try:
+            response = requests.get(
+                f'{self.base_url}/transaction',
+                headers=self.get_header(),
+                params=params,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            logger.error("Paystack transaction list request failed: %s", exc)
+            return False, str(exc)
+
+        if response.ok:
+            return True, response.json().get('data') or []
+        error = _paystack_error(response, 'Could not list transactions')
+        logger.error("Paystack transaction list error (%s): %s", response.status_code, error)
+        return False, error
+
+
+    def settlements(self, page=1, per_page=50, start_date=None, end_date=None,
+                    status=None):
+        """
+        Paystack's Settlements — the payouts Paystack made into our bank
+        account. This is the only figure that represents money that genuinely
+        arrived: gross collections minus fees minus refunds/chargebacks.
+
+        Returns (success: bool, settlements: list | error message).
+        """
+        params = {'perPage': per_page, 'page': page}
+        if status:
+            params['status'] = status
+        if start_date:
+            params['from'] = start_date
+        if end_date:
+            params['to'] = end_date
+        try:
+            response = requests.get(
+                f'{self.base_url}/settlement',
+                headers=self.get_header(),
+                params=params,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            logger.error("Paystack settlement request failed: %s", exc)
+            return False, str(exc)
+
+        if response.ok:
+            return True, response.json().get('data') or []
+        error = _paystack_error(response, 'Could not fetch settlements')
+        logger.error("Paystack settlement error (%s): %s", response.status_code, error)
+        return False, error
+
+
     @staticmethod
     def _drop_payout_fee_record(reference):
         """Remove a payout fee row after Paystack gave the money back."""

@@ -26,6 +26,7 @@ from admin_manager.views.paystack_fees import (
     AdminPaystackFeeAnalyticsView,
     AdminPaystackFeeTransactionListView,
     AdminPaystackFeeSyncView,
+    AdminPaystackSettlementView,
 )
 from admin_manager.views.product_creation_lock import (
     AdminCategoryProductLockSettingView,
@@ -159,6 +160,8 @@ urlpatterns = [
     path('analytics/paystack-fees/', AdminPaystackFeeAnalyticsView.as_view(), name='analytics-paystack-fees'),
     path('analytics/paystack-fees/transactions/', AdminPaystackFeeTransactionListView.as_view(), name='analytics-paystack-fee-transactions'),
     path('analytics/paystack-fees/sync/', AdminPaystackFeeSyncView.as_view(), name='analytics-paystack-fees-sync'),
+    # GET /admin-manager/analytics/paystack-settlements/ → what actually hit the bank
+    path('analytics/paystack-settlements/', AdminPaystackSettlementView.as_view(), name='analytics-paystack-settlements'),
 
     # Notifications
     path('notifications/bulk-push/', AdminBulkPushNotificationView.as_view(), name='admin-bulk-push'),
