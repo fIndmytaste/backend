@@ -20,7 +20,7 @@ from drf_yasg import openapi
 from product.promo_models import PromoUsage
 from product.serializers import AdminOrderListSerializer, AdminPromoOrderSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
-from wallet.models import PaystackFeeRecord
+from wallet.models import PaystackFeeRecord, WalletTransaction
 
 
 def _is_uuid(value):
@@ -343,7 +343,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             vendor_service_charges=Sum('platform_amount'),
         )
         total_earnings = revenue_agg['total_earnings'] or 0
-        vendor_payouts = revenue_agg['vendor_payouts'] or 0
+        vendor_earnings = revenue_agg['vendor_payouts'] or 0
         vendor_service_charges = revenue_agg['vendor_service_charges'] or 0
 
         # Only independent riders receive per-delivery earnings. Marketplace
@@ -354,9 +354,41 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             rider__isnull=False,
             rider__is_in_house_rider=False,
         )
-        rider_payouts = independent_rider_orders.aggregate(
+        rider_earnings = independent_rider_orders.aggregate(
             total=Sum('rider_earning'),
         )['total'] or 0
+
+        # "Payout" means money that actually left through a completed wallet
+        # withdrawal, not the amount an order says a vendor/rider has earned.
+        # Use updated_at for completed rows because transfer.success changes the
+        # transaction then; created_at can be days earlier for a queued payout.
+        vendor_user_ids = Vendor.objects.values_list('user_id', flat=True)
+        rider_user_ids = Rider.objects.values_list('user_id', flat=True)
+        withdrawal_recipient = (
+            Q(user_id__in=vendor_user_ids)
+            | Q(user__isnull=True, wallet__user_id__in=vendor_user_ids)
+            | Q(user_id__in=rider_user_ids)
+            | Q(user__isnull=True, wallet__user_id__in=rider_user_ids)
+        )
+        withdrawals = WalletTransaction.objects.filter(
+            withdrawal_recipient,
+            transaction_type='withdrawal',
+        )
+        completed_withdrawals = withdrawals.filter(
+            status='completed', **window_filter('updated_at'))
+        pending_withdrawals = withdrawals.filter(
+            status='pending', **window_filter('created_at'))
+
+        def payout_total(queryset, user_ids):
+            return queryset.filter(
+                Q(user_id__in=user_ids)
+                | Q(user__isnull=True, wallet__user_id__in=user_ids)
+            ).aggregate(total=Sum('amount'))['total'] or 0
+
+        vendor_payouts = payout_total(completed_withdrawals, vendor_user_ids)
+        rider_payouts = payout_total(completed_withdrawals, rider_user_ids)
+        pending_vendor_payouts = payout_total(pending_withdrawals, vendor_user_ids)
+        pending_rider_payouts = payout_total(pending_withdrawals, rider_user_ids)
 
         # Platform's margin on delivery is now the SERVICE FEE, not a cut of the
         # rider's pay: the rider receives the delivery fee minus the service fee.
@@ -380,8 +412,27 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             rider_commission_amount__isnull=False,
         ).aggregate(total=Sum('rider_commission_amount'))['total'] or 0
 
+        # The oldest orders predate both snapshots. Reconstruct their historic
+        # delivery margin from the configured legacy commission percentage.
+        unsnapshotted_legacy_delivery = non_marketplace_paid.filter(
+            Q(service_fee__isnull=True) | Q(service_fee=0),
+            Q(status='delivered') | Q(delivery_status='delivered'),
+            rider_commission_amount__isnull=True,
+            rider_commission_percentage_applied__isnull=True,
+        ).aggregate(total=Sum('delivery_fee'))['total'] or 0
+        legacy_percentage = Decimal(str(
+            PlatformSettings.get_settings().rider_commission_percentage or 0
+        ))
+        derived_legacy_delivery_margin = (
+            Decimal(str(unsnapshotted_legacy_delivery))
+            * legacy_percentage
+            / Decimal('100')
+        )
+
         delivery_service_fees = (
-            Decimal(str(delivery_service_fees)) + Decimal(str(legacy_delivery_margin))
+            Decimal(str(delivery_service_fees))
+            + Decimal(str(legacy_delivery_margin))
+            + derived_legacy_delivery_margin
         )
 
         # New orders snapshot marketplace delivery revenue on the order. For
@@ -428,6 +479,8 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             payout_fees=Sum('fee_amount', filter=Q(direction='payout')),
             gross_collected=Sum('gross_amount', filter=Q(direction='collection')),
             net_settled=Sum('net_amount', filter=Q(direction='collection')),
+            gross_paid_out=Sum('gross_amount', filter=Q(direction='payout')),
+            total_debited_for_payouts=Sum('net_amount', filter=Q(direction='payout')),
             estimated_fees=Sum('fee_amount', filter=billable & Q(is_estimated=True)),
             movements=Count('id', filter=billable),
             estimated_movements=Count('id', filter=billable & Q(is_estimated=True)),
@@ -487,6 +540,17 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                 "total_earnings": {"value": float(total_earnings), "growth": earnings_growth},
                 "vendor_payouts": {"value": float(vendor_payouts)},
                 "rider_payouts": {"value": float(rider_payouts)},
+                "pending_payouts": {
+                    "value": float(pending_vendor_payouts + pending_rider_payouts),
+                    "breakdown": {
+                        "vendors": {"value": float(pending_vendor_payouts)},
+                        "riders": {"value": float(pending_rider_payouts)},
+                    },
+                },
+                "earned_but_not_necessarily_paid": {
+                    "vendors": {"value": float(vendor_earnings)},
+                    "riders": {"value": float(rider_earnings)},
+                },
                 "platform_earnings": {
                     "value": float(platform_earnings),
                     "breakdown": {
@@ -508,6 +572,10 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                     },
                     "gross_collected": {"value": float(fee_agg['gross_collected'] or 0)},
                     "net_settled": {"value": float(fee_agg['net_settled'] or 0)},
+                    "gross_paid_out": {"value": float(fee_agg['gross_paid_out'] or 0)},
+                    "total_debited_for_payouts": {
+                        "value": float(fee_agg['total_debited_for_payouts'] or 0)
+                    },
                     # How much of the figure above is Paystack-reported vs.
                     # derived from our fee schedule. Run
                     # `sync_paystack_fees` to replace estimates with actuals.

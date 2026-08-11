@@ -1,4 +1,5 @@
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from account.models import Rider, User, Vendor
@@ -15,6 +16,7 @@ from product.models import (
     SystemCategory,
 )
 from vendor.models import MarketPlace
+from wallet.models import PaystackFeeRecord, Wallet, WalletTransaction
 
 
 class AdminDashboardOverviewTests(APITestCase):
@@ -145,7 +147,11 @@ class AdminDashboardOverviewTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         summary = response.data['data']['revenue_summary']
         platform = summary['platform_earnings']
-        self.assertEqual(summary['rider_payouts']['value'], 900.0)
+        self.assertEqual(summary['rider_payouts']['value'], 0.0)
+        self.assertEqual(
+            summary['earned_but_not_necessarily_paid']['riders']['value'],
+            900.0,
+        )
         self.assertEqual(
             platform['breakdown']['vendor_service_charges']['value'],
             375.0,
@@ -159,6 +165,57 @@ class AdminDashboardOverviewTests(APITestCase):
             400.0,
         )
         self.assertEqual(platform['value'], 875.0)
+
+    def test_payouts_use_completed_paystack_withdrawals_and_show_pending(self):
+        vendor_wallet = Wallet.objects.get(user=self.vendor.user)
+        rider_wallet = Wallet.objects.get(user=self.rider.user)
+        WalletTransaction.objects.create(
+            wallet=vendor_wallet,
+            user=self.vendor.user,
+            amount=700,
+            transaction_type='withdrawal',
+            status='completed',
+        )
+        WalletTransaction.objects.create(
+            wallet=rider_wallet,
+            user=self.rider.user,
+            amount=900,
+            transaction_type='withdrawal',
+            status='completed',
+        )
+        WalletTransaction.objects.create(
+            wallet=rider_wallet,
+            user=self.rider.user,
+            amount=250,
+            transaction_type='withdrawal',
+            status='pending',
+        )
+
+        response = self.client.get(reverse('dashboard-overview'), {'period': 'week'})
+
+        summary = response.data['data']['revenue_summary']
+        self.assertEqual(summary['vendor_payouts']['value'], 700.0)
+        self.assertEqual(summary['rider_payouts']['value'], 900.0)
+        self.assertEqual(summary['pending_payouts']['value'], 250.0)
+        self.assertEqual(
+            summary['pending_payouts']['breakdown']['riders']['value'], 250.0)
+
+    def test_paystack_summary_includes_payout_principal_and_total_debit(self):
+        PaystackFeeRecord.objects.create(
+            direction='payout',
+            reference='overview-payout',
+            gross_amount=1000,
+            fee_amount=25,
+            net_amount=1025,
+            paid_at=timezone.now(),
+        )
+
+        response = self.client.get(reverse('dashboard-overview'), {'period': 'week'})
+
+        paystack = response.data['data']['revenue_summary']['paystack_fees']
+        self.assertEqual(paystack['breakdown']['payout_fees']['value'], 25.0)
+        self.assertEqual(paystack['gross_paid_out']['value'], 1000.0)
+        self.assertEqual(paystack['total_debited_for_payouts']['value'], 1025.0)
 
     def test_revenue_summary_derives_legacy_financial_snapshots(self):
         self.create_order(

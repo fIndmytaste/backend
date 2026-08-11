@@ -379,6 +379,7 @@ class AdminPaystackFeeSyncView(generics.GenericAPIView):
     def post(self, request):
         from helpers.paystack_fees import (
             import_fees_from_transactions_api,
+            import_payouts_from_transfers_api,
             sync_payout_fees_from_ledger,
         )
 
@@ -387,14 +388,17 @@ class AdminPaystackFeeSyncView(generics.GenericAPIView):
         # 'ledger' fixes payout estimates; 'transactions' pulls collection fees
         # straight from Paystack (catching anything our webhooks missed).
         source = (request.data.get('source') or 'both').lower()
-        if source not in ('ledger', 'transactions', 'both'):
+        if source not in ('ledger', 'transactions', 'transfers', 'both'):
             return bad_request_response(
-                message="source must be one of: ledger, transactions, both.")
+                message="source must be one of: ledger, transactions, transfers, both.")
 
         result = {}
         try:
             if source in ('transactions', 'both'):
                 result['transactions'] = import_fees_from_transactions_api(
+                    start_date=start_date, end_date=end_date)
+            if source in ('transfers', 'both'):
+                result['transfers'] = import_payouts_from_transfers_api(
                     start_date=start_date, end_date=end_date)
             if source in ('ledger', 'both'):
                 result['ledger'] = sync_payout_fees_from_ledger(
@@ -412,6 +416,21 @@ class AdminPaystackFeeSyncView(generics.GenericAPIView):
             parts.append(
                 f"{result['ledger']['updated']} fees corrected and "
                 f"{result['ledger']['created']} added from the balance ledger")
+        if 'transfers' in result:
+            parts.append(
+                f"{result['transfers']['recorded']} successful transfers imported "
+                f"and {result['transfers']['completed_withdrawals']} local payouts completed")
+
+        errors = [
+            f"{name}: {stats['error']}"
+            for name, stats in result.items()
+            if stats.get('error')
+        ]
+        if errors and len(errors) == len(result):
+            return bad_request_response(
+                message="Paystack reconciliation failed — " + "; ".join(errors))
+        if errors:
+            parts.append("warnings: " + "; ".join(errors))
 
         return success_response(
             message="Reconciled with Paystack — " + "; ".join(parts) + ".",

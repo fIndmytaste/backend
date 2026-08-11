@@ -206,7 +206,10 @@ class PaystackFeeRecord(models.Model):
             )
         ]
         indexes = [
-            models.Index(fields=['direction', 'paid_at']),
+            models.Index(
+                fields=['direction', 'paid_at'],
+                name='wallet_pays_directi_2a1c3f_idx',
+            ),
         ]
         ordering = ['-paid_at', '-created_at']
 

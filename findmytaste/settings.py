@@ -161,11 +161,11 @@ CSRF_TRUSTED_ORIGINS = [
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'findmytastedb',
-        'USER': 'postgres',
-        'PASSWORD': 'findmytaste-321',
-        'HOST':'findmytaste.cduym4i4w6nw.eu-north-1.rds.amazonaws.com' ,
-        'PORT': os.getenv('POSTGRES_PORT'),
+        'NAME': config('POSTGRES_DB'),
+        'USER': config('POSTGRES_USER'),
+        'PASSWORD': config('POSTGRES_PASSWORD'),
+        'HOST': config('POSTGRES_HOST'),
+        'PORT': config('POSTGRES_PORT', default='5432'),
     }
 }
 # DATABASES = {

@@ -2,6 +2,8 @@ from decimal import Decimal
 import json
 import logging
 import requests
+from django.db.models import Q
+from uuid import UUID
 from findmytaste import settings
 from account.models import User, Vendor, VirtualAccount
 from helpers.paystack_fees import record_collection_fee, record_payout_fee
@@ -34,12 +36,10 @@ class PaystackManager:
 
 
     def get_header(self):
-        header = {
+        return {
             'Authorization': f'Bearer {settings.PAYSTACK_SECRET_KEY}',
             'Content-Type': 'application/json',
         }
-        print(header)
-        return header
 
     
     def resolve_bank_identifier(self, bank_value):
@@ -145,7 +145,15 @@ class PaystackManager:
         # case. Only 'otp' / 'failed' are genuine problems here.
         if transfer_status in ('success', 'pending', 'queued', 'received', 'processing'):
             transaction_obj.response_data = initiate_result
-            transaction_obj.status = 'pending'  # confirmed via transfer.success webhook
+            transaction_obj.external_reference = (
+                (initiate_result.get('data') or {}).get('reference')
+                or str(transaction_obj.id)
+            )
+            # An instant success is already final. Other accepted statuses are
+            # confirmed asynchronously by transfer.success or reconciliation.
+            transaction_obj.status = (
+                'completed' if transfer_status == 'success' else 'pending'
+            )
             transaction_obj.save()
             if transfer_status == 'success':
                 # Instant settlement: no transfer.success webhook is guaranteed
@@ -335,6 +343,32 @@ class PaystackManager:
         return False, error
 
 
+    def list_transfers(self, page=1, per_page=100, start_date=None,
+                       end_date=None):
+        """List transfers made through this Paystack integration."""
+        params = {'perPage': per_page, 'page': page}
+        if start_date:
+            params['from'] = start_date
+        if end_date:
+            params['to'] = end_date
+        try:
+            response = requests.get(
+                f'{self.base_url}/transfer',
+                headers=self.get_header(),
+                params=params,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            logger.error("Paystack transfer list request failed: %s", exc)
+            return False, str(exc)
+
+        if response.ok:
+            return True, response.json().get('data') or []
+        error = _paystack_error(response, 'Could not list transfers')
+        logger.error("Paystack transfer list error (%s): %s", response.status_code, error)
+        return False, error
+
+
     def settlements(self, page=1, per_page=50, start_date=None, end_date=None,
                     status=None):
         """
@@ -380,6 +414,21 @@ class PaystackManager:
                 direction='payout', reference=str(reference)).delete()
         except Exception:
             logger.exception("Could not drop Paystack payout fee for %s", reference)
+
+    @staticmethod
+    def _find_withdrawal(reference):
+        if not reference:
+            return None
+        reference_filter = Q(external_reference=str(reference))
+        try:
+            UUID(str(reference))
+            reference_filter |= Q(id=reference)
+        except (TypeError, ValueError):
+            pass
+        return WalletTransaction.objects.filter(
+            reference_filter,
+            transaction_type='withdrawal',
+        ).first()
 
     
 
@@ -445,9 +494,10 @@ class PaystackManager:
             try:
                 data = payload.get('data')
                 reference = data.get('reference')
-                transaction = WalletTransaction.objects.filter(id=reference, transaction_type='withdrawal').first()
-                if transaction and transaction.status != 'completed':
+                transaction = self._find_withdrawal(reference)
+                if transaction:
                     transaction.status = 'completed'
+                    transaction.external_reference = reference
                     transaction.response_data = payload
                     transaction.save()
                     # Paystack charges a transfer fee on every payout. Its
@@ -471,7 +521,7 @@ class PaystackManager:
                 # fee to our balance, so the fee row must not linger and
                 # depress reported revenue.
                 self._drop_payout_fee_record(reference)
-                transaction = WalletTransaction.objects.filter(id=reference, transaction_type='withdrawal').first()
+                transaction = self._find_withdrawal(reference)
                 if transaction:
                     transaction.status = 'failed'
                     transaction.response_data = payload

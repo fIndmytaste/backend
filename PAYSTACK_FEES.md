@@ -109,6 +109,8 @@ Every recorder is best-effort and swallows its own errors: **a fee-capture failu
   },
   "gross_collected": { "value": 780000.00 },
   "net_settled":     { "value": 768800.00 },
+  "gross_paid_out":  { "value": 250000.00 },
+  "total_debited_for_payouts": { "value": 251250.00 },
   "confidence": {
     "reported_amount":  11200.00,            // Paystack said so
     "estimated_amount":  1250.00,            // we derived it
@@ -130,7 +132,7 @@ GET  /admin-manager/analytics/paystack-settlements/
 
 The first returns headline totals, the **effective collection rate** (what share of everything customers paid ends up with Paystack — the single number to watch month over month), a per-channel breakdown showing which payment method costs most, a daily series for charting, and the costliest individual movements.
 
-`sync/` accepts `{"source": "transactions" | "ledger" | "both"}` (default `both`): `transactions` pulls collection fees from Paystack's Transaction List, `ledger` corrects payout estimates from the balance ledger.
+`sync/` accepts `{"source": "transactions" | "transfers" | "ledger" | "both"}` (default `both`): `transactions` pulls collection fees, `transfers` imports successful payouts and completes matching local withdrawals when a webhook was missed, and `ledger` corrects payout estimates from the balance ledger.
 
 `paystack-settlements/` reads live from Paystack and shows what actually reached the bank account. Remember it is float, not revenue — see the top of this document.
 
@@ -145,7 +147,7 @@ All accept `period=day|week|month|year` or `start_date`/`end_date`.
 | `GET /balance/ledger` | **Yes** — on *every* movement, including transfers | The only source of real payout fees |
 | `GET /settlement` | No fee field | What actually hit the bank (already net of fees) |
 | `GET /transaction/totals` | **No** — only `total_transactions`, `total_volume`, `pending_transfers` | Volume sanity checks only. It cannot tell you fees |
-| `GET /transfer` | Rarely | Payout status; fees must come from the ledger |
+| `GET /transfer` | `fee_charged` when present; otherwise estimated until ledger sync | Payout status, missed-webhook reconciliation, and transfer fees |
 
 The practical consequence: **never compute fees from `transaction/totals`** — it has no fee field. Collections come from the Transaction API, payouts from the balance ledger.
 
@@ -174,6 +176,13 @@ python manage.py import_paystack_transactions --since 2025-01-01
 ```
 
 The output reports an `unlinked` count: transactions whose fee was recorded but which couldn't be matched to one of our orders. A few are normal (test charges, dashboard payments). A lot suggests reference drift worth investigating.
+
+Import successful payouts too. This is what repairs local withdrawals that
+remained pending because a `transfer.success` webhook was missed:
+
+```bash
+python manage.py sync_paystack_transfers --since 2025-01-01
+```
 
 **3. Backfill from stored payloads (optional).** Replays the Paystack payloads already in `WalletTransaction.response_data`. Largely redundant once step 2 has run, but it also covers payouts and can fill in orders the Transaction API window missed:
 

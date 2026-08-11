@@ -385,7 +385,10 @@ def import_fees_from_transactions_api(start_date=None, end_date=None,
     """
     from helpers.paystack import PaystackManager
 
-    stats = {'scanned': 0, 'recorded': 0, 'unlinked': 0, 'pages': 0}
+    stats = {
+        'scanned': 0, 'recorded': 0, 'unlinked': 0, 'pages': 0,
+        'error': None,
+    }
     manager = PaystackManager()
 
     for page in range(1, max_pages + 1):
@@ -393,7 +396,10 @@ def import_fees_from_transactions_api(start_date=None, end_date=None,
             page=page, per_page=per_page,
             start_date=start_date, end_date=end_date, status='success',
         )
-        if not ok or not transactions:
+        if not ok:
+            stats['error'] = str(transactions)
+            break
+        if not transactions:
             break
         stats['pages'] += 1
 
@@ -419,6 +425,111 @@ def import_fees_from_transactions_api(start_date=None, end_date=None,
 
 
 # ---------------------------------------------------------------------------
+# Import completed payouts from Paystack's Transfer List API
+# ---------------------------------------------------------------------------
+
+def _link_payout_to_platform(reference):
+    """Match the reference sent to Paystack back to our withdrawal row."""
+    if not reference:
+        return None
+
+    from uuid import UUID
+
+    from django.db.models import Q
+    from wallet.models import WalletTransaction
+
+    reference_filter = Q(external_reference=str(reference))
+    try:
+        UUID(str(reference))
+        reference_filter |= Q(id=reference)
+    except (TypeError, ValueError):
+        pass
+
+    return (
+        WalletTransaction.objects
+        .filter(
+            reference_filter,
+            transaction_type='withdrawal',
+        )
+        .select_related('user', 'wallet')
+        .first()
+    )
+
+
+def import_payouts_from_transfers_api(start_date=None, end_date=None,
+                                      per_page=100, max_pages=50,
+                                      dry_run=False):
+    """
+    Reconcile successful Paystack transfers with local withdrawals.
+
+    This closes the gap left by a missed transfer.success webhook: the local
+    withdrawal is marked completed and its reported (or estimated, when the
+    list payload omits it) transfer fee is recorded. Transfers initiated
+    outside this application are still captured as unlinked fee movements.
+    """
+    from helpers.paystack import PaystackManager
+
+    stats = {
+        'scanned': 0,
+        'successful': 0,
+        'recorded': 0,
+        'completed_withdrawals': 0,
+        'unlinked': 0,
+        'pages': 0,
+        'error': None,
+    }
+    manager = PaystackManager()
+
+    for page in range(1, max_pages + 1):
+        ok, transfers = manager.list_transfers(
+            page=page,
+            per_page=per_page,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if not ok:
+            stats['error'] = str(transfers)
+            break
+        if not transfers:
+            break
+        stats['pages'] += 1
+
+        for data in transfers:
+            stats['scanned'] += 1
+            if str(data.get('status') or '').lower() != 'success':
+                continue
+
+            parsed = read_payout(data)
+            if not parsed or not parsed.get('reference'):
+                continue
+            stats['successful'] += 1
+
+            txn = _link_payout_to_platform(parsed['reference'])
+            if txn is None:
+                stats['unlinked'] += 1
+            elif txn.status != 'completed':
+                stats['completed_withdrawals'] += 1
+                if not dry_run:
+                    txn.status = 'completed'
+                    txn.external_reference = parsed['reference']
+                    txn.response_data = {'status': True, 'data': data}
+                    txn.save()
+
+            if not dry_run:
+                record_payout_fee(
+                    data,
+                    wallet_transaction=txn,
+                    source='verify',
+                )
+            stats['recorded'] += 1
+
+        if len(transfers) < per_page:
+            break
+
+    return stats
+
+
+# ---------------------------------------------------------------------------
 # Reconciliation against Paystack's balance ledger
 # ---------------------------------------------------------------------------
 
@@ -435,7 +546,7 @@ def sync_payout_fees_from_ledger(start_date=None, end_date=None, page_size=100,
     from helpers.paystack import PaystackManager
     from wallet.models import PaystackFeeRecord
 
-    stats = {'scanned': 0, 'updated': 0, 'created': 0}
+    stats = {'scanned': 0, 'updated': 0, 'created': 0, 'error': None}
     manager = PaystackManager()
 
     for page in range(1, max_pages + 1):
@@ -443,7 +554,10 @@ def sync_payout_fees_from_ledger(start_date=None, end_date=None, page_size=100,
             page=page, per_page=page_size,
             start_date=start_date, end_date=end_date,
         )
-        if not ok or not entries:
+        if not ok:
+            stats['error'] = str(entries)
+            break
+        if not entries:
             break
 
         for entry in entries:
