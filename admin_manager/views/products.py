@@ -339,11 +339,9 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         paid_orders = base_orders.filter(payment_status='paid')
         revenue_agg = paid_orders.aggregate(
             total_earnings=Sum('total_amount'),
-            vendor_payouts=Sum('vendor_amount'),
             vendor_service_charges=Sum('platform_amount'),
         )
         total_earnings = revenue_agg['total_earnings'] or 0
-        vendor_earnings = revenue_agg['vendor_payouts'] or 0
         vendor_service_charges = revenue_agg['vendor_service_charges'] or 0
 
         # Only independent riders receive per-delivery earnings. Marketplace
@@ -354,14 +352,9 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             rider__isnull=False,
             rider__is_in_house_rider=False,
         )
-        rider_earnings = independent_rider_orders.aggregate(
-            total=Sum('rider_earning'),
-        )['total'] or 0
-
-        # "Payout" means money that actually left through a completed wallet
-        # withdrawal, not the amount an order says a vendor/rider has earned.
-        # Use updated_at for completed rows because transfer.success changes the
-        # transaction then; created_at can be days earlier for a queued payout.
+        # The payout cards represent the internal earning ledger: money added
+        # to vendor/rider wallet balances. This is deliberately independent of
+        # whether those users later withdraw through Paystack.
         vendor_user_ids = Vendor.objects.values_list('user_id', flat=True)
         rider_user_ids = Rider.objects.values_list('user_id', flat=True)
         withdrawal_recipient = (
@@ -374,6 +367,12 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             withdrawal_recipient,
             transaction_type='withdrawal',
         )
+        balance_credits = WalletTransaction.objects.filter(
+            withdrawal_recipient,
+            transaction_type='earning',
+            status='completed',
+            **window_filter('created_at'),
+        )
         completed_withdrawals = withdrawals.filter(
             status='completed', **window_filter('updated_at'))
         pending_withdrawals = withdrawals.filter(
@@ -385,8 +384,10 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                 | Q(user__isnull=True, wallet__user_id__in=user_ids)
             ).aggregate(total=Sum('amount'))['total'] or 0
 
-        vendor_payouts = payout_total(completed_withdrawals, vendor_user_ids)
-        rider_payouts = payout_total(completed_withdrawals, rider_user_ids)
+        vendor_balance_credits = payout_total(balance_credits, vendor_user_ids)
+        rider_balance_credits = payout_total(balance_credits, rider_user_ids)
+        completed_vendor_payouts = payout_total(completed_withdrawals, vendor_user_ids)
+        completed_rider_payouts = payout_total(completed_withdrawals, rider_user_ids)
         pending_vendor_payouts = payout_total(pending_withdrawals, vendor_user_ids)
         pending_rider_payouts = payout_total(pending_withdrawals, rider_user_ids)
 
@@ -538,8 +539,14 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
             },
             "revenue_summary": {
                 "total_earnings": {"value": float(total_earnings), "growth": earnings_growth},
-                "vendor_payouts": {"value": float(vendor_payouts)},
-                "rider_payouts": {"value": float(rider_payouts)},
+                # Legacy keys retained for dashboard/client compatibility. In
+                # this API they mean total amounts added to balances.
+                "vendor_payouts": {"value": float(vendor_balance_credits)},
+                "rider_payouts": {"value": float(rider_balance_credits)},
+                "vendor_balance_credits": {"value": float(vendor_balance_credits)},
+                "rider_balance_credits": {"value": float(rider_balance_credits)},
+                "completed_vendor_payouts": {"value": float(completed_vendor_payouts)},
+                "completed_rider_payouts": {"value": float(completed_rider_payouts)},
                 "pending_payouts": {
                     "value": float(pending_vendor_payouts + pending_rider_payouts),
                     "breakdown": {
@@ -548,8 +555,8 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                     },
                 },
                 "earned_but_not_necessarily_paid": {
-                    "vendors": {"value": float(vendor_earnings)},
-                    "riders": {"value": float(rider_earnings)},
+                    "vendors": {"value": float(vendor_balance_credits)},
+                    "riders": {"value": float(rider_balance_credits)},
                 },
                 "platform_earnings": {
                     "value": float(platform_earnings),

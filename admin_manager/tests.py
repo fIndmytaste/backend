@@ -111,8 +111,8 @@ class AdminDashboardOverviewTests(APITestCase):
         return Order.objects.create(**values)
 
     def test_revenue_summary_breaks_down_all_platform_income(self):
-        self.create_order()
-        self.create_order(
+        vendor_order = self.create_order()
+        marketplace_order = self.create_order(
             vendor=self.marketplace_vendor,
             rider=self.in_house_rider,
             vendor_amount=800,
@@ -138,6 +138,33 @@ class AdminDashboardOverviewTests(APITestCase):
             rider_earning=500,
             platform_amount=500,
         )
+        vendor_wallet = Wallet.objects.get(user=self.vendor.user)
+        marketplace_wallet = Wallet.objects.get(user=self.marketplace_vendor.user)
+        rider_wallet = Wallet.objects.get(user=self.rider.user)
+        WalletTransaction.objects.create(
+            wallet=vendor_wallet,
+            user=self.vendor.user,
+            order=vendor_order,
+            amount=700,
+            transaction_type='earning',
+            status='completed',
+        )
+        WalletTransaction.objects.create(
+            wallet=marketplace_wallet,
+            user=self.marketplace_vendor.user,
+            order=marketplace_order,
+            amount=800,
+            transaction_type='earning',
+            status='completed',
+        )
+        WalletTransaction.objects.create(
+            wallet=rider_wallet,
+            user=self.rider.user,
+            order=vendor_order,
+            amount=900,
+            transaction_type='earning',
+            status='completed',
+        )
 
         response = self.client.get(
             reverse('dashboard-overview'),
@@ -147,7 +174,12 @@ class AdminDashboardOverviewTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         summary = response.data['data']['revenue_summary']
         platform = summary['platform_earnings']
-        self.assertEqual(summary['rider_payouts']['value'], 0.0)
+        self.assertEqual(summary['vendor_payouts']['value'], 1500.0)
+        self.assertEqual(summary['rider_payouts']['value'], 900.0)
+        self.assertEqual(summary['vendor_balance_credits']['value'], 1500.0)
+        self.assertEqual(summary['rider_balance_credits']['value'], 900.0)
+        self.assertEqual(summary['completed_vendor_payouts']['value'], 0.0)
+        self.assertEqual(summary['completed_rider_payouts']['value'], 0.0)
         self.assertEqual(
             summary['earned_but_not_necessarily_paid']['riders']['value'],
             900.0,
@@ -166,7 +198,7 @@ class AdminDashboardOverviewTests(APITestCase):
         )
         self.assertEqual(platform['value'], 875.0)
 
-    def test_payouts_use_completed_paystack_withdrawals_and_show_pending(self):
+    def test_balance_credit_totals_are_independent_of_paystack_withdrawals(self):
         vendor_wallet = Wallet.objects.get(user=self.vendor.user)
         rider_wallet = Wallet.objects.get(user=self.rider.user)
         WalletTransaction.objects.create(
@@ -194,8 +226,10 @@ class AdminDashboardOverviewTests(APITestCase):
         response = self.client.get(reverse('dashboard-overview'), {'period': 'week'})
 
         summary = response.data['data']['revenue_summary']
-        self.assertEqual(summary['vendor_payouts']['value'], 700.0)
-        self.assertEqual(summary['rider_payouts']['value'], 900.0)
+        self.assertEqual(summary['vendor_payouts']['value'], 0.0)
+        self.assertEqual(summary['rider_payouts']['value'], 0.0)
+        self.assertEqual(summary['completed_vendor_payouts']['value'], 700.0)
+        self.assertEqual(summary['completed_rider_payouts']['value'], 900.0)
         self.assertEqual(summary['pending_payouts']['value'], 250.0)
         self.assertEqual(
             summary['pending_payouts']['breakdown']['riders']['value'], 250.0)
