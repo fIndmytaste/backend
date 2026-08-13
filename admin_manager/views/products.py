@@ -388,6 +388,14 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         rider_balance_credits = payout_total(balance_credits, rider_user_ids)
         completed_vendor_payouts = payout_total(completed_withdrawals, vendor_user_ids)
         completed_rider_payouts = payout_total(completed_withdrawals, rider_user_ids)
+        completed_vendor_withdrawal_count = completed_withdrawals.filter(
+            Q(user_id__in=vendor_user_ids)
+            | Q(user__isnull=True, wallet__user_id__in=vendor_user_ids)
+        ).count()
+        completed_rider_withdrawal_count = completed_withdrawals.filter(
+            Q(user_id__in=rider_user_ids)
+            | Q(user__isnull=True, wallet__user_id__in=rider_user_ids)
+        ).count()
         pending_vendor_payouts = payout_total(pending_withdrawals, vendor_user_ids)
         pending_rider_payouts = payout_total(pending_withdrawals, rider_user_ids)
 
@@ -547,6 +555,13 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                 "rider_balance_credits": {"value": float(rider_balance_credits)},
                 "completed_vendor_payouts": {"value": float(completed_vendor_payouts)},
                 "completed_rider_payouts": {"value": float(completed_rider_payouts)},
+                "withdrawal_count": {
+                    "value": completed_vendor_withdrawal_count + completed_rider_withdrawal_count,
+                    "breakdown": {
+                        "vendors": {"value": completed_vendor_withdrawal_count},
+                        "riders": {"value": completed_rider_withdrawal_count},
+                    },
+                },
                 "pending_payouts": {
                     "value": float(pending_vendor_payouts + pending_rider_payouts),
                     "breakdown": {

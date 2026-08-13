@@ -230,6 +230,9 @@ class AdminDashboardOverviewTests(APITestCase):
         self.assertEqual(summary['rider_payouts']['value'], 0.0)
         self.assertEqual(summary['completed_vendor_payouts']['value'], 700.0)
         self.assertEqual(summary['completed_rider_payouts']['value'], 900.0)
+        self.assertEqual(summary['withdrawal_count']['value'], 2)
+        self.assertEqual(summary['withdrawal_count']['breakdown']['vendors']['value'], 1)
+        self.assertEqual(summary['withdrawal_count']['breakdown']['riders']['value'], 1)
         self.assertEqual(summary['pending_payouts']['value'], 250.0)
         self.assertEqual(
             summary['pending_payouts']['breakdown']['riders']['value'], 250.0)
