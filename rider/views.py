@@ -1,5 +1,6 @@
 # views.py
 import json
+import logging
 import math
 import random
 from channels.layers import get_channel_layer
@@ -41,6 +42,13 @@ from helpers.push_notification import notification_helper, send_order_payment_su
 from helpers.order_utils import get_distance_between_two_location
 from helpers.referral_logic import process_referral_reward
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
+
+# Rider documents and selfies come straight off a phone camera, where a single
+# still is commonly 5-10MB. The old 5MB ceiling rejected those uploads, so keep
+# enough headroom that a normal photo goes through.
+MAX_RIDER_DOCUMENT_BYTES = 15 * 1024 * 1024
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -2018,10 +2026,16 @@ class UploadRiderDocumentView(generics.GenericAPIView):
             for doc_type, field_name in field_mapping.items():
                 if doc_type in request.FILES:
                     image_file = request.FILES[doc_type]
-                    if image_file.size > 5 * 1024 * 1024:
+                    # Phone cameras routinely produce 5-10MB stills, and the
+                    # old 5MB ceiling silently dropped those uploads — which is
+                    # why riders reached verification with no photo on file.
+                    if image_file.size > MAX_RIDER_DOCUMENT_BYTES:
                         failed_documents.append({
                             'document_type': doc_type,
-                            'reason': 'Image size exceeds 5MB limit'
+                            'reason': (
+                                f'Image is too large ({image_file.size / (1024 * 1024):.1f}MB). '
+                                f'Maximum is {MAX_RIDER_DOCUMENT_BYTES // (1024 * 1024)}MB.'
+                            )
                         })
                         continue
                     try:
@@ -2033,6 +2047,10 @@ class UploadRiderDocumentView(generics.GenericAPIView):
                             upload_result = upload_to_backblaze(image_file, filename)
                             if upload_result and upload_result.get('downloadUrl'):
                                 rider.user.profile_image_url = upload_result['downloadUrl']
+                                # Counted like any other document, otherwise a
+                                # rider who only re-uploads their photo gets a
+                                # 400 back on a request that actually worked.
+                                uploaded_documents.append(doc_type)
                             else:
                                 failed_documents.append({
                                     'document_type': doc_type,
@@ -2042,9 +2060,14 @@ class UploadRiderDocumentView(generics.GenericAPIView):
                             setattr(rider, field_name, image_file)
                             uploaded_documents.append(doc_type)
                     except Exception as e:
+                        # A swallowed traceback here is how a broken storage
+                        # credential looks like "the rider never uploaded one".
+                        logger.exception(
+                            "Rider %s: failed to store %s", rider.id, doc_type,
+                        )
                         failed_documents.append({
                             'document_type': doc_type,
-                            'reason': 'Error processing file'
+                            'reason': f'Error processing file: {e}'
                         })
 
         # Save rider and user

@@ -6,6 +6,7 @@ from account.models import StaffPagePermission, Vendor, VendorRating
 from django.db.models import Q, Sum
 from account.serializers import VendorRatingSerializer
 from admin_manager.serializers.lists import AdminVendorListSerializer
+from admin_manager.staff_visibility import limit_orders_to_visible_window
 from helpers.response.response_format import success_response, paginate_success_response_with_serializer, bad_request_response, internal_server_error_response
 from helpers.date_range import filter_by_date_range, parse_date_range
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
@@ -51,6 +52,19 @@ def _filter_vendors_for_staff_marketplaces(queryset, user):
     if not marketplace_ids:
         return queryset.none()
     return queryset.filter(marketplace__id__in=marketplace_ids).distinct()
+
+
+def _filter_orders_for_staff(queryset, user):
+    """
+    Hold back orders still inside the settlement window for limited staff.
+
+    Vendor statistics are built from the order book, so they have to respect
+    the same 24-hour delay the order lists do — otherwise a staff member could
+    read today's order count off a vendor's profile page.
+    """
+    if not _is_limited_marketplace_staff(user):
+        return queryset
+    return limit_orders_to_visible_window(queryset)
 
 
 
@@ -254,7 +268,9 @@ class AdminVendorOverviewView(generics.GenericAPIView):
                 time_frame = 'all time'
 
             # Get orders for this vendor
-            vendor_orders = Order.objects.filter(vendor=vendor)
+            vendor_orders = _filter_orders_for_staff(
+                Order.objects.filter(vendor=vendor), request.user,
+            )
             if range_start:
                 vendor_orders = vendor_orders.filter(created_at__date__gte=range_start)
             if range_end:

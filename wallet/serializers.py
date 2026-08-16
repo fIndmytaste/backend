@@ -4,6 +4,7 @@ from rest_framework import serializers
 from .models import Wallet, WalletTransaction
 from decimal import Decimal
 from helpers.models import DeliveryConfiguration, ConfigurationManager
+from wallet.settlement import settlement_summary
 
 
 DEFAULT_VENDOR_MINIMUM_WITHDRAWAL = Decimal('30000.00')
@@ -63,6 +64,9 @@ class WalletSerializer(serializers.ModelSerializer):
             bank_account_name=bank_account_name,
         )
         data['minimum_withdrawal_amount'] = str(get_minimum_withdrawal_for_user(instance.user))
+        # Vendors keep seeing the full balance accrue, but only the cleared part
+        # is withdrawable — see wallet.settlement for why.
+        data.update(settlement_summary(instance))
         return data
 
 

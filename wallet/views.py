@@ -2,11 +2,19 @@ from account.models import Rider, User, Vendor
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from helpers.paystack import PaystackManager
 from helpers.response.response_format import internal_server_error_response, success_response, bad_request_response,paginate_success_response_with_serializer
 from wallet.models import Wallet, WalletTransaction
 from wallet.serializers import WalletSerializer, WalletTransactionSerializer, WithdrawalSerializer
+from wallet.settlement import (
+    SETTLEMENT_HOLD_HOURS,
+    held_amount,
+    next_clearance_at,
+    to_amount,
+    withdrawable_balance,
+)
 
 # Create your views here.
 
@@ -141,8 +149,28 @@ class WithdrawalView(generics.GenericAPIView):
             return bad_request_response(message="Wallet not found for this user.")
 
         # Check if sufficient balance
-        if float(wallet.balance) < float(amount):
+        requested = to_amount(amount)
+        if to_amount(wallet.balance) < requested:
             return bad_request_response(message="Insufficient funds in wallet.")
+
+        # Earnings from orders placed in the last 24 hours have not settled at
+        # Paystack yet, so we cannot transfer them out even though they already
+        # show in the vendor's balance.
+        available = withdrawable_balance(wallet)
+        if requested > available:
+            held = held_amount(user)
+            message = (
+                f"Only NGN {available} of your NGN {to_amount(wallet.balance)} balance has cleared. "
+                f"NGN {held} comes from orders placed in the last {SETTLEMENT_HOLD_HOURS} hours "
+                "and cannot be withdrawn yet."
+            )
+            clears_at = next_clearance_at(user)
+            if clears_at:
+                message += (
+                    " The next part of it clears on "
+                    f"{timezone.localtime(clears_at).strftime('%d %b %Y at %I:%M %p')}."
+                )
+            return bad_request_response(message=message)
 
         # Get vendor details
         vendor = Vendor.objects.filter(user=user).first()

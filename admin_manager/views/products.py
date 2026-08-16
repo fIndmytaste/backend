@@ -12,6 +12,10 @@ from helpers.date_range import filter_by_date_range, parse_date_range
 from account.models import Rider, StaffPagePermission, User, Vendor
 from account.serializers import RiderSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
+from admin_manager.staff_visibility import (
+    STAFF_ORDER_VISIBILITY_HOURS,
+    limit_orders_to_visible_window,
+)
 from helpers.response.response_format import paginate_success_response_with_serializer, success_response,bad_request_response
 from product.models import DeliveryZone, Order, PlatformSettings, Product, Rating, SystemCategory
 from drf_yasg.utils import swagger_auto_schema  # Import the decorator
@@ -54,12 +58,26 @@ def _staff_marketplace_ids(user):
 
 
 def _filter_for_staff_marketplaces(queryset, user):
+    """
+    Scope an Order queryset to what a marketplace staff member may see.
+
+    Two rules apply, and only to limited marketplace staff — superusers and
+    full admins are never filtered:
+
+    1. Only orders belonging to the marketplaces they are assigned to.
+    2. Only orders that are already older than STAFF_ORDER_VISIBILITY_HOURS.
+       Paystack settles a collection roughly 24 hours after the customer pays,
+       so an order younger than that is not money we hold yet. Staff still see
+       each order's real placement date and time once it appears, so they can
+       correlate it against the market's own records.
+    """
     marketplace_ids = _staff_marketplace_ids(user)
     if marketplace_ids is None:
         return queryset
     if not marketplace_ids:
         return queryset.none()
-    return queryset.filter(vendor__marketplace__id__in=marketplace_ids).distinct()
+    queryset = queryset.filter(vendor__marketplace__id__in=marketplace_ids)
+    return limit_orders_to_visible_window(queryset).distinct()
 
 
 class AdminSystemCategoryListView(generics.GenericAPIView):

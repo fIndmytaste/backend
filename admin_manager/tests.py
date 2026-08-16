@@ -1,8 +1,16 @@
+from datetime import timedelta
+
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
-from account.models import Rider, User, Vendor
+from account.models import (
+    Rider,
+    StaffMarketplaceAssignment,
+    StaffPagePermission,
+    User,
+    Vendor,
+)
 from product.models import (
     BukaItemServiceCharge,
     BukaVariantServiceCharge,
@@ -348,3 +356,119 @@ class AdminDashboardOverviewTests(APITestCase):
 
         self.assertEqual(float(order.vendor_amount), 1200.0)
         self.assertEqual(float(order.platform_amount), 150.0)
+
+
+class MarketplaceStaffOrderVisibilityTests(APITestCase):
+    """
+    Marketplace staff work a 24-hour-delayed view of the order book, because
+    an order younger than that has not settled at Paystack yet. Superusers are
+    never delayed.
+    """
+
+    def setUp(self):
+        self.category = SystemCategory.objects.create(
+            name='Buka',
+            name_key='buka',
+            description='Food vendors',
+        )
+        self.customer = User.objects.create_user(
+            email='visibility-customer@example.com',
+            password='password',
+        )
+        vendor_user = User.objects.create_user(
+            email='visibility-vendor@example.com',
+            password='password',
+            role='vendor',
+        )
+        self.vendor = Vendor.objects.create(
+            user=vendor_user,
+            name='Marketplace Vendor',
+            email=vendor_user.email,
+            category=self.category,
+            approval_status='approved',
+            is_active=True,
+            is_marketplace=True,
+        )
+        self.marketplace = MarketPlace.objects.create(name='Mile 12')
+        self.marketplace.vendors.add(self.vendor)
+
+        self.staff = User.objects.create_user(
+            email='visibility-staff@example.com',
+            password='password',
+        )
+        self.staff.is_staff = True
+        self.staff.save()
+        StaffPagePermission.objects.create(user=self.staff, page='marketplace-staff')
+        StaffMarketplaceAssignment.objects.create(
+            user=self.staff, marketplace=self.marketplace,
+        )
+
+        self.superadmin = User.objects.create_superuser(
+            email='visibility-admin@example.com',
+            password='password',
+        )
+
+        self.old_order = self.create_order(age_hours=30)
+        self.fresh_order = self.create_order(age_hours=2)
+
+    def create_order(self, age_hours):
+        order = Order.objects.create(
+            user=self.customer,
+            vendor=self.vendor,
+            payment_status='paid',
+            status='pending',
+            total_amount=1000,
+            vendor_amount=700,
+            platform_amount=300,
+        )
+        Order.objects.filter(pk=order.pk).update(
+            created_at=timezone.now() - timedelta(hours=age_hours),
+        )
+        return order
+
+    def listed_order_ids(self):
+        response = self.client.get(reverse('admin-marketplace-vendors-all-orders'))
+        self.assertEqual(response.status_code, 200)
+        return {str(order['id']) for order in response.data['results']}
+
+    def test_staff_only_see_orders_older_than_the_settlement_window(self):
+        self.client.force_authenticate(self.staff)
+
+        listed = self.listed_order_ids()
+
+        self.assertIn(str(self.old_order.id), listed)
+        self.assertNotIn(str(self.fresh_order.id), listed)
+
+    def test_superadmin_sees_every_order_immediately(self):
+        self.client.force_authenticate(self.superadmin)
+
+        listed = self.listed_order_ids()
+
+        self.assertIn(str(self.old_order.id), listed)
+        self.assertIn(str(self.fresh_order.id), listed)
+
+    def test_staff_still_see_the_real_placement_time_of_a_visible_order(self):
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(reverse('admin-marketplace-vendors-all-orders'))
+        listed = {str(order['id']): order for order in response.data['results']}
+
+        self.assertIsNotNone(listed[str(self.old_order.id)]['created_at'])
+
+    def test_staff_cannot_open_an_order_inside_the_window_directly(self):
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(
+            reverse('admin-order-detail', kwargs={'id': self.fresh_order.id}),
+        )
+
+        self.assertIn(response.status_code, (400, 404))
+
+    def test_staff_can_open_an_order_past_the_window(self):
+        self.client.force_authenticate(self.staff)
+
+        response = self.client.get(
+            reverse('admin-order-detail', kwargs={'id': self.old_order.id}),
+        )
+
+        self.assertEqual(response.status_code, 200)

@@ -1,12 +1,73 @@
 from django.contrib import admin
 from django import forms
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.utils.html import format_html
 from .models import (
     FCMToken, PushNotificationLog, ProductCreationGrant, User, Profile, Address, Vendor, VendorRating, Rider, RiderRating,
     VerificationCode, Notification, StaffPagePermission, StaffMarketplaceAssignment
 )
 from .models import Guarantor, Address
 from product.models import BukaItemServiceCharge, Product, ServiceChargeTier
+
+
+# ---------------------------------------------------------------------------
+# Image previews
+#
+# Verification is done by eye: someone has to look at the rider's photo next to
+# the ID they uploaded. Stored as raw values these fields are just a Cloudinary
+# public id or a Backblaze URL in a text box, which tells a reviewer nothing.
+# These helpers render them as actual pictures, linked to the full-size file.
+# ---------------------------------------------------------------------------
+
+def _resolve_image_url(value):
+    """Best-effort URL for a stored image, Cloudinary resource or plain URL."""
+    if not value:
+        return None
+    try:
+        url = getattr(value, 'url', None)
+    except Exception:
+        url = None
+    if url:
+        return url
+    text = str(value).strip()
+    return text or None
+
+
+def _image_preview(value, empty_label='No image uploaded'):
+    url = _resolve_image_url(value)
+    if not url:
+        return format_html('<span style="color:#999;">{}</span>', empty_label)
+    return format_html(
+        '<a href="{0}" target="_blank" rel="noopener">'
+        '<img src="{0}" alt="" '
+        'style="max-height:240px;max-width:340px;border-radius:8px;'
+        'border:1px solid #ddd;object-fit:contain;background:#fafafa;" />'
+        '</a><br><a href="{0}" target="_blank" rel="noopener" '
+        'style="font-size:11px;">Open full size</a>',
+        url,
+    )
+
+
+def _image_thumb(value):
+    url = _resolve_image_url(value)
+    if not url:
+        return format_html('<span style="color:#999;">—</span>')
+    return format_html(
+        '<img src="{}" alt="" '
+        'style="height:40px;width:40px;border-radius:50%;object-fit:cover;'
+        'border:1px solid #ddd;" />',
+        url,
+    )
+
+
+def _document_preview(field_name, label):
+    """Build a readonly admin field that renders `field_name` as a picture."""
+    def preview(self, obj):
+        return _image_preview(getattr(obj, field_name, None))
+
+    preview.short_description = label
+    preview.__name__ = f'{field_name}_preview'
+    return preview
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
@@ -109,14 +170,27 @@ class UserAdmin(BaseUserAdmin):
     
     set_delivery_percentage_off_for_selected.short_description = "Set delivery percentage off for selected users"
     ordering = ['email']
-    list_display = ('email', 'full_name', 'role', 'referral_code', 'is_active', 'is_staff', 'is_verified')
+    list_display = ('profile_image_thumb', 'email', 'full_name', 'role', 'referral_code', 'is_active', 'is_staff', 'is_verified')
+    # The thumbnail leads the row, but the email stays the link to the record.
+    list_display_links = ('email',)
     list_filter = ('is_active', 'is_staff', 'role', 'is_verified')
     search_fields = ('email', 'full_name', 'phone_number', 'referral_code')
-    readonly_fields = ('created_at', 'updated_at')
-    
+    readonly_fields = ('created_at', 'updated_at', 'profile_image_preview')
+
+    @admin.display(description='Photo')
+    def profile_image_thumb(self, obj):
+        return _image_thumb(obj.profile_image_url)
+
+    @admin.display(description='Profile photo')
+    def profile_image_preview(self, obj):
+        return _image_preview(
+            obj.profile_image_url,
+            empty_label='No profile photo uploaded.',
+        )
+
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
-        ('Personal Info', {'fields': ('full_name', 'first_name', 'last_name', 'phone_number', 'profile_image_url', 'delivery_percentage_off')}),
+        ('Personal Info', {'fields': ('full_name', 'first_name', 'last_name', 'phone_number', 'profile_image_url', 'profile_image_preview', 'delivery_percentage_off')}),
         ('Referral Info', {'fields': ('referral_code', 'referred_by')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'is_admin', 'role', 'is_verified')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at')}),
@@ -305,19 +379,61 @@ class GuarantorInline(admin.TabularInline):
 
 @admin.register(Rider)
 class RiderAdmin(admin.ModelAdmin):
-    list_display = ('user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
+    list_display = ('profile_photo_thumb', 'user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
+    # The thumbnail leads the row, but the email stays the link to the record.
+    list_display_links = ('user',)
     list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider')
     search_fields = ('user__email', 'vehicle_number')
-    readonly_fields = ('created_at', 'updated_at', 'location_updated_at')
+    list_select_related = ('user',)
+    readonly_fields = (
+        'created_at', 'updated_at', 'location_updated_at',
+        'profile_photo_preview',
+        'drivers_license_front_preview', 'drivers_license_back_preview',
+        'nin_front_preview', 'nin_back_preview',
+        'vehicle_insurance_preview', 'vehicle_registration_preview',
+    )
     inlines = [GuarantorInline]
     fieldsets = (
         (None, {'fields': ('user', 'mode_of_transport', 'vehicle_number', 'vehicle_brand', 'plate_number', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')}),
-        ('Verification Documents', {'fields': ('drivers_license_front', 'drivers_license_back', 'nin_front', 'nin_back', 'vehicle_insurance', 'vehicle_registration')}),
+        ('Rider Photo', {
+            'fields': ('profile_photo_preview',),
+            'description': (
+                'The selfie the rider uploaded from the rider app. This is the '
+                'photo to check the ID documents below against. It is stored on '
+                'the rider&rsquo;s user account, so edit it there if it needs to change.'
+            ),
+        }),
+        ('Verification Documents', {'fields': (
+            ('drivers_license_front', 'drivers_license_front_preview'),
+            ('drivers_license_back', 'drivers_license_back_preview'),
+            ('nin_front', 'nin_front_preview'),
+            ('nin_back', 'nin_back_preview'),
+            ('vehicle_insurance', 'vehicle_insurance_preview'),
+            ('vehicle_registration', 'vehicle_registration_preview'),
+        )}),
         ('Address', {'fields': ('country', 'state', 'city', 'address', 'location_latitude', 'location_longitude','preferred_location')}),
         ('Next of Kin', {'fields': ('next_of_kin', 'next_of_kin_phone')}),
         ('Performance', {'fields': ('on_time_delivery_rate', 'successful_delivery_rate', 'order_acceptance_rate', 'average_customer_rating')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at', 'location_updated_at')}),
     )
+
+    @admin.display(description='Photo')
+    def profile_photo_thumb(self, obj):
+        return _image_thumb(obj.user.profile_image_url if obj.user_id else None)
+
+    @admin.display(description='Profile photo uploaded from the rider app')
+    def profile_photo_preview(self, obj):
+        return _image_preview(
+            obj.user.profile_image_url if obj.user_id else None,
+            empty_label='This rider has not uploaded a profile photo yet.',
+        )
+
+    drivers_license_front_preview = _document_preview('drivers_license_front', "Driver's licence (front)")
+    drivers_license_back_preview = _document_preview('drivers_license_back', "Driver's licence (back)")
+    nin_front_preview = _document_preview('nin_front', 'NIN (front)')
+    nin_back_preview = _document_preview('nin_back', 'NIN (back)')
+    vehicle_insurance_preview = _document_preview('vehicle_insurance', 'Vehicle insurance')
+    vehicle_registration_preview = _document_preview('vehicle_registration', 'Vehicle registration')
 
 @admin.register(VerificationCode)
 class VerificationCodeAdmin(admin.ModelAdmin):
