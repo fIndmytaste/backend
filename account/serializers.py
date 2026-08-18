@@ -245,20 +245,29 @@ class UserSerializer(serializers.ModelSerializer):
         return value
 
     def to_representation(self, instance: User):
+        # NOTE: this is a READ path. It used to call get_or_create() for the
+        # role-specific record, which meant merely serialising a user wrote to
+        # the database. Signing a rider into the vendor app therefore minted an
+        # empty Vendor row for them, and the vendor app then read that blank row
+        # as "onboarding half finished" and showed the Continue Registration
+        # modal forever. Read only; the record is created during onboarding.
         if instance.role == 'rider':
             representation = super().to_representation(instance)
-            rider_obj, created = Rider.objects.get_or_create(user=instance)
-            print(rider_obj, created)
-            rider_data = RiderSerializer(rider_obj).data
+            rider_obj = Rider.objects.filter(user=instance).first()
+            rider_data = RiderSerializer(rider_obj).data if rider_obj else None
             representation['rider'] = rider_data
             representation['profile_image'] = instance.get_profile_image()
-            representation['delivery_zone'] = rider_data.get('current_zone')
+            representation['delivery_zone'] = (
+                rider_data.get('current_zone') if rider_data else None
+            )
             return representation
 
         elif instance.role == 'vendor':
             representation = super().to_representation(instance)
-            rider_obj, created = Vendor.objects.get_or_create(user=instance)
-            representation['vendor'] = VendorSerializer(rider_obj).data
+            vendor_obj = Vendor.objects.filter(user=instance).first()
+            representation['vendor'] = (
+                VendorSerializer(vendor_obj).data if vendor_obj else None
+            )
             representation['profile_image'] = instance.get_profile_image()
             return representation
 
@@ -507,8 +516,12 @@ class ProfileImageUploadSerializer(serializers.ModelSerializer):
         return obj.profile_image_url
 
     def get_thumbnail_url(self, obj):
-        vendor, _ = Vendor.objects.get_or_create(user=obj)
-        return vendor.thumbnail_url
+        # Read path: look the vendor up, never create one. This used to mint a
+        # stray Vendor row for whoever uploaded a profile image -- riders and
+        # buyers included -- which is the same defect that put a rider into
+        # vendor onboarding.
+        vendor = Vendor.objects.filter(user=obj).first()
+        return vendor.thumbnail_url if vendor else None
 
 
 class BankAccountValidationSerializer(serializers.Serializer):

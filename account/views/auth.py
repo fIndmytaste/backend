@@ -4,8 +4,9 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
-from account.models import User, VerificationCode
+from account.models import Rider, User, VerificationCode
 from account.serializers import LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterOTPResedSerializer, RegisterSerializer, RegisterVendorSerializer, RegisterVerifySerializer, UserSerializer
+from helpers.app_scope import check_app_access
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.tokens import TokenManager
 from helpers.email import emailService
@@ -55,6 +56,14 @@ class LoginAPIView(generics.GenericAPIView):
             user = authenticate(request, email=email, password=password)
             
             if user is not None and user.is_active:
+                # Reject wrong-app sign-ins BEFORE sending an OTP, so a rider
+                # who opens the vendor app (or the reverse) gets told which app
+                # to use instead of burning a code and landing in the wrong
+                # onboarding flow.
+                access_error = check_app_access(user, request)
+                if access_error:
+                    return bad_request_response(message=access_error)
+
                 # Send login notification
                 try:
                     send_login_notification(user)
@@ -167,6 +176,12 @@ class VerifyOTPAPIView(generics.GenericAPIView):
 
             if not verification_code:
                 return bad_request_response(message='Invalid OTP or OTP has expired.')
+
+            # Backstop: an OTP obtained from another app must not be
+            # redeemable here either.
+            access_error = check_app_access(user, request)
+            if access_error:
+                return bad_request_response(message=access_error)
 
             # Mark verification code as used
             verification_code.delete()
@@ -462,6 +477,12 @@ class RegisterRiderAPIView(generics.GenericAPIView):
         valid_user = User.objects.get(pk=user.id)
         valid_user.role = 'rider'
         valid_user.save()
+        # Create the rider record here, at signup, where it belongs. It used to
+        # be created as a side effect of UserSerializer serialising the user --
+        # a read path -- which is also why signing in to the wrong app minted a
+        # stray profile. That side effect is gone, so this is now the one place
+        # a rider record comes from.
+        Rider.objects.get_or_create(user=valid_user)
         # tokens = TokenManager.get_tokens_for_user(user)
         # response_data = {
         #     "tokens": tokens,

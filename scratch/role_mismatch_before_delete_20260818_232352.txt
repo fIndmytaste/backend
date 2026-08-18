@@ -1,0 +1,36 @@
+ Container backend-web-run-3538e9dfc798 Creating 
+ Container backend-web-run-3538e9dfc798 Created 
+
+Role/profile mismatches
+Empty and unreferenced (20) - safe to remove:
+  Vendor d91c00c6-3ce2-460f-8617-e481bba284d6  user=nex@gmail.com  role=rider
+  Vendor 7ec986a1-0cff-45d7-80af-b55c33bc2c40  user=tester@gmail.com  role=buyer
+  Vendor d3d74068-3070-4c41-ab30-9817ba834731  user=roselineakakuru@gmail.com  role=rider
+  Vendor e63e5b9d-e1cf-4877-9e69-ef5cbdd1ac07  user=adesipeshina30@gmail.com  role=rider
+  Vendor aeddc319-2c63-4915-a201-ccdad40c4d5c  user=goke090909@gmail.com  role=rider
+  Vendor 7b42e379-7d49-49d1-abed-efdd1d412bfe  user=mack@gmail.com  role=rider
+  Vendor 688f4b3a-dd2c-49ef-9b66-786b89f5194b  user=jack@gmail.com  role=rider
+  Vendor 14599124-cd0c-42eb-ba49-24e5b8bcb04a  user=mozezcharles@gmail.com  role=rider
+  Vendor e0ea5a87-08fa-438f-ba49-6485e69a8a05  user=augustinevickky+10@gmail.com  role=rider
+  Vendor 735e986a-593a-4dee-8ecc-f6b101012a77  user=riav@gmail.com  role=rider
+  Vendor a23f8b2f-6030-4b2a-a5bc-6d1d20712618  user=lex@gmail.com  role=rider
+  Vendor b02d7d1d-3059-40c2-87ec-1431d2cbabc6  user=ajalariders@gmail.com  role=rider
+  Vendor 43bedc6b-052e-469e-b69c-2e1c249b6163  user=agbado@gmail.com  role=rider
+  Vendor 5304c701-48b3-4460-8459-6430011c7fef  user=ola@gmail.com  role=rider
+  Vendor fba55de2-b5c5-421d-a9d7-4aeb2c07da57  user=rexrix@gmail.com  role=rider
+  Vendor 12013f24-a371-4717-a3ca-15a474b0209b  user=ajayi@gmail.com  role=rider
+  Vendor 738c6fc1-ff9f-4f9b-a43e-0ffc725c3ef4  user=mexwes@gmail.com  role=rider
+  Vendor 984e80d7-8170-4594-b6f7-0fa780cc90a3  user=retro@gmail.com  role=rider
+  Vendor 7ffd8dd8-d122-4af8-893c-d9cefe2ebdcf  user=gexlex@gmail.com  role=rider
+  Vendor a8133d5a-d508-45d6-9e4d-f51d306504d8  user=rexwes@gmail.com  role=rider
+
+Needs a human (7) - NOT deletable, review by hand:
+  Vendor dc34c40d-a7c0-4e68-a9e2-2c28e20d3b9d  user=freshfoods2@example.com  role=buyer  (record has data; referenced by marketplace_set=1)
+  Vendor d2c768e7-78be-44e5-bfbd-854141e16331  user=augustinevickky+11@gmail.com  role=rider  (record has data; referenced by userfavoritevendor_set=1)
+  Vendor fe8d9c63-b60f-4ecc-a950-0ae9335d3b91  user=victor1@gmail.com  role=rider  (record has data)
+  Vendor d76e3762-a2b0-404a-9fec-c7983143f1e9  user=victor1@blondmail.com  role=rider  (record has data)
+  Vendor 2f7c24cf-6488-42eb-b753-5d7be4b193a2  user=v_903c4e49@example.com  role=buyer  (record has data; referenced by vendors=1)
+  Vendor 9b854d45-5e65-4692-a174-cc0ff6a8c083  user=rixlex@gmail.com  role=rider  (referenced by marketplace_set=1)
+  Vendor 2557e642-71e2-40ad-a311-b3af91c15ca7  user=freshfoods@example.com  role=buyer  (record has data; referenced by marketplace_set=1)
+
+Dry run. Re-run with --delete to remove the safe rows.
