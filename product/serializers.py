@@ -437,6 +437,9 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'vendor',
             'rider',
             'picked_up_by',
+            # Staff handover confirmation, distinct from the rider's own
+            # collection. The marketplace pickup queue filters on this.
+            'pickup_confirmed_at',
             'pickup_time',
             'vendor_item_total',
             'items',
@@ -567,12 +570,39 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
         }
 
     def get_picked_up_by(self, obj):
-        if not obj.pickup_confirmed_by_id:
+        """Who actually collected this order.
+
+        Marketplace orders are handed over by market staff, who confirm it in
+        the dashboard. Every other category is collected by the rider directly,
+        and nobody ever sets pickup_confirmed_by for those -- which is why the
+        "Picked Up By" column was permanently blank outside Marketplace. Fall
+        back to the rider once the order has actually been collected.
+        """
+        if obj.pickup_confirmed_by_id:
+            return {
+                'id': str(obj.pickup_confirmed_by_id),
+                'name': obj.get_pickup_confirmed_by_name(),
+                'email': obj.pickup_confirmed_by.email,
+                'role': 'marketplace_staff',
+            }
+
+        collected = bool(obj.actual_pickup_time) or obj.status in (
+            'picked_up', 'in_transit', 'near_delivery', 'delivered',
+        )
+        if not collected or not obj.rider_id or not obj.rider.user:
             return None
+
+        rider_user = obj.rider.user
+        name = (
+            rider_user.full_name
+            or f"{rider_user.first_name or ''} {rider_user.last_name or ''}".strip()
+            or rider_user.email
+        )
         return {
-            'id': str(obj.pickup_confirmed_by_id),
-            'name': obj.get_pickup_confirmed_by_name(),
-            'email': obj.pickup_confirmed_by.email,
+            'id': str(obj.rider_id),
+            'name': name,
+            'email': rider_user.email,
+            'role': 'rider',
         }
 
     def get_pickup_time(self, obj):
@@ -600,6 +630,10 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'vendor': rep.get('vendor'),
             'items': rep.get('items'),
             'picked_up_by': rep.get('picked_up_by'),
+            # The marketplace queue keys off staff confirmation specifically.
+            # picked_up_by now also reports the rider on non-marketplace
+            # orders, so it can no longer stand in for "staff confirmed this".
+            'pickup_confirmed_at': rep.get('pickup_confirmed_at'),
             'pickup_time': rep.get('pickup_time'),
             'created_at': rep.get('created_at'),
             'updated_at': rep.get('updated_at'),
