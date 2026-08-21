@@ -942,6 +942,13 @@ class AdminRiderFundRequestActionView(generics.GenericAPIView):
             reason = request.data.get('reason', 'Fund request rejected')
             txn.status = 'failed'
             txn.description = f"{txn.description or 'Rider fund request'} — rejected: {reason}"
+            # A rejection and a genuine payment failure are both stored as
+            # 'failed', which left the apps unable to tell a rider which one
+            # happened. Record it durably here rather than making the clients
+            # pattern-match the description text.
+            response_data = txn.response_data if isinstance(txn.response_data, dict) else {}
+            response_data.update({'rejected': True, 'rejection_reason': reason})
+            txn.response_data = response_data
             txn.save()
             wallet.deposit(txn.amount)
             return success_response(message="Fund request rejected and funds returned to the rider's wallet.")

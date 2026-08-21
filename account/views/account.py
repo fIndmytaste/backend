@@ -561,7 +561,6 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
         serialiser.is_valid(raise_exception=True)
         try:
             user = User.objects.get(id=request.user.id)
-            vendor = Vendor.objects.get(user=user)
             account_number = serialiser.validated_data['account_number']
             bank_code = serialiser.validated_data['bank_code']
             bank_name = serialiser.validated_data['bank_name']
@@ -579,9 +578,11 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
                 return bad_request_response(message=bank_response)
 
             
-            # Add bank account to vendor
-            success, response = self.add_bank_account(
-                vendor,
+            # Saved against the user, and mirrored to a Vendor row when one
+            # exists. Riders have no Vendor row, and requiring one here meant
+            # their bank details silently never saved.
+            success, response = self.save_bank_details(
+                user,
                 bank_response['bank_name'],
                 bank_response['account_number'],
                 bank_response['account_name']
@@ -596,14 +597,20 @@ class UpdateVenderBankAccount(generics.GenericAPIView, AccountManager, Flutterwa
             return bad_request_response(message='An error occurred while updating the bank account details.')
 
 
-    def get(self,request):
+    def get(self, request):
+        # Read path: never create a Vendor row here. Prefer the vendor's own
+        # copy when it is filled in, otherwise fall back to the user, which is
+        # where a rider's details live.
         user = User.objects.get(id=request.user.id)
-        vendor, _ = Vendor.objects.get_or_create(user=user)
+        vendor = Vendor.objects.filter(user=user).first()
         return success_response(
             data=dict(
-                account_number=vendor.bank_account,
-                bank_name=vendor.bank_name,
-                bank_account_name=vendor.bank_account_name
+                account_number=(vendor.bank_account if vendor and vendor.bank_account
+                                else user.bank_account),
+                bank_name=(vendor.bank_name if vendor and vendor.bank_name
+                           else user.bank_name),
+                bank_account_name=(vendor.bank_account_name if vendor and vendor.bank_account_name
+                                   else user.bank_account_name),
             )
         )
 

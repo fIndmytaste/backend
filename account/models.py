@@ -412,6 +412,22 @@ class Vendor(models.Model):
             return False, 'VENDOR_LOCKED'
         return True, 'OK'
 
+    def can_modify_products(self):
+        """Whether this vendor may edit or delete an existing product.
+
+        The lock previously gated creation only, so a locked vendor could still
+        rewrite or remove everything already in their catalogue -- including
+        products that predated the lock. Catalogue changes are what the lock
+        exists to freeze, so the same rule applies here.
+
+        Returns:
+            tuple[bool, str]: (allowed, reason) where reason is 'OK' or
+            'VENDOR_LOCKED'.
+        """
+        if self.product_creation_locked and self.product_creation_grant_count <= 0:
+            return False, 'VENDOR_LOCKED'
+        return True, 'OK'
+
     def consume_product_creation_grant(self):
         """
         Decrement the grant counter by 1 if positive. Called after a

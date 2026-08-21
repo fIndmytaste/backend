@@ -513,6 +513,49 @@ class ProductsListCreateView(generics.GenericAPIView):
         return success_response(response_serializer.data, status_code=status.HTTP_201_CREATED)
 
 
+def _vendor_product_or_error(request, product_id, *, for_modification):
+    """Resolve a product the requesting vendor is actually allowed to touch.
+
+    Returns (product, error_response). Exactly one is non-None.
+
+    Two checks the product endpoints previously skipped entirely:
+
+    1. Ownership. They did a bare Product.objects.get(id=...), so any
+       authenticated vendor could edit or delete another store's product
+       simply by knowing its id, and an unknown id raised DoesNotExist and
+       surfaced as a 500.
+    2. The product lock, which was only ever enforced on creation -- leaving a
+       locked vendor free to rewrite or delete their existing catalogue.
+    """
+    vendor = Vendor.objects.filter(user=request.user).first()
+    if vendor is None:
+        return None, bad_request_response(
+            message="No vendor account found for this user.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    product = Product.objects.filter(id=product_id, vendor=vendor).first()
+    if product is None:
+        return None, bad_request_response(
+            message="Product not found.",
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+
+    if for_modification:
+        allowed, _reason = vendor.can_modify_products()
+        if not allowed:
+            return None, bad_request_response(
+                message=(
+                    "Changes to this store's products are currently "
+                    "restricted. Please contact support to request access."
+                ),
+                group='PRODUCT_CREATION_RESTRICTED',
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+    return product, None
+
+
 class ProductGetUpdateDeleteView(generics.GenericAPIView):
     """
     View to retrieve, update, and delete a product for a vendor.
@@ -535,7 +578,11 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         Returns:
         - The details of the requested product.
         """
-        product = Product.objects.get(id=product_id)
+        product, error = _vendor_product_or_error(
+            request, product_id, for_modification=False,
+        )
+        if error:
+            return error
         serializer = ProductSerializer(product,context={'request': request, 'is_vendor': True})
         return success_response(serializer.data)
 
@@ -556,8 +603,11 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         Returns:
         - The updated product.
         """
-        print(request.data)
-        product = Product.objects.get(id=product_id)
+        product, error = _vendor_product_or_error(
+            request, product_id, for_modification=True,
+        )
+        if error:
+            return error
         serializer = ProductSerializer(product, data=request.data, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
         try:
@@ -579,7 +629,11 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         responses={200: ProductSerializer}
     )
     def patch(self, request, product_id):
-        product = Product.objects.get(id=product_id)
+        product, error = _vendor_product_or_error(
+            request, product_id, for_modification=True,
+        )
+        if error:
+            return error
         serializer = ProductSerializer(product, data=request.data, partial=True, context={'request': request, 'is_vendor': True})
         serializer.is_valid(raise_exception=True)
         try:
@@ -609,7 +663,11 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         Returns:
         - Success message after deletion.
         """
-        product = Product.objects.get(id=product_id)
+        product, error = _vendor_product_or_error(
+            request, product_id, for_modification=True,
+        )
+        if error:
+            return error
         product.delete()
         return success_response(status_code=status.HTTP_204_NO_CONTENT)
 

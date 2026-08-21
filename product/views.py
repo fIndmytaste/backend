@@ -497,60 +497,10 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                         order=order
                     )
 
-                    try:
-                        channel_layer = get_channel_layer()
-                        vendor_group_name = f'vendor_{vendor.user.id}'
-
-                        async_to_sync(channel_layer.group_send)(
-                            vendor_group_name,
-                            {
-                                'type': 'new_order_notification',
-                                'data': {
-                                    'order_id': str(order.id),
-                                    'customer': {
-                                        'name': order.user.full_name,
-                                        'phone': order.user.phone_number
-                                    },
-                                    "order_details": OrderSerializer(order).data,
-                                    'delivery_address': order.address,
-                                    'created_at': order.created_at.isoformat(),
-                                    'status': order.status,
-                                }
-                            }
-                        )
-
-                    except Exception as e:
-                        print(e)
-
-                    try:
-                        Notification.objects.create(
-                            user=vendor.user,
-                            title="New Order Received!",
-                            content=f"You have a new order #{order.track_id} from {order.user.full_name}. Tap to review and accept."
-                        )
-                    except Exception as e:
-                        print(f"Failed to create vendor in-app notification: {e}")
-
-                    # Push notification for the new order. Until now the vendor
-                    # only got a websocket event (which needs the app open) and
-                    # an in-app row, so a closed app meant no alert at all.
-                    try:
-                        notification_helper.send_to_user_async(
-                            user=vendor.user,
-                            title="New Order Received! 🛎️",
-                            body=(
-                                f"Order #{order.track_id} from {order.user.full_name}. "
-                                "Tap to review and accept."
-                            ),
-                            data={
-                                "event": "new_order",
-                                "type": "new_order_notification",
-                                "order_id": str(order.id),
-                                "track_id": str(order.track_id),
-                            },
-                        )
-                    except Exception as e:
-                        print(f"Failed to send vendor new-order push: {e}")
+                    # The vendor alert (websocket, in-app row and push) now
+                    # fires from the post_save signal in product/signals.py,
+                    # so link payments raise it too -- this block only ever
+                    # ran for wallet payments. See product/vendor_notifications.
 
                     try:
 
@@ -1834,60 +1784,10 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                         order=order
                     )
 
-                    try:
-                        channel_layer = get_channel_layer()
-                        vendor_group_name = f'vendor_{vendor.user.id}'
-
-                        async_to_sync(channel_layer.group_send)(
-                            vendor_group_name,
-                            {
-                                'type': 'new_order_notification',
-                                'data': {
-                                    'order_id': str(order.id),
-                                    'customer': {
-                                        'name': order.user.full_name,
-                                        'phone': order.user.phone_number
-                                    },
-                                    "order_details": OrderSerializer(order).data,
-                                    'delivery_address': order.address,
-                                    'created_at': order.created_at.isoformat(),
-                                    'status': order.status,
-                                }
-                            }
-                        )
-
-                    except Exception as e:
-                        print(e)
-
-                    try:
-                        Notification.objects.create(
-                            user=vendor.user,
-                            title="New Order Received!",
-                            content=f"You have a new order #{order.track_id} from {order.user.full_name}. Tap to review and accept."
-                        )
-                    except Exception as e:
-                        print(f"Failed to create vendor in-app notification: {e}")
-
-                    # Push notification for the new order. Until now the vendor
-                    # only got a websocket event (which needs the app open) and
-                    # an in-app row, so a closed app meant no alert at all.
-                    try:
-                        notification_helper.send_to_user_async(
-                            user=vendor.user,
-                            title="New Order Received! 🛎️",
-                            body=(
-                                f"Order #{order.track_id} from {order.user.full_name}. "
-                                "Tap to review and accept."
-                            ),
-                            data={
-                                "event": "new_order",
-                                "type": "new_order_notification",
-                                "order_id": str(order.id),
-                                "track_id": str(order.track_id),
-                            },
-                        )
-                    except Exception as e:
-                        print(f"Failed to send vendor new-order push: {e}")
+                    # The vendor alert (websocket, in-app row and push) now
+                    # fires from the post_save signal in product/signals.py,
+                    # so link payments raise it too -- this block only ever
+                    # ran for wallet payments. See product/vendor_notifications.
 
                     try:
 

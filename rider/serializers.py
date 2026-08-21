@@ -114,13 +114,24 @@ class RiderOrderDetailSerializer(serializers.Serializer):
             # only the first image is ever shown
             first_image = images[0].image_url if images else None
 
-            # variant line totals (used for total price computation on Flutter side)
+            # Variant lines, plus the authoritative line total.
+            #
+            # This used to omit total_price, leaving the app to recompute it --
+            # and its version multiplied each variant by the variant quantity
+            # alone, where OrderItem.total_price also multiplies by the item
+            # quantity. Any multi-quantity line with variants therefore showed
+            # the rider less than the order was really worth. Send the same
+            # number the rest of the system uses instead.
             variants = []
+            variant_component = 0.0
             for vs in item.variant_selections.all():
                 variants.append({
                     'price': float(vs.price_at_purchase),
                     'quantity': vs.quantity,
                 })
+                variant_component += float(vs.price_at_purchase) * vs.quantity * item.quantity
+
+            line_total = float(item.price) * item.quantity + variant_component
 
             items.append({
                 'product': {
@@ -131,6 +142,7 @@ class RiderOrderDetailSerializer(serializers.Serializer):
                 },
                 'quantity': item.quantity,
                 'price': float(item.price),
+                'total_price': line_total,
                 'variants': variants,
             })
 

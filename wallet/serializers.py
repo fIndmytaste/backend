@@ -73,9 +73,35 @@ class WalletSerializer(serializers.ModelSerializer):
 class WalletTransactionSerializer(serializers.ModelSerializer):
     reference_code = serializers.SerializerMethodField()
     order_track_id = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+
     class Meta:
         model = WalletTransaction
-        fields = ['id', 'wallet', 'amount', 'transaction_type','reference_code','description', 'status', 'created_at', 'order_track_id']
+        fields = ['id', 'wallet', 'amount', 'transaction_type','reference_code','description', 'status', 'status_display', 'created_at', 'order_track_id']
+
+    def get_status_display(self, obj):
+        """Outcome in the four states the apps show.
+
+        The stored status has no 'rejected' value -- an admin rejecting a fund
+        request records 'failed', the same as a payment that genuinely failed.
+        Riders could not tell those apart, so split them back out here.
+        Returns one of: successful, pending, failed, rejected, refunded.
+        """
+        status = (obj.status or '').lower()
+        if status == 'completed':
+            return 'successful'
+        if status == 'failed':
+            data = obj.response_data if isinstance(obj.response_data, dict) else {}
+            if data.get('rejected'):
+                return 'rejected'
+            # Rejections predating the durable flag are only identifiable by
+            # the marker the reject action wrote into the description.
+            if '— rejected:' in (obj.description or ''):
+                return 'rejected'
+            return 'failed'
+        if status in ('pending', 'refunded'):
+            return status
+        return status or 'pending'
 
 
 
