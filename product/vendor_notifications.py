@@ -7,10 +7,12 @@ of their orders. Centralising it here means the alert follows the order
 becoming paid, whichever code path gets it there.
 """
 
+import json
 import logging
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.core.serializers.json import DjangoJSONEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -65,17 +67,27 @@ def notify_vendor_of_paid_order(order):
     track_id = str(order.track_id or order.id)
 
     try:
+        # The channel layer can only carry JSON primitives. A DRF .data still
+        # holds UUID objects (order.user and each item's product id), and
+        # group_send raises on them -- which silently cost the vendor their
+        # in-app new-order alert, since the failure is caught below while the
+        # notification row and push carried on regardless. Round-tripping
+        # through DjangoJSONEncoder flattens them to strings.
+        order_details = json.loads(
+            json.dumps(OrderSerializer(order).data, cls=DjangoJSONEncoder)
+        )
         async_to_sync(get_channel_layer().group_send)(
             f'vendor_{vendor.user_id}',
             {
                 'type': 'new_order_notification',
                 'data': {
                     'order_id': str(order.id),
+                    'track_id': track_id,
                     'customer': {
                         'name': customer,
                         'phone': order.user.phone_number if order.user else None,
                     },
-                    "order_details": OrderSerializer(order).data,
+                    "order_details": order_details,
                     'delivery_address': order.address,
                     'created_at': order.created_at.isoformat() if order.created_at else None,
                     'status': order.status,
