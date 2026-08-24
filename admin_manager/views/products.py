@@ -520,6 +520,46 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
         # What the platform actually keeps once Paystack has been paid.
         net_platform_revenue = Decimal(str(platform_earnings)) - total_paystack_fees
 
+        # ── Promotions ──────────────────────────────────────────────────────
+        # What the discounts actually cost us. PromoUsage snapshots the
+        # discount at redemption, so this stays correct even if a code is
+        # edited or deleted afterwards. Windowed on when it was redeemed.
+        promo_usages = PromoUsage.objects.filter(**window_filter('used_at'))
+        promo_agg = promo_usages.aggregate(
+            total_discount=Sum('discount_amount'),
+            redemptions=Count('id'),
+            customers=Count('user', distinct=True),
+            discounted_order_value=Sum('original_amount'),
+        )
+        total_promo_discount = Decimal(str(promo_agg['total_discount'] or 0))
+        promo_redemptions = promo_agg['redemptions'] or 0
+
+        # Spend per code, so an unusually expensive promo is obvious.
+        top_promos = list(
+            promo_usages
+            .values('promo__code', 'promo__promo_type')
+            .annotate(
+                discount=Sum('discount_amount'),
+                redemptions=Count('id'),
+            )
+            .order_by('-discount')[:5]
+        )
+
+        # Previous period, for the same growth treatment the other cards get.
+        if prev_start and start_date:
+            prev_promo_discount = PromoUsage.objects.filter(
+                used_at__gte=prev_start, used_at__lt=start_date,
+            ).aggregate(total=Sum('discount_amount'))['total'] or 0
+        else:
+            prev_promo_discount = 0
+
+        # Share of the discounted orders' value that we gave away.
+        discounted_value = Decimal(str(promo_agg['discounted_order_value'] or 0))
+        promo_discount_rate = (
+            float((total_promo_discount / discounted_value) * 100)
+            if discounted_value else 0.0
+        )
+
         # ── Previous period for growth indicators ───────────────────────────
         if prev_start and start_date:
             prev_orders = Order.objects.filter(
@@ -602,6 +642,38 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
                         "delivery_service_fees": {"value": float(delivery_service_fees)},
                         "marketplace_delivery_fees": {"value": float(marketplace_delivery_fees)},
                     },
+                },
+                # What promotions cost the platform this period.
+                "promo_summary": {
+                    "total_discount_given": {
+                        "value": float(total_promo_discount),
+                        # True when we spent more on promos than the period before.
+                        "growth": (
+                            float(total_promo_discount) > float(prev_promo_discount)
+                            if float(prev_promo_discount) else float(total_promo_discount) > 0
+                        ),
+                    },
+                    "redemptions": {"value": promo_redemptions},
+                    "customers_reached": {"value": promo_agg['customers'] or 0},
+                    "discounted_order_value": {"value": float(discounted_value)},
+                    # Average naira given away per redemption.
+                    "average_discount": {
+                        "value": (
+                            float(total_promo_discount) / promo_redemptions
+                            if promo_redemptions else 0.0
+                        )
+                    },
+                    # Percentage of those orders' value handed back as discount.
+                    "discount_rate_percent": {"value": round(promo_discount_rate, 2)},
+                    "top_promos": [
+                        {
+                            "code": row['promo__code'] or '—',
+                            "promo_type": row['promo__promo_type'],
+                            "discount": float(row['discount'] or 0),
+                            "redemptions": row['redemptions'],
+                        }
+                        for row in top_promos
+                    ],
                 },
                 # What Paystack took out of the money that moved this period.
                 "paystack_fees": {
