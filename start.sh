@@ -13,6 +13,13 @@
 # once (otherwise every instance would run the payout and pay riders twice).
 set -e
 
+# Static files. `.dockerignore` excludes staticfiles/, so STATIC_ROOT starts
+# empty in the container and nothing else populates it. Django only serves
+# admin CSS itself while DEBUG is on; with DEBUG off WhiteNoise serves from
+# STATIC_ROOT, so without this the admin renders unstyled and every
+# /static/... request 404s.
+python manage.py collectstatic --noinput
+
 python manage.py migrate --noinput
 
 # Start the Celery worker with the embedded beat scheduler.
