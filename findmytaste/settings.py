@@ -14,10 +14,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-&lhb+rrxl(*9*wzdo$nz&!!b$=q&hhzj3tqo(bkk994$(6ko4l'
+# Env-overridable so the committed value is not what production actually uses.
+SECRET_KEY = config(
+    'SECRET_KEY',
+    default='django-insecure-&lhb+rrxl(*9*wzdo$nz&!!b$=q&hhzj3tqo(bkk994$(6ko4l',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+#
+# This was hardcoded True, so production served full tracebacks -- local
+# variables, settings and SQL included -- on any unhandled error, and any
+# code gated on DEBUG (such as echoing an OTP back in an API message) stayed
+# switched on. Now env-driven and off unless explicitly enabled.
+#
+# Safe to default off here: WhiteNoise serves static independently of DEBUG,
+# and media lives in Cloudinary, so the DEBUG-only media route in urls.py is
+# not used in production.
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = ["*"]
 
@@ -264,7 +277,16 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'HS256',
-    'SIGNING_KEY': 'your-secret-key',
+    # Was the literal placeholder 'your-secret-key', committed to the repo.
+    # HS256 is symmetric, so that key is all anyone needed to mint a valid
+    # access token for any user id -- a complete authentication bypass for
+    # anyone who had seen this file. Falls back to SECRET_KEY; set
+    # JWT_SIGNING_KEY in the environment to a long random value.
+    #
+    # NOTE: changing this invalidates every issued token, so all users are
+    # signed out once and must log in again. That is the point -- the old key
+    # must be treated as compromised.
+    'SIGNING_KEY': config('JWT_SIGNING_KEY', default=SECRET_KEY),
     'AUTH_HEADER_TYPES': ('Bearer',),
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',

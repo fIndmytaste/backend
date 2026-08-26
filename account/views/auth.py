@@ -18,6 +18,19 @@ from datetime import timedelta
 import re
 
 
+
+def _otp_debug_suffix(code):
+    """Append the OTP to an API message, but only while DEBUG is on.
+
+    These messages used to carry the live code in production. Anyone able to
+    trigger a send for a known email address got the OTP straight back in the
+    HTTP response, so email access was never needed to take over an account.
+    Kept for local testing only.
+    """
+    from django.conf import settings
+    return f' :: {code}' if settings.DEBUG else ''
+
+
 def _first_error_message(errors):
     """Reduce DRF serializer errors to a single human-readable message so the
     app can show it directly (instead of the raw {field: [msg]} shape)."""
@@ -106,7 +119,8 @@ class LoginAPIView(generics.GenericAPIView):
 
                 
                 return success_response(
-                    message= f'Please verify your login with the OTP sent. :: {code_obj.code}'
+                    message='Please verify your login with the OTP sent.'
+                    + _otp_debug_suffix(code_obj.code)
                 )
 
             else:
@@ -363,7 +377,8 @@ class RegisterAPIView(generics.GenericAPIView):
 
         return success_response(
             # add message that verification code has been sent to their email
-            message=f'Verification code has been sent to your email. :: {code_obj.code}',
+            message='Verification code has been sent to your email.'
+            + _otp_debug_suffix(code_obj.code),
             data={
                 "email":email
             }
@@ -432,7 +447,8 @@ class RegisterVendorAPIView(generics.GenericAPIView):
 
         return success_response(
             # add message that verification code has been sent to their email
-            message=f'Verification code has been sent to your email. :: {code_obj.code}',
+            message='Verification code has been sent to your email.'
+            + _otp_debug_suffix(code_obj.code),
             data={
                 "email":email
             }
@@ -508,7 +524,8 @@ class RegisterRiderAPIView(generics.GenericAPIView):
 
         return success_response(
             # add message that verification code has been sent to their email
-            message=f'Verification code has been sent to your email. :: {code_obj.code}',
+            message='Verification code has been sent to your email.'
+            + _otp_debug_suffix(code_obj.code),
             data={
                 "email":email
             }
@@ -561,7 +578,8 @@ class ResendOTPAPIView(generics.GenericAPIView):
             # return bad_request_response(message="Failed to send verification code.")
 
         return success_response(
-            message=f"Verification code has been resent to your email. :: {code_obj.code}"
+            message='Verification code has been resent to your email.'
+            + _otp_debug_suffix(code_obj.code)
         )
 
 class ResendOTPLoginAPIView(generics.GenericAPIView):
@@ -605,7 +623,8 @@ class ResendOTPLoginAPIView(generics.GenericAPIView):
             # return bad_request_response(message="Failed to send verification code.")
 
         return success_response(
-            message=f"Verification code has been resent to your email. :: {code_obj.code}"
+            message='Verification code has been resent to your email.'
+            + _otp_debug_suffix(code_obj.code)
         )
 
 
