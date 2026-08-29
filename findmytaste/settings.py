@@ -70,6 +70,9 @@ JAZZMIN_SETTINGS = {
     "site_title": "FindMyTaste Admin",
     "site_header": "FindMyTaste Admin",
     "site_brand": "FindMyTaste",
+    # Jazzmin does not inherit the customer/admin dashboard favicon. Keep the
+    # Django super-admin icon in collected static files so it works in prod.
+    "site_icon": "images/findmytaste-favicon.svg",
     "welcome_sign": "Welcome to FindMyTaste Admin Portal",
     "copyright": "FindMyTaste 2025",
     "search_model": ["account.User", "product.Product", "admin_manager.Announcement"],

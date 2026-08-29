@@ -97,6 +97,7 @@ urlpatterns = [
     path('orders/<uuid:id>/', admin_product_view.AdminOrderDetailAPIView.as_view(), name='admin-order-detail'),
     path('orders/<uuid:id>/parties/', admin_product_view.AdminOrderDetailVendorRiderAPIView.as_view(), name='admin-users-detail'),
     path('orders/<uuid:id>/confirm-pickup/', admin_product_view.AdminMarketplaceConfirmPickupAPIView.as_view(), name='admin-marketplace-confirm-pickup'),
+    path('orders/<uuid:id>/release-rider/', admin_product_view.AdminReleaseRiderAssignmentAPIView.as_view(), name='admin-release-rider-assignment'),
 
     # riders
     path('riders/', admin_riders_view.AdminRiderListView.as_view(), name='admin_riders-list'),

@@ -511,6 +511,10 @@ class RiderConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event)
         logging.info(f"[RiderConsumer] Sent order_assigned_notification: {event['data']}")
 
+    async def order_assignment_released(self, event):
+        await self.send_json(event)
+        logging.info(f"[RiderConsumer] Sent order_assignment_released: {event['data']}")
+
     async def order_delivered_notification(self, event):
         await self.send_json(event)
         logging.info(f"[RiderConsumer] Sent order_delivered_notification: {event['data']}")
@@ -591,6 +595,9 @@ class LegacyNotificationConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event)
 
     async def order_assigned_notification(self, event):
+        await self.send_json(event)
+
+    async def order_assignment_released(self, event):
         await self.send_json(event)
 
     async def order_delivered_notification(self, event):

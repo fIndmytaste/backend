@@ -123,7 +123,13 @@ def filter_and_sort_vendors_by_distance(
     addition to the endpoint's browse/search radius.
     """
     if user_latitude is None or user_longitude is None:
-        return list(vendors)
+        # Every caller unpacks (vendor, distance) and sorts on the distance, so
+        # this has to keep that shape even when there is nothing to measure
+        # from. Returning bare vendors here raised
+        # "cannot unpack non-iterable Vendor object" for any anonymous request
+        # with no address set -- i.e. the home feed on a fresh install.
+        # inf sorts unknown distances last without special-casing each caller.
+        return [(vendor, float('inf')) for vendor in vendors]
 
     vendor_list = list(vendors)
     if not vendor_list:

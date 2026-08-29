@@ -226,6 +226,88 @@ def notify_order_unavailable_to_riders(order: Order, accepted_rider: Optional[Ri
             print(f"Order unavailable websocket notification error: {e}")
 
 
+def notify_rider_assignment_released(order: Order, rider: Rider):
+    """Tell the previous rider that an admin has removed the assignment."""
+    message = (
+        f"Order #{order.track_id} has been removed from your assignments "
+        "and is awaiting another rider."
+    )
+    payload = {
+        "event": "order_assignment_released",
+        "type": "order_assignment_released",
+        "order_id": str(order.id),
+        "track_id": str(order.track_id),
+        "status": str(order.status),
+        "delivery_status": str(order.delivery_status),
+        "message": message,
+    }
+
+    try:
+        notification_helper.send_to_user_async(
+            user=rider.user,
+            title="Order assignment removed",
+            body=message,
+            data=payload,
+        )
+    except Exception as e:
+        logger.warning("Rider release push notification failed: %s", e)
+
+    try:
+        async_to_sync(get_channel_layer().group_send)(
+            f"riders_group_{rider.user.id}",
+            {
+                "type": "order_assignment_released",
+                "data": payload,
+            },
+        )
+    except Exception as e:
+        logger.warning("Rider release websocket notification failed: %s", e)
+
+
+def notify_order_available_to_riders(order: Order):
+    """Publish a released non-marketplace order to every eligible rider again."""
+    try:
+        candidates = get_candidate_riders_for_order(order)
+        order_details = format_object_fields(OrderSerializer(order).data)
+    except Exception as e:
+        # Dispatch notifications are best-effort. The order is already safely
+        # reopened in the database and will appear on the next app refresh.
+        logger.warning("Could not prepare released order notifications: %s", e)
+        return
+    for rider in candidates:
+        message = f"Order #{order.track_id} is available for pickup again."
+        payload = {
+            "event": "new_order",
+            "type": "new_order_event",
+            "order_id": str(order.id),
+            "track_id": str(order.track_id),
+            "order_details": order_details,
+            "status": str(order.status),
+            "delivery_status": str(order.delivery_status),
+            "message": message,
+        }
+        try:
+            notification_helper.send_to_user_async(
+                user=rider.user,
+                title="Order available again",
+                body=message,
+                data=payload,
+            )
+        except Exception as e:
+            logger.warning("Released order push notification failed: %s", e)
+
+        try:
+            async_to_sync(get_channel_layer().group_send)(
+                f"riders_group_{rider.user.id}",
+                {
+                    "type": "new_order_event",
+                    "data": payload,
+                },
+            )
+        except Exception as e:
+            logger.warning("Released order websocket notification failed: %s", e)
+
+
 def send_order_status_update_notification(order: Order, status: str, message: Optional[str] = None):
     """
     Send a push notification to the customer about an order status update.

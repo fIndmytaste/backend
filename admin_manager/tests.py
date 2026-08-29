@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.urls import reverse
 from django.utils import timezone
@@ -15,6 +16,7 @@ from product.models import (
     BukaItemServiceCharge,
     BukaVariantServiceCharge,
     Order,
+    DeclinedOrder,
     OrderItem,
     OrderItemVariant,
     PlatformSettings,
@@ -472,3 +474,103 @@ class MarketplaceStaffOrderVisibilityTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+
+
+class AdminReleaseRiderAssignmentTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            email='release-admin@example.com', password='password',
+        )
+        self.customer = User.objects.create_user(
+            email='release-customer@example.com', password='password',
+        )
+        category = SystemCategory.objects.create(
+            name='Release test food', name_key='release-test-food',
+        )
+        vendor_user = User.objects.create_user(
+            email='release-vendor@example.com', password='password', role='vendor',
+        )
+        self.vendor = Vendor.objects.create(
+            user=vendor_user,
+            name='Release Test Vendor',
+            email=vendor_user.email,
+            category=category,
+            approval_status='approved',
+            is_active=True,
+        )
+        rider_user = User.objects.create_user(
+            email='release-rider@example.com', password='password', role='rider',
+        )
+        self.rider = Rider.objects.create(
+            user=rider_user,
+            mode_of_transport='bike',
+            status='active',
+            is_verified=True,
+        )
+        self.order = Order.objects.create(
+            user=self.customer,
+            vendor=self.vendor,
+            rider=self.rider,
+            payment_status='paid',
+            status='rider_assigned',
+            delivery_status='rider_assigned',
+            total_amount=1000,
+        )
+        self.client.force_authenticate(self.admin)
+
+    @patch('admin_manager.views.products.notify_order_available_to_riders')
+    @patch('admin_manager.views.products.notify_rider_assignment_released')
+    def test_release_returns_order_to_public_rider_pool(
+        self, released_notification, available_notification,
+    ):
+        DeclinedOrder.objects.create(rider=self.rider, order=self.order)
+
+        response = self.client.post(
+            reverse('admin-release-rider-assignment', kwargs={'id': self.order.id}),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.order.refresh_from_db()
+        self.assertIsNone(self.order.rider)
+        self.assertEqual(self.order.status, 'looking_for_rider')
+        self.assertEqual(self.order.delivery_status, 'awaiting_rider')
+        self.assertFalse(self.order.declined_by_riders.exists())
+        self.assertEqual(response.data['data']['availability'], 'rider_pool')
+        released_notification.assert_called_once()
+        available_notification.assert_called_once()
+
+    def test_release_is_blocked_after_pickup(self):
+        self.order.status = 'picked_up'
+        self.order.delivery_status = 'picked_up'
+        self.order.actual_pickup_time = timezone.now()
+        self.order.save()
+
+        response = self.client.post(
+            reverse('admin-release-rider-assignment', kwargs={'id': self.order.id}),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.rider, self.rider)
+
+    def test_awaiting_pickup_filter_only_lists_releasable_assignments(self):
+        picked_up = Order.objects.create(
+            user=self.customer,
+            vendor=self.vendor,
+            rider=self.rider,
+            payment_status='paid',
+            status='picked_up',
+            delivery_status='picked_up',
+            actual_pickup_time=timezone.now(),
+            total_amount=1000,
+        )
+
+        response = self.client.get(
+            reverse('admin-orders-list'),
+            {'assignment_status': 'awaiting_pickup'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        ids = {str(item['id']) for item in response.data['results']}
+        self.assertIn(str(self.order.id), ids)
+        self.assertNotIn(str(picked_up.id), ids)

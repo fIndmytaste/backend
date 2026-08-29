@@ -1,5 +1,5 @@
 from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from django.db import transaction
 from django.db.models import Avg, Case, IntegerField, Sum, Count, Q, Value, When
 from django.utils import timezone
@@ -25,6 +25,10 @@ from product.promo_models import PromoUsage
 from product.serializers import AdminOrderListSerializer, AdminPromoOrderSerializer, OrderSerializer, RatingSerializer
 from vendor.serializers import ProductSerializer
 from wallet.models import PaystackFeeRecord, WalletTransaction
+from helpers.websocket_notification import (
+    notify_order_available_to_riders,
+    notify_rider_assignment_released,
+)
 
 
 def _is_uuid(value):
@@ -922,6 +926,7 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
         track_id = self.request.GET.get('track_id')
         search = self.request.GET.get('search')
         status = self.request.GET.get('status')
+        assignment_status = self.request.GET.get('assignment_status')
         category = self.request.GET.get('category') or self.request.GET.get('category_id')
         marketplace = self.request.GET.get('marketplace') or self.request.GET.get('marketplace_id')
 
@@ -943,6 +948,16 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
 
         if status:
             queryset = queryset.filter(status__iexact=status)
+
+        if assignment_status == 'awaiting_pickup':
+            queryset = queryset.filter(
+                rider__isnull=False,
+                status='rider_assigned',
+                actual_pickup_time__isnull=True,
+                pickup_confirmed_at__isnull=True,
+            ).exclude(
+                delivery_status__in=['picked_up', 'in_transit', 'delivered', 'canceled'],
+            )
 
         if category:
             category_filter = Q(vendor__category__name__icontains=category)
@@ -1021,6 +1036,84 @@ class AdminGetAllOrdersAPIView(generics.GenericAPIView):
                 'active_delivery_zones': active_delivery_zones,
                 'marketplace_staff_limited': limited_staff,
             }
+        )
+
+
+class AdminReleaseRiderAssignmentAPIView(generics.GenericAPIView):
+    """Release an accepted order before pickup so it can be assigned again."""
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, id):
+        try:
+            with transaction.atomic():
+                queryset = _filter_for_staff_marketplaces(
+                    Order.objects.select_for_update().select_related(
+                        'rider__user', 'vendor', 'vendor__user', 'user',
+                    ).prefetch_related('vendor__marketplace_set'),
+                    request.user,
+                )
+                order = queryset.get(id=id)
+
+                if not order.rider_id:
+                    return bad_request_response(
+                        message="This order is not assigned to a rider.",
+                    )
+
+                pickup_started = (
+                    order.actual_pickup_time is not None
+                    or order.pickup_confirmed_at is not None
+                    or order.status in ['picked_up', 'in_transit', 'near_delivery', 'delivered']
+                    or order.delivery_status in ['picked_up', 'in_transit', 'delivered']
+                )
+                if pickup_started:
+                    return bad_request_response(
+                        message="The rider cannot be released because pickup has already started.",
+                    )
+
+                if order.status != 'rider_assigned':
+                    return bad_request_response(
+                        message="Only accepted orders awaiting pickup can be released.",
+                    )
+
+                previous_rider = order.rider
+                is_marketplace = bool(
+                    order.vendor
+                    and (
+                        order.vendor.is_marketplace
+                        or order.vendor.marketplace_set.exists()
+                    )
+                )
+                order.rider = None
+                order.status = 'looking_for_rider'
+                order.delivery_status = 'awaiting_rider'
+                order.save(update_fields=[
+                    'rider', 'status', 'delivery_status', 'updated_at',
+                ])
+
+                # A reopened order is a fresh dispatch opportunity for all riders.
+                order.declined_by_riders.all().delete()
+
+        except Order.DoesNotExist:
+            return bad_request_response(message="Order not found.", status_code=404)
+
+        notify_rider_assignment_released(order, previous_rider)
+        if not is_marketplace:
+            notify_order_available_to_riders(order)
+
+        destination = (
+            "the marketplace admin assignment queue"
+            if is_marketplace
+            else "the eligible rider pool"
+        )
+        return success_response(
+            message=f"Rider released. The order is available in {destination} again.",
+            data={
+                "order_id": str(order.id),
+                "previous_rider_id": str(previous_rider.id),
+                "status": order.status,
+                "delivery_status": order.delivery_status,
+                "availability": "marketplace_assignment_queue" if is_marketplace else "rider_pool",
+            },
         )
     
 

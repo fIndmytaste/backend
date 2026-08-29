@@ -840,10 +840,15 @@ class HotPickProductsView(generics.GenericAPIView):
         """
         Get all the user's favorited products.
         """
-        favorites = UserFavoriteVendor.objects.filter(user=user)
-        if not favorites.exists():
+        # UserFavoriteVendor records a favourited VENDOR, not a product, so
+        # favorite.product raised AttributeError as soon as a user had any
+        # favourites. Return the products belonging to those vendors instead.
+        vendor_ids = UserFavoriteVendor.objects.filter(user=user).values_list(
+            'vendor_id', flat=True,
+        )
+        if not vendor_ids:
             return []
-        return [favorite.product for favorite in favorites]
+        return list(Product.objects.filter(vendor_id__in=list(vendor_ids)))
 
     def get_top_viewed_products(self, limit=10):
         """

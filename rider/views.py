@@ -636,34 +636,38 @@ class RiderViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
 
         try:
-            order = Order.objects.get(id=order_id, rider=rider)
+            with transaction.atomic():
+                # Coordinate pickup with the admin release action. Without a
+                # row lock, an admin release and rider pickup could cross and
+                # leave a picked-up order with no rider.
+                order = Order.objects.select_for_update().get(
+                    id=order_id,
+                    rider=rider,
+                )
+
+                order_statuses = [choice[0] for choice in Order.ORDER_STATUS_CHOICES]
+                delivery_statuses = [choice[0] for choice in Order.DELIVERY_STATUS_CHOICES]
+                valid_statuses = sorted(set(order_statuses + delivery_statuses))
+                if new_status not in valid_statuses:
+                    return bad_request_response(
+                        message=f"Invalid status: '{new_status}'. Must be one of: {', '.join(valid_statuses)}"
+                    )
+
+                old_status = order.status
+                update_fields = ['status', 'delivery_status', 'updated_at']
+                if new_status in order_statuses:
+                    order.status = new_status
+                if new_status in delivery_statuses:
+                    order.delivery_status = new_status
+                if new_status == 'picked_up':
+                    order.actual_pickup_time = timezone.now()
+                    update_fields.append('actual_pickup_time')
+                elif new_status == 'delivered':
+                    order.actual_delivery_time = timezone.now()
+                    update_fields.append('actual_delivery_time')
+                order.save(update_fields=update_fields)
         except Order.DoesNotExist:
             return bad_request_response(message="Order not found")
-
-        if order.rider != rider:
-            return bad_request_response(message="Order not found")
-
-        order_statuses = [choice[0] for choice in Order.ORDER_STATUS_CHOICES]
-        delivery_statuses = [choice[0] for choice in Order.DELIVERY_STATUS_CHOICES]
-        valid_statuses = sorted(set(order_statuses + delivery_statuses))
-        if new_status not in valid_statuses:
-            return bad_request_response(
-                message=f"Invalid status: '{new_status}'. Must be one of: {', '.join(valid_statuses)}"
-            )
-
-        old_status = order.status
-        update_fields = ['status', 'delivery_status', 'updated_at']
-        if new_status in order_statuses:
-            order.status = new_status
-        if new_status in delivery_statuses:
-            order.delivery_status = new_status
-        if new_status == 'picked_up':
-            order.actual_pickup_time = timezone.now()
-            update_fields.append('actual_pickup_time')
-        elif new_status == 'delivered':
-            order.actual_delivery_time = timezone.now()
-            update_fields.append('actual_delivery_time')
-        order.save(update_fields=update_fields)
 
         # Broadcast status update
         try:
