@@ -1,5 +1,6 @@
 # email_service.py
 
+import datetime
 import threading
 from typing import Dict, List, Optional, Union
 from django.conf import settings
@@ -119,6 +120,8 @@ class EmailService:
             bool: True if the email was sent (or scheduled to be sent) successfully
         """
         from_email = 'support@findmytaste.com.ng'
+        # The shared layout (emails/base.html) prints the year in its footer.
+        template_data = {"current_year": datetime.date.today().year, **template_data}
         # Render HTML template
         html_content = render_to_string(template_name, template_data)
         
@@ -180,6 +183,19 @@ class EmailService:
             subject="Password Reset Request",
         )
 
+    def send_password_reset_code(self, user_email, user_name, verification_code, expiry_minutes):
+        """Send the one-time code used to reset a forgotten password"""
+        return self.send_email_with_template(
+            email=user_email,
+            template_name="emails/password_reset_code.html",
+            template_data={
+                "user_name": user_name,
+                "verification_code": verification_code,
+                "expiry_minutes": expiry_minutes,
+            },
+            subject="Your Find my Taste password reset code",
+        )
+
     def send_order_confirmation(self, user_email, order_details, user_name=None):
         """Send an order confirmation email"""
         return self.send_email_with_template(
@@ -201,7 +217,6 @@ class EmailService:
             template_name="emails/customer/customer_signup_welcome.html",
             template_data={
                 "user_name": user_name,
-                "current_year": "24 hours", 
                 "app_name": settings.APP_NAME if hasattr(settings, 'APP_NAME') else "Findmytaste",
             },
             subject="Verify Your Account",

@@ -1,0 +1,48 @@
+<!-- templates/emails/base.html
+     Shared Find my Taste email layout. Styles are inline because Gmail and
+     Outlook drop or rewrite <style> blocks. Brand green matches the app icon. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <title>{% block title %}Find my Taste{% endblock %}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#EEF7F3; font-family:'Segoe UI', Helvetica, Arial, sans-serif; color:#1F2937;">
+    <!-- Preheader: the preview line inbox lists show next to the subject. -->
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0;">{% block preheader %}{% endblock %}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#EEF7F3;">
+        <tr>
+            <td align="center" style="padding:32px 16px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; background-color:#FFFFFF; border-radius:16px; overflow:hidden;">
+                    <tr>
+                        <td align="center" style="background-color:#02C897; padding:32px 24px;">
+                            <div style="font-family:Georgia, 'Times New Roman', serif; font-size:30px; font-weight:700; line-height:1.1; color:#FFFFFF; letter-spacing:0.5px;">Find my Taste</div>
+                            {% block header_title %}{% endblock %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:32px 32px 8px 32px; font-size:16px; line-height:1.6; color:#374151;">
+                            {% block content %}{% endblock %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 32px 32px 32px; font-size:14px; line-height:1.6; color:#6B7280;">
+                            Cheers,<br>
+                            <strong style="color:#1F2937;">The Find my Taste team</strong>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align="center" style="background-color:#F6FBF9; border-top:1px solid #E3F1EB; padding:20px 24px; font-size:12px; line-height:1.6; color:#9CA3AF;">
+                            This is an automated message, please do not reply to this email.<br>
+                            Need help? Contact <a href="mailto:support@findmytaste.com.ng" style="color:#02A57C; text-decoration:none;">support@findmytaste.com.ng</a><br>
+                            &copy; {{ current_year }} Find my Taste. All rights reserved.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -19,16 +19,7 @@ import re
 
 
 
-def _otp_debug_suffix(code):
-    """Append the OTP to an API message, but only while DEBUG is on.
-
-    These messages used to carry the live code in production. Anyone able to
-    trigger a send for a known email address got the OTP straight back in the
-    HTTP response, so email access was never needed to take over an account.
-    Kept for local testing only.
-    """
-    from django.conf import settings
-    return f' :: {code}' if settings.DEBUG else ''
+PASSWORD_RESET_CODE_TTL_MINUTES = 10
 
 
 def _first_error_message(errors):
@@ -120,7 +111,6 @@ class LoginAPIView(generics.GenericAPIView):
                 
                 return success_response(
                     message='Please verify your login with the OTP sent.'
-                    + _otp_debug_suffix(code_obj.code)
                 )
 
             else:
@@ -377,8 +367,7 @@ class RegisterAPIView(generics.GenericAPIView):
 
         return success_response(
             # add message that verification code has been sent to their email
-            message='Verification code has been sent to your email.'
-            + _otp_debug_suffix(code_obj.code),
+            message='Verification code has been sent to your email.',
             data={
                 "email":email
             }
@@ -447,8 +436,7 @@ class RegisterVendorAPIView(generics.GenericAPIView):
 
         return success_response(
             # add message that verification code has been sent to their email
-            message='Verification code has been sent to your email.'
-            + _otp_debug_suffix(code_obj.code),
+            message='Verification code has been sent to your email.',
             data={
                 "email":email
             }
@@ -524,8 +512,7 @@ class RegisterRiderAPIView(generics.GenericAPIView):
 
         return success_response(
             # add message that verification code has been sent to their email
-            message='Verification code has been sent to your email.'
-            + _otp_debug_suffix(code_obj.code),
+            message='Verification code has been sent to your email.',
             data={
                 "email":email
             }
@@ -579,7 +566,6 @@ class ResendOTPAPIView(generics.GenericAPIView):
 
         return success_response(
             message='Verification code has been resent to your email.'
-            + _otp_debug_suffix(code_obj.code)
         )
 
 class ResendOTPLoginAPIView(generics.GenericAPIView):
@@ -624,7 +610,6 @@ class ResendOTPLoginAPIView(generics.GenericAPIView):
 
         return success_response(
             message='Verification code has been resent to your email.'
-            + _otp_debug_suffix(code_obj.code)
         )
 
 
@@ -729,7 +714,10 @@ class PasswordResetConfirmView(generics.GenericAPIView):
         except VerificationCode.DoesNotExist:
             return bad_request_response(message="Invalid or expired token.")
         
-        if not code_obj.is_active:
+        expired = code_obj.created_at < timezone.now() - timedelta(minutes=PASSWORD_RESET_CODE_TTL_MINUTES)
+        if not code_obj.is_active or expired:
+            if expired:
+                code_obj.delete()
             return bad_request_response(message="Invalid or expired token.")
         
         code_obj.delete()
@@ -778,10 +766,22 @@ class PasswordResetRequestView(generics.GenericAPIView):
 
 
 
-        token , _ = VerificationCode.objects.get_or_create(
+        # Issue a fresh code on every request so a stale or expired one is
+        # never re-sent.
+        VerificationCode.objects.filter(user=user, verification_type='password').delete()
+        code_obj = VerificationCode.objects.create(
             user=user,
             verification_type='password',
         )
 
+        try:
+            emailService.send_password_reset_code(
+                user_email=user.email,
+                user_name=user.full_name,
+                verification_code=code_obj.code,
+                expiry_minutes=PASSWORD_RESET_CODE_TTL_MINUTES,
+            )
+        except Exception as e:
+            print(f"Error sending password reset email: {e}")
 
-        return success_response(message=f"Password reset email sent. {token.code}")
+        return success_response(message="A password reset code has been sent to your email.")
