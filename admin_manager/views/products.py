@@ -586,7 +586,7 @@ class AdminDashboardOverviewAPIView(generics.GenericAPIView):
 
         active_users = User.objects.filter(is_active=True, **window_filter('last_login')).count()
         new_users = User.objects.filter(**window_filter('created_at')).count()
-        vendors_count = Vendor.objects.count()
+        vendors_count = Vendor.objects.exclude(user__role='rider').count()
         riders_count = Rider.objects.count()
 
         if prev_start and start_date:

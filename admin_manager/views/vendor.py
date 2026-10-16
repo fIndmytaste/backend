@@ -73,7 +73,8 @@ def _filter_orders_for_staff(queryset, user):
 class AdminVendorListView(generics.ListAPIView):
     serializer_class = AdminVendorListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Vendor.objects.select_related('user', 'category').all()
+    # Exclude riders: older signups left them with stray Vendor rows.
+    queryset = Vendor.objects.select_related('user', 'category').exclude(user__role='rider')
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",
@@ -120,7 +121,8 @@ class AdminVendorListView(generics.ListAPIView):
 class AdminMarketPlaceVendorListView(generics.ListAPIView):
     serializer_class = AdminVendorListSerializer
     permission_classes = [IsAuthenticated]
-    queryset = Vendor.objects.select_related('user', 'category').all()
+    # Exclude riders: older signups left them with stray Vendor rows.
+    queryset = Vendor.objects.select_related('user', 'category').exclude(user__role='rider')
 
     @swagger_auto_schema(
         operation_description="Get the details of a vendor.",

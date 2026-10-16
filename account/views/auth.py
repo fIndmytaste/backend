@@ -4,7 +4,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from rest_framework import generics
 from rest_framework.permissions import AllowAny
-from account.models import Rider, User, VerificationCode
+from account.models import Rider, User, Vendor, VerificationCode
 from account.serializers import LoginSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, RegisterOTPResedSerializer, RegisterSerializer, RegisterVendorSerializer, RegisterVerifySerializer, UserSerializer
 from helpers.app_scope import check_app_access
 from helpers.response.response_format import bad_request_response, success_response
@@ -411,6 +411,10 @@ class RegisterVendorAPIView(generics.GenericAPIView):
         valid_user = User.objects.get(pk=user.id)
         valid_user.role = 'vendor'
         valid_user.save()
+        # The vendor record is created here, not in RegisterVendorSerializer:
+        # rider signup shares that serializer, and creating it there gave every
+        # rider a stray Vendor row that showed up under Vendor Management.
+        Vendor.objects.get_or_create(user=valid_user)
         # tokens = TokenManager.get_tokens_for_user(user)
         # response_data = {
         #     "tokens": tokens,

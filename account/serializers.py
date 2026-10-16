@@ -407,8 +407,8 @@ class RegisterVendorSerializer(serializers.Serializer):
         )
         user.set_password(validated_data['password'])
         user.save()
-        # create a vendor object for the user
-        vendor, created = Vendor.objects.get_or_create(user=user)
+        # No role profile here: vendor and rider signup both use this
+        # serializer, so each view creates its own Vendor or Rider record.
         return user
 
 

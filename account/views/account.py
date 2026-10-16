@@ -180,7 +180,14 @@ class ProfileImageUploadView(generics.GenericAPIView):
         
         if not profile_image and not thumbnail:
             return bad_request_response(message="No image file provided")
-        
+
+        # A thumbnail is the store's cover image, so it only applies to an
+        # existing vendor. Creating a Vendor here gave riders who uploaded one a
+        # stray vendor profile.
+        vendor = Vendor.objects.filter(user=user).first() if thumbnail else None
+        if thumbnail and vendor is None:
+            return bad_request_response(message="Only vendor accounts can upload a store thumbnail.")
+
         # Store original profile image URL for rollback
         original_profile_image_url = user.profile_image_url
         
@@ -233,8 +240,7 @@ class ProfileImageUploadView(generics.GenericAPIView):
                         logging.error(f"Backblaze upload succeeded but no download URL returned for user {user.id}")
                         return bad_request_response(message="Image upload failed - no download URL")
                     
-                    vendor, _ = Vendor.objects.get_or_create(user=user)
-                    # Update user's profile image URL
+                    # Update the vendor's store thumbnail URL
                     vendor.thumbnail_url = download_url
                     vendor.save()
                     
