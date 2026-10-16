@@ -197,6 +197,36 @@ class ServiceChargeTier(models.Model):
         )
         return tier.flat_charge if tier else Decimal('0.00')
 
+    @classmethod
+    def preloaded_lookup(cls, vendor):
+        """Return a get_charge_for() equivalent backed by one query.
+
+        For listing many of one vendor's products: loads that vendor's tiers and
+        the category defaults once, then matches each price in memory with the
+        same rules as get_charge_for (vendor tier first, highest min_price wins).
+        """
+        tiers = list(
+            cls.objects
+            .filter(is_active=True)
+            .filter(models.Q(vendor=vendor) | models.Q(vendor__isnull=True))
+            .order_by('-min_price')
+        )
+
+        def lookup(system_category, price, vendor=vendor):
+            def first_match(vendor_id):
+                return next((
+                    t for t in tiers
+                    if t.system_category_id == system_category.pk
+                    and t.vendor_id == vendor_id
+                    and t.min_price <= price
+                    and (t.max_price is None or t.max_price >= price)
+                ), None)
+
+            tier = (first_match(vendor.pk) if vendor is not None else None) or first_match(None)
+            return tier.flat_charge if tier else Decimal('0.00')
+
+        return lookup
+
 
 class BukaItemServiceCharge(models.Model):
     """
@@ -601,7 +631,7 @@ class Product(models.Model):
         key = (self.system_category.name_key or '').lower()
         return 'buka' in key
 
-    def get_service_charge(self, base_price: Decimal = None) -> Decimal:
+    def get_service_charge(self, base_price: Decimal = None, tier_lookup=None) -> Decimal:
         """
         Return the flat service charge the customer pays on top of the base price.
 
@@ -610,6 +640,9 @@ class Product(models.Model):
           • Vendor-specific ServiceChargeTier by price range.
           • Category default ServiceChargeTier by price range.
           • Falls back to 0 if no tier/charge is configured.
+
+        tier_lookup: optional ServiceChargeTier.preloaded_lookup() result, so a
+        caller pricing many products avoids a tier query per product.
         """
         if base_price is None:
             base_price = self.get_discounted_price()
@@ -626,7 +659,7 @@ class Product(models.Model):
 
         effective_category = self.system_category or getattr(self.vendor, 'category', None)
         if effective_category:
-            tier_charge = ServiceChargeTier.get_charge_for(
+            tier_charge = (tier_lookup or ServiceChargeTier.get_charge_for)(
                 effective_category,
                 base_price,
                 vendor=self.vendor,
@@ -636,9 +669,9 @@ class Product(models.Model):
 
         return Decimal('0.00')
 
-    def get_price_with_service_charge(self) -> Decimal:
+    def get_price_with_service_charge(self, tier_lookup=None) -> Decimal:
         """Return base price + flat service charge (no discount)."""
-        charge = self.get_service_charge(self.price)
+        charge = self.get_service_charge(self.price, tier_lookup=tier_lookup)
         return (self.price + charge).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     def get_discounted_price_with_service_charge(self) -> Decimal:

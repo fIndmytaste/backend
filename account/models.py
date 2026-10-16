@@ -805,7 +805,9 @@ class Rider(models.Model):
     location_longitude = models.CharField(max_length=20, null=True, blank=True)
 
     def __str__(self):
-        return f"Rider: "
+        name = (self.user.full_name or '').strip() if self.user_id else ''
+        email = self.user.email if self.user_id else ''
+        return f"{name} ({email})" if name else (email or "Rider")
 
     def update_location(self, latitude, longitude):
         from helpers.redis_rider_geo import geo_add_rider

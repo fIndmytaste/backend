@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from django.db.models import Prefetch
+
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -248,11 +250,15 @@ class AdminBukaServiceChargeListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        product_charges = BukaItemServiceCharge.objects.select_related('product', 'vendor', 'product__vendor').order_by(
-            'vendor__name', 'product__name'
-        )
+        # The extra joins feed customer_price, which otherwise queries the
+        # charge, category and vendor again for every row.
+        product_charges = BukaItemServiceCharge.objects.select_related(
+            'product', 'vendor', 'product__vendor__category',
+            'product__buka_service_charge', 'product__system_category',
+        ).order_by('vendor__name', 'product__name')
         variant_charges = BukaVariantServiceCharge.objects.select_related(
-            'product', 'vendor', 'product__vendor', 'variant', 'variant__category'
+            'product', 'vendor', 'product__vendor', 'variant', 'variant__category',
+            'variant__buka_service_charge',
         ).order_by('vendor__name', 'product__name', 'variant__name')
         vendor_id = request.query_params.get('vendor_id')
         if vendor_id:
@@ -343,38 +349,56 @@ class AdminBukaVendorProductListView(APIView):
         if not vendor_id:
             return bad_request_response(message="vendor_id is required.")
 
+        vendor = Vendor.objects.select_related('category').filter(id=vendor_id).first()
+        if vendor is None:
+            return bad_request_response(message="Vendor not found.")
+
+        # A fixed handful of queries regardless of catalogue size. This used to
+        # run several queries per product and per variant (variants, charge
+        # lookups, tier lookups), which made big stores slow to load.
+        variants = Prefetch(
+            'product_variants',
+            queryset=(
+                ProductVariant.objects
+                .select_related('category', 'buka_service_charge')
+                .filter(is_active=True)
+                .order_by('category__category_name', 'name')
+            ),
+            to_attr='active_variants',
+        )
         products = (
             Product.objects
-            .filter(vendor_id=vendor_id, is_delete=False)
+            .filter(vendor=vendor, is_delete=False)
+            .select_related('system_category', 'buka_service_charge')
+            .prefetch_related(variants)
             .order_by('name')
         )
+        tier_lookup = ServiceChargeTier.preloaded_lookup(vendor)
 
-        return success_response(
-            message="Vendor products retrieved.",
-            data=[
-                {
-                    "id": str(product.id),
-                    "name": product.name,
-                    "base_price": str(product.price),
-                    "customer_price": str(product.get_price_with_service_charge()),
-                    "has_buka_charge": hasattr(product, 'buka_service_charge'),
-                    "variants": [
-                        {
-                            "id": str(variant.id),
-                            "name": variant.name,
-                            "category_name": variant.category.category_name,
-                            "base_price": str(variant.price),
-                            "customer_price": str(variant.get_price_with_commission()),
-                            "has_buka_charge": hasattr(variant, 'buka_service_charge'),
-                        }
-                        for variant in ProductVariant.objects.select_related('category')
-                        .filter(product=product, is_active=True)
-                        .order_by('category__category_name', 'name')
-                    ],
-                }
-                for product in products
-            ],
-        )
+        data = []
+        for product in products:
+            # Every product here belongs to this vendor; reuse the loaded row.
+            product.vendor = vendor
+            data.append({
+                "id": str(product.id),
+                "name": product.name,
+                "base_price": str(product.price),
+                "customer_price": str(product.get_price_with_service_charge(tier_lookup=tier_lookup)),
+                "has_buka_charge": hasattr(product, 'buka_service_charge'),
+                "variants": [
+                    {
+                        "id": str(variant.id),
+                        "name": variant.name,
+                        "category_name": variant.category.category_name,
+                        "base_price": str(variant.price),
+                        "customer_price": str(variant.get_price_with_commission()),
+                        "has_buka_charge": hasattr(variant, 'buka_service_charge'),
+                    }
+                    for variant in product.active_variants
+                ],
+            })
+
+        return success_response(message="Vendor products retrieved.", data=data)
 
 
 class AdminBukaServiceChargeDetailView(APIView):

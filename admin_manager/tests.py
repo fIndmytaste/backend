@@ -799,3 +799,107 @@ class AdminBulkAssignMarketplaceOrdersTests(APITestCase):
             order.refresh_from_db()
             self.assertEqual(order.rider, self.rider)
             self.assertEqual(order.status, 'rider_assigned')
+
+
+class AdminBukaVendorProductListTests(APITestCase):
+    """Pricing tab: a vendor's products load in constant queries with correct prices."""
+
+    def setUp(self):
+        from decimal import Decimal
+        from product.models import BukaItemServiceCharge, BukaVariantServiceCharge, ServiceChargeTier
+        self.D = Decimal
+        self.admin = User.objects.create_superuser(email='pricing-admin@example.com', password='password')
+        self.category = SystemCategory.objects.create(name='Pricing food', name_key='pricing-food')
+        vendor_user = User.objects.create_user(email='pricing-vendor@example.com', password='password', role='vendor')
+        self.vendor = Vendor.objects.create(user=vendor_user, name='Pricing Kitchen', category=self.category)
+        # Category default tiers, plus a vendor-specific tier that overrides 1000-1999.
+        ServiceChargeTier.objects.create(system_category=self.category, min_price=0, max_price=999, flat_charge=50)
+        ServiceChargeTier.objects.create(system_category=self.category, min_price=1000, max_price=None, flat_charge=100)
+        ServiceChargeTier.objects.create(
+            system_category=self.category, vendor=self.vendor, min_price=1000, max_price=1999, flat_charge=70,
+        )
+        self.products = []
+        for i, price in enumerate([500, 1500, 2500]):
+            product = Product.objects.create(
+                name=f'Dish {i}', description='x', price=price, vendor=self.vendor,
+                system_category=self.category,
+            )
+            group = ProductVariantCategory.objects.create(category_name='Size', parent_product=product)
+            small = ProductVariant.objects.create(product=product, category=group, name='Small', price=200)
+            ProductVariant.objects.create(product=product, category=group, name='Large', price=400)
+            self.products.append((product, small))
+        # A Buka override on one product and one variant.
+        BukaItemServiceCharge.objects.create(product=self.products[2][0], vendor=self.vendor, flat_charge=30)
+        BukaVariantServiceCharge.objects.create(
+            variant=self.products[0][1], product=self.products[0][0], vendor=self.vendor, flat_charge=15,
+        )
+        self.client.force_authenticate(self.admin)
+        self.url = reverse('admin-buka-service-charge-products') + f'?vendor_id={self.vendor.id}'
+
+    def test_prices_match_the_model_calculation(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        rows = {row['id']: row for row in response.data['data']}
+        for product, small in self.products:
+            product.refresh_from_db()
+            row = rows[str(product.id)]
+            self.assertEqual(self.D(row['customer_price']), product.get_price_with_service_charge())
+            variant_row = next(v for v in row['variants'] if v['id'] == str(small.id))
+            self.assertEqual(self.D(variant_row['customer_price']), small.get_price_with_commission())
+        # Spot-check each pricing rule: category tier, vendor tier, Buka override.
+        self.assertEqual(rows[str(self.products[0][0].id)]['customer_price'], '550.00')
+        self.assertEqual(rows[str(self.products[1][0].id)]['customer_price'], '1570.00')
+        self.assertEqual(rows[str(self.products[2][0].id)]['customer_price'], '2530.00')
+        self.assertTrue(rows[str(self.products[2][0].id)]['has_buka_charge'])
+
+    def test_query_count_does_not_grow_with_catalogue_size(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as small_catalogue:
+            self.client.get(self.url)
+        for i in range(10):
+            product = Product.objects.create(
+                name=f'Extra {i}', description='x', price=900 + i * 300, vendor=self.vendor,
+                system_category=self.category,
+            )
+            group = ProductVariantCategory.objects.create(category_name='Size', parent_product=product)
+            ProductVariant.objects.create(product=product, category=group, name='Only', price=100)
+        with CaptureQueriesContext(connection) as big_catalogue:
+            response = self.client.get(self.url)
+
+        self.assertEqual(len(response.data['data']), 13)
+        self.assertEqual(len(big_catalogue), len(small_catalogue))
+        self.assertLessEqual(len(big_catalogue), 8)
+
+
+    def test_charge_list_returns_both_charges_with_customer_prices(self):
+        response = self.client.get(reverse('admin-buka-service-charge-list'))
+
+        self.assertEqual(response.status_code, 200)
+        by_target = {row['target_type']: row for row in response.data['data']}
+        self.assertEqual(by_target['product']['customer_price'], '2530.00')
+        self.assertEqual(by_target['variant']['customer_price'], '215.00')
+        self.assertEqual(by_target['product']['vendor_name'], 'Pricing Kitchen')
+
+
+class RiderDisplayTests(APITestCase):
+    def test_rider_str_shows_name_and_email(self):
+        user = User.objects.create_user(email='named-rider@example.com', password='password', full_name='Ada Rider')
+        rider = Rider.objects.create(user=user)
+        self.assertEqual(str(rider), 'Ada Rider (named-rider@example.com)')
+
+    def test_rider_admin_list_shows_and_searches_names(self):
+        admin_user = User.objects.create_superuser(email='django-admin@example.com', password='password')
+        for name in ('Ada Rider', 'Bola Rider'):
+            user = User.objects.create_user(email=f'{name.split()[0].lower()}@example.com', password='password', full_name=name)
+            Rider.objects.create(user=user)
+        self.client.force_login(admin_user)
+
+        listing = self.client.get('/admin/account/rider/')
+        search = self.client.get('/admin/account/rider/', {'q': 'Bola'})
+
+        self.assertContains(listing, 'Ada Rider')
+        self.assertContains(search, 'Bola Rider')
+        self.assertNotContains(search, 'Ada Rider')

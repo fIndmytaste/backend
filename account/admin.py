@@ -379,11 +379,11 @@ class GuarantorInline(admin.TabularInline):
 
 @admin.register(Rider)
 class RiderAdmin(admin.ModelAdmin):
-    list_display = ('profile_photo_thumb', 'user', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
-    # The thumbnail leads the row, but the email stays the link to the record.
-    list_display_links = ('user',)
+    list_display = ('profile_photo_thumb', 'rider_name', 'rider_email', 'rider_phone', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
+    # The thumbnail leads the row; the rider's name is the link to the record.
+    list_display_links = ('rider_name',)
     list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider')
-    search_fields = ('user__email', 'vehicle_number')
+    search_fields = ('user__full_name', 'user__email', 'user__phone_number', 'vehicle_number')
     list_select_related = ('user',)
     readonly_fields = (
         'created_at', 'updated_at', 'location_updated_at',
@@ -416,6 +416,18 @@ class RiderAdmin(admin.ModelAdmin):
         ('Performance', {'fields': ('on_time_delivery_rate', 'successful_delivery_rate', 'order_acceptance_rate', 'average_customer_rating')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at', 'location_updated_at')}),
     )
+
+    @admin.display(description='Name', ordering='user__full_name')
+    def rider_name(self, obj):
+        return (obj.user.full_name or '').strip() or '(no name)'
+
+    @admin.display(description='Email', ordering='user__email')
+    def rider_email(self, obj):
+        return obj.user.email
+
+    @admin.display(description='Phone')
+    def rider_phone(self, obj):
+        return obj.user.phone_number or '-'
 
     @admin.display(description='Photo')
     def profile_photo_thumb(self, obj):
