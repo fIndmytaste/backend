@@ -574,3 +574,228 @@ class AdminReleaseRiderAssignmentTests(APITestCase):
         ids = {str(item['id']) for item in response.data['results']}
         self.assertIn(str(self.order.id), ids)
         self.assertNotIn(str(picked_up.id), ids)
+
+
+class AdminVendorCatalogueTests(APITestCase):
+    """Admins managing a vendor's products on the vendor's behalf."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            email='catalogue-admin@example.com', password='password',
+        )
+        self.category = SystemCategory.objects.create(
+            name='Catalogue food', name_key='catalogue-food',
+        )
+        self.vendor = self._make_vendor('catalogue-vendor@example.com', 'Catalogue Vendor')
+        self.other_vendor = self._make_vendor('catalogue-other@example.com', 'Other Vendor')
+        self.client.force_authenticate(self.admin)
+
+        upload_patch = patch(
+            'vendor.views.upload_to_backblaze',
+            side_effect=lambda **kw: {'downloadUrl': f"https://f.backblazeb2.com/{kw['file_name']}"},
+        )
+        self.upload = upload_patch.start()
+        self.addCleanup(upload_patch.stop)
+
+    def _make_vendor(self, email, name):
+        user = User.objects.create_user(email=email, password='password', role='vendor')
+        return Vendor.objects.create(
+            user=user, name=name, email=email, category=self.category,
+            approval_status='approved', is_active=True,
+        )
+
+    def _image(self, name='dish.png'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, b'\x89PNG\r\n\x1a\n', content_type='image/png')
+
+    def _variants_json(self, **overrides):
+        import json
+        group = {
+            'variant_category_name': 'Size',
+            'select_at_least_one_variant': True,
+            'allow_multiple_quantity': False,
+            'allow_multiple_variant_selection': False,
+            'max_quantity_per_variant': None,
+            'variants': [
+                {'name': 'Small', 'price': 1500, 'stock': 0},
+                {'name': 'Large', 'price': 2500, 'stock': 5},
+            ],
+        }
+        group.update(overrides)
+        return json.dumps([group])
+
+    def _create_url(self, vendor=None):
+        return reverse('admin-vendor-product-create', kwargs={'vendor_id': (vendor or self.vendor).id})
+
+    def _detail_url(self, product, vendor=None):
+        return reverse('admin-vendor-product-detail', kwargs={
+            'vendor_id': (vendor or self.vendor).id, 'product_id': product.id,
+        })
+
+    def _create_product(self, **extra):
+        data = {
+            'name': 'Jollof rice', 'description': 'Smoky party jollof', 'price': '2000',
+            'stock': '0', 'is_active': 'true', 'product_variant': self._variants_json(),
+            'images': [self._image('a.png'), self._image('b.png')],
+        }
+        data.update(extra)
+        return self.client.post(self._create_url(), data, format='multipart')
+
+    def test_admin_creates_product_with_variants_images_and_menu_category(self):
+        from product.models import ProductImage, VendorCategory
+        menu = VendorCategory.objects.create(vendor=self.vendor, name='Rice', description='')
+
+        response = self._create_product(category=str(menu.id), system_category=str(self.category.id))
+
+        self.assertEqual(response.status_code, 201, response.data)
+        product = Product.objects.get(id=response.data['data']['id'])
+        self.assertEqual(product.vendor, self.vendor)
+        self.assertEqual(product.category, menu)
+        self.assertEqual(product.system_category, self.category)
+        group = ProductVariantCategory.objects.get(parent_product=product)
+        self.assertEqual(group.category_name, 'Size')
+        self.assertTrue(group.select_at_least_one_variant_enabled)
+        self.assertEqual(
+            sorted(ProductVariant.objects.filter(category=group).values_list('name', flat=True)),
+            ['Large', 'Small'],
+        )
+        images = ProductImage.objects.filter(product=product)
+        self.assertEqual(images.count(), 2)
+        self.assertEqual(images.filter(is_primary=True).count(), 1)
+        # Admin sees the vendor's own price, not the customer price.
+        self.assertEqual(response.data['data']['price'], 2000.0)
+
+    def test_admin_bypasses_product_creation_lock_without_using_a_grant(self):
+        self.vendor.product_creation_locked = True
+        self.vendor.product_creation_grant_count = 1
+        self.vendor.save()
+
+        response = self._create_product()
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.vendor.refresh_from_db()
+        self.assertEqual(self.vendor.product_creation_grant_count, 1)
+
+    def test_menu_category_from_another_vendor_is_rejected(self):
+        from product.models import VendorCategory
+        foreign = VendorCategory.objects.create(vendor=self.other_vendor, name='Soups', description='')
+
+        response = self._create_product(category=str(foreign.id))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Product.objects.filter(vendor=self.vendor).exists())
+
+    def test_staff_needs_vendor_page_permission(self):
+        staff = User.objects.create_user(
+            email='catalogue-staff@example.com', password='password', is_staff=True,
+        )
+        self.client.force_authenticate(staff)
+        self.assertEqual(self._create_product().status_code, 403)
+
+        StaffPagePermission.objects.create(user=staff, page='vendor')
+        self.assertEqual(self._create_product().status_code, 201)
+
+    def test_customer_cannot_create_products_for_vendors(self):
+        customer = User.objects.create_user(email='catalogue-customer@example.com', password='password')
+        self.client.force_authenticate(customer)
+        self.assertEqual(self._create_product().status_code, 403)
+
+    def test_admin_edits_product_and_replaces_variants(self):
+        product = Product.objects.get(id=self._create_product().data['data']['id'])
+        variants = self._variants_json(variants=[{'name': 'Medium', 'price': 1800, 'stock': 0}])
+
+        response = self.client.patch(
+            self._detail_url(product),
+            {'name': 'Jollof special', 'is_active': 'false', 'product_variant': variants},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        product.refresh_from_db()
+        self.assertEqual(product.name, 'Jollof special')
+        self.assertFalse(product.is_active)
+        active = ProductVariant.objects.filter(product=product, is_active=True)
+        self.assertEqual(list(active.values_list('name', flat=True)), ['Medium'])
+
+    def test_product_of_another_vendor_is_not_found(self):
+        product = Product.objects.get(id=self._create_product().data['data']['id'])
+        response = self.client.get(self._detail_url(product, vendor=self.other_vendor))
+        self.assertEqual(response.status_code, 404)
+
+    def test_admin_deletes_product(self):
+        product = Product.objects.get(id=self._create_product().data['data']['id'])
+        response = self.client.delete(self._detail_url(product))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Product.objects.filter(id=product.id).exists())
+
+    def test_deleting_primary_image_promotes_another(self):
+        from product.models import ProductImage
+        product = Product.objects.get(id=self._create_product().data['data']['id'])
+        primary = ProductImage.objects.get(product=product, is_primary=True)
+
+        response = self.client.delete(reverse('admin-vendor-product-image-delete', kwargs={
+            'vendor_id': self.vendor.id, 'product_id': product.id, 'image_id': primary.id,
+        }))
+
+        self.assertEqual(response.status_code, 200)
+        remaining = ProductImage.objects.filter(product=product)
+        self.assertEqual(remaining.count(), 1)
+        self.assertTrue(remaining.get().is_primary)
+
+    def test_menu_categories_are_created_once_and_listed_per_vendor(self):
+        url = reverse('admin-vendor-categories', kwargs={'vendor_id': self.vendor.id})
+
+        first = self.client.post(url, {'name': 'Rice dishes'})
+        again = self.client.post(url, {'name': 'rice dishes'})
+        listed = self.client.get(url)
+        other = self.client.get(reverse('admin-vendor-categories', kwargs={'vendor_id': self.other_vendor.id}))
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(again.data['data']['id'], first.data['data']['id'])
+        self.assertEqual([c['name'] for c in listed.data['data']], ['Rice dishes'])
+        self.assertEqual(other.data['data'], [])
+
+
+class AdminBulkAssignMarketplaceOrdersTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            email='bulk-admin@example.com', password='password',
+        )
+        category = SystemCategory.objects.create(name='Bulk market', name_key='bulk-market')
+        vendor_user = User.objects.create_user(
+            email='bulk-vendor@example.com', password='password', role='vendor',
+        )
+        self.vendor = Vendor.objects.create(
+            user=vendor_user, name='Bulk Market Stall', email=vendor_user.email,
+            category=category, approval_status='approved', is_active=True,
+            is_marketplace=True,
+        )
+        rider_user = User.objects.create_user(
+            email='bulk-rider@example.com', password='password', role='rider',
+        )
+        self.rider = Rider.objects.create(
+            user=rider_user, mode_of_transport='bike', status='active',
+            is_verified=True, is_in_house_rider=True,
+        )
+        customer = User.objects.create_user(email='bulk-customer@example.com', password='password')
+        self.orders = [
+            Order.objects.create(
+                user=customer, vendor=self.vendor, payment_status='paid',
+                status='looking_for_rider', total_amount=1000,
+            )
+            for _ in range(2)
+        ]
+        self.client.force_authenticate(self.admin)
+
+    def test_assigns_every_marketplace_order_to_the_rider(self):
+        response = self.client.post(
+            reverse('admin_bulk_assign_marketplace_orders'),
+            {'rider_id': str(self.rider.id), 'order_ids': [str(o.id) for o in self.orders]},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        for order in self.orders:
+            order.refresh_from_db()
+            self.assertEqual(order.rider, self.rider)
+            self.assertEqual(order.status, 'rider_assigned')

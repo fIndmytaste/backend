@@ -36,6 +36,12 @@ from admin_manager.views.product_creation_lock import (
     AdminVendorToggleProductCreationLockView,
 )
 from admin_manager.views.staff_permissions import StaffPagePermissionsView
+from admin_manager.views.vendor_products import (
+    AdminVendorCategoryListCreateView,
+    AdminVendorProductCreateView,
+    AdminVendorProductDetailView,
+    AdminVendorProductImageDeleteView,
+)
 from admin_manager.views.service_charges import (
     AdminServiceChargeTierListCreateView,
     AdminServiceChargeTierDetailView,
@@ -81,6 +87,12 @@ urlpatterns = [
     path('vendor/<uuid:vendor_id>/suspend/', admin_vendor_view.AdminVendorSuspendView.as_view(), name='admin_product_view-vendor_suspend'),
     path('vendor/<uuid:vendor_id>/delete/', admin_vendor_view.AdminVendorDeleteView.as_view(), name='admin_product_view-vendor_delete'),
     path('vendor/<uuid:vendor_id>/ratings/', admin_vendor_view.AdminVendorRatingListView.as_view(), name='admin_vendor-ratings-list'),
+
+    # vendor catalogue managed by admins on the vendor's behalf
+    path('vendor/<uuid:vendor_id>/categories/', AdminVendorCategoryListCreateView.as_view(), name='admin-vendor-categories'),
+    path('vendor/<uuid:vendor_id>/products/create/', AdminVendorProductCreateView.as_view(), name='admin-vendor-product-create'),
+    path('vendor/<uuid:vendor_id>/products/<uuid:product_id>/', AdminVendorProductDetailView.as_view(), name='admin-vendor-product-detail'),
+    path('vendor/<uuid:vendor_id>/products/<uuid:product_id>/images/<uuid:image_id>/', AdminVendorProductImageDeleteView.as_view(), name='admin-vendor-product-image-delete'),
 
     # product creation lock (per-vendor)
     path('vendor/<uuid:vendor_id>/product-creation/', AdminVendorProductCreationStatusView.as_view(), name='admin-vendor-product-creation-status'),

@@ -338,7 +338,9 @@ class ProductSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context['request']
-        vendor = Vendor.objects.get(user=request.user)
+        # Admins create products on a vendor's behalf and pass that vendor in;
+        # vendors creating their own products fall back to the requesting user.
+        vendor = self.context.get('vendor') or Vendor.objects.get(user=request.user)
 
         validated_data.pop('product_variant', [])
         validated_data.pop('select_at_least_one_variant', None)

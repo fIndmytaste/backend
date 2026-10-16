@@ -122,17 +122,8 @@ def reserve_order_stock(product_quantities=None, variant_quantities=None):
                 f"{product.name} has only {product.stock} unit(s) left in stock."
             )
 
-    for product_id, quantity in product_quantities.items():
-        product = products.get(product_id)
-        if product and quantity > 0 and _is_stock_managed_product(product):
-            Product.objects.filter(id=product.id).update(
-                stock=F('stock') - quantity,
-                purchases=F('purchases') + quantity,
-            )
-
-    if not variant_quantities:
-        return
-
+    # Validate every product and variant before decrementing anything, so a
+    # rejected variant never leaves its parent product's stock reduced.
     variant_ids = [variant_id for variant_id, quantity in variant_quantities.items() if quantity > 0]
     variants = {
         variant.id: variant
@@ -152,6 +143,14 @@ def reserve_order_stock(product_quantities=None, variant_quantities=None):
         if variant.stock < quantity:
             raise ValidationError(
                 f"{variant.name} has only {variant.stock} unit(s) left in stock."
+            )
+
+    for product_id, quantity in product_quantities.items():
+        product = products.get(product_id)
+        if product and quantity > 0 and _is_stock_managed_product(product):
+            Product.objects.filter(id=product.id).update(
+                stock=F('stock') - quantity,
+                purchases=F('purchases') + quantity,
             )
 
     for variant_id, quantity in variant_quantities.items():

@@ -1046,8 +1046,10 @@ class AdminReleaseRiderAssignmentAPIView(generics.GenericAPIView):
     def post(self, request, id):
         try:
             with transaction.atomic():
+                # Lock only the order row: rider is nullable, so the join is an
+                # outer join and Postgres refuses FOR UPDATE across it.
                 queryset = _filter_for_staff_marketplaces(
-                    Order.objects.select_for_update().select_related(
+                    Order.objects.select_for_update(of=('self',)).select_related(
                         'rider__user', 'vendor', 'vendor__user', 'user',
                     ).prefetch_related('vendor__marketplace_set'),
                     request.user,

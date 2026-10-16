@@ -752,16 +752,24 @@ class AdminBulkAssignMarketplaceOrdersView(generics.GenericAPIView):
         now = timezone.now()
 
         with transaction.atomic():
-            orders = (
+            # Find the eligible ids first, then lock those rows by id alone:
+            # Postgres rejects FOR UPDATE combined with DISTINCT or with the
+            # outer join that vendor__marketplace produces.
+            eligible_ids = list(
                 Order.objects
-                .select_for_update()
-                .select_related('vendor')
                 .filter(
                     Q(vendor__is_marketplace=True) |
                     Q(vendor__marketplace__isnull=False),
                     id__in=order_ids,
                 )
+                .values_list('id', flat=True)
                 .distinct()
+            )
+            orders = (
+                Order.objects
+                .select_for_update(of=('self',))
+                .select_related('vendor')
+                .filter(id__in=eligible_ids)
             )
             orders_by_id = {str(order.id): order for order in orders}
 
