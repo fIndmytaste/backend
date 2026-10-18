@@ -766,6 +766,13 @@ class Rider(models.Model):
         default=False, help_text="Marketplace riders are in-house and receive a fixed salary")
     salary = models.DecimalField(max_digits=12, decimal_places=2,
                                  default=0.00, help_text="Monthly salary for in-house riders")
+    # Riders were swapping in photos that are not of themselves, so once a
+    # rider has a profile photo it is locked. An admin grants one change at a
+    # time; the grant is used up by the next successful photo upload.
+    profile_photo_change_allowed = models.BooleanField(
+        default=False,
+        help_text="Let this rider replace their profile photo once. Resets after they upload a new one.",
+    )
 
     # Performance metrics (cached/denormalized for quick access)
     on_time_delivery_rate = models.DecimalField(
@@ -803,6 +810,20 @@ class Rider(models.Model):
     address = models.CharField(max_length=256, null=True, blank=True)
     location_latitude = models.CharField(max_length=20, null=True, blank=True)
     location_longitude = models.CharField(max_length=20, null=True, blank=True)
+
+    PROFILE_PHOTO_LOCKED_MESSAGE = (
+        "Your profile photo is locked. Contact support if you need to change it."
+    )
+
+    def can_change_profile_photo(self):
+        """A first photo is always allowed; replacing one needs an admin grant."""
+        has_photo = bool(self.user_id and (self.user.profile_image_url or '').strip())
+        return not has_photo or self.profile_photo_change_allowed
+
+    def consume_profile_photo_grant(self):
+        if self.profile_photo_change_allowed:
+            self.profile_photo_change_allowed = False
+            self.save(update_fields=['profile_photo_change_allowed'])
 
     def __str__(self):
         name = (self.user.full_name or '').strip() if self.user_id else ''

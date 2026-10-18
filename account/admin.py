@@ -382,8 +382,9 @@ class RiderAdmin(admin.ModelAdmin):
     list_display = ('profile_photo_thumb', 'rider_name', 'rider_email', 'rider_phone', 'mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')
     # The thumbnail leads the row; the rider's name is the link to the record.
     list_display_links = ('rider_name',)
-    list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider')
+    list_filter = ('mode_of_transport', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'profile_photo_change_allowed')
     search_fields = ('user__full_name', 'user__email', 'user__phone_number', 'vehicle_number')
+    actions = ('allow_profile_photo_change', 'lock_profile_photo')
     list_select_related = ('user',)
     readonly_fields = (
         'created_at', 'updated_at', 'location_updated_at',
@@ -396,11 +397,14 @@ class RiderAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {'fields': ('user', 'mode_of_transport', 'vehicle_number', 'vehicle_brand', 'plate_number', 'status', 'document_status', 'is_verified', 'is_online', 'is_in_house_rider', 'salary')}),
         ('Rider Photo', {
-            'fields': ('profile_photo_preview',),
+            'fields': ('profile_photo_preview', 'profile_photo_change_allowed'),
             'description': (
                 'The selfie the rider uploaded from the rider app. This is the '
                 'photo to check the ID documents below against. It is stored on '
-                'the rider&rsquo;s user account, so edit it there if it needs to change.'
+                'the rider&rsquo;s user account, so edit it there if it needs to change. '
+                'Riders cannot replace their photo themselves once one is on file; tick '
+                '&ldquo;Profile photo change allowed&rdquo; to let them upload a new one '
+                'once (it unticks itself after they do).'
             ),
         }),
         ('Verification Documents', {'fields': (
@@ -416,6 +420,16 @@ class RiderAdmin(admin.ModelAdmin):
         ('Performance', {'fields': ('on_time_delivery_rate', 'successful_delivery_rate', 'order_acceptance_rate', 'average_customer_rating')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at', 'location_updated_at')}),
     )
+
+    @admin.action(description='Allow selected riders to change their profile photo once')
+    def allow_profile_photo_change(self, request, queryset):
+        count = queryset.update(profile_photo_change_allowed=True)
+        self.message_user(request, f'{count} rider(s) can now change their profile photo once.')
+
+    @admin.action(description='Lock profile photo for selected riders')
+    def lock_profile_photo(self, request, queryset):
+        count = queryset.update(profile_photo_change_allowed=False)
+        self.message_user(request, f'Profile photo locked for {count} rider(s).')
 
     @admin.display(description='Name', ordering='user__full_name')
     def rider_name(self, obj):

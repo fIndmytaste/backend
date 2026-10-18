@@ -1,10 +1,10 @@
 from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from django.db import transaction
 from django.db.models import Case, IntegerField, Sum, Value, When
 from django.utils import timezone
 from django.db.models import Avg, Count, Q, DecimalField, Min
-from account.models import Rider, RiderRating, User
+from account.models import Rider, RiderRating, StaffPagePermission, User
 from account.serializers import RiderDocumentverificationSerializer, RiderSerializer
 from admin_manager.serializers.lists import AdminRiderListSerializer
 from admin_manager.serializers.products import AdminProductCategoriesSerializer
@@ -972,3 +972,65 @@ class AdminRiderFundRequestActionView(generics.GenericAPIView):
             return bad_request_response(message=message)
 
         return success_response(message="Fund request approved. Transfer initiated to the rider's bank account.")
+
+
+class CanManageRiders(BasePermission):
+    """Superusers and admins, or staff granted the Rider Management page."""
+
+    message = "You do not have permission to manage riders."
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        if user.is_superuser or getattr(user, 'role', None) == 'admin':
+            return True
+        return bool(user.is_staff) and StaffPagePermission.objects.filter(
+            user=user, page='riders',
+        ).exists()
+
+
+class AdminRiderProfilePhotoLockView(generics.GenericAPIView):
+    """GET  /admin-manager/riders/<id>/profile-photo-lock/
+    POST /admin-manager/riders/<id>/profile-photo-lock/  {"allowed": true|false}
+
+    Riders cannot replace their profile photo once one is on file. Setting
+    allowed=true lets the rider upload one new photo; the grant is used up by
+    that upload. allowed=false locks it again.
+    """
+
+    permission_classes = [IsAuthenticated, CanManageRiders]
+
+    def _state(self, rider):
+        return {
+            'rider_id': str(rider.id),
+            'has_profile_photo': bool((rider.user.profile_image_url or '').strip()),
+            'profile_photo_change_allowed': rider.profile_photo_change_allowed,
+            'can_change_profile_photo': rider.can_change_profile_photo(),
+        }
+
+    def _rider(self, rider_id):
+        return Rider.objects.select_related('user').filter(id=rider_id).first()
+
+    def get(self, request, id):
+        rider = self._rider(id)
+        if rider is None:
+            return bad_request_response(message="Rider not found.", status_code=404)
+        return success_response(data=self._state(rider))
+
+    def post(self, request, id):
+        rider = self._rider(id)
+        if rider is None:
+            return bad_request_response(message="Rider not found.", status_code=404)
+        allowed = request.data.get('allowed')
+        if not isinstance(allowed, bool):
+            return bad_request_response(message="'allowed' must be true or false.")
+        rider.profile_photo_change_allowed = allowed
+        rider.save(update_fields=['profile_photo_change_allowed'])
+        return success_response(
+            message=(
+                "Rider can now change their profile photo once."
+                if allowed else "Rider's profile photo is locked."
+            ),
+            data=self._state(rider),
+        )

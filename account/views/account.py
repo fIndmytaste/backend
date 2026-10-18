@@ -188,6 +188,17 @@ class ProfileImageUploadView(generics.GenericAPIView):
         if thumbnail and vendor is None:
             return bad_request_response(message="Only vendor accounts can upload a store thumbnail.")
 
+        # Riders cannot swap their photo once one is on file unless an admin
+        # has granted a change (see Rider.profile_photo_change_allowed). The
+        # rider app already shows this message on any non-200 response.
+        rider = Rider.objects.filter(user=user).select_related('user').first() if profile_image else None
+        if rider is not None and not rider.can_change_profile_photo():
+            return bad_request_response(
+                message=Rider.PROFILE_PHOTO_LOCKED_MESSAGE,
+                group='PROFILE_PHOTO_LOCKED',
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
         # Store original profile image URL for rollback
         original_profile_image_url = user.profile_image_url
         
@@ -249,6 +260,9 @@ class ProfileImageUploadView(generics.GenericAPIView):
                     # Return success response with updated data
                 
                 
+                if rider is not None:
+                    rider.consume_profile_photo_grant()
+
                 response_serializer = self.serializer_class(user)
                 return success_response(
                     message="Profile image uploaded successfully",

@@ -118,6 +118,7 @@ urlpatterns = [
     path('riders/performance-metrics/', admin_riders_view.AllRidersPerformanceMetricsView.as_view(),name='all-riders-performance-metrics'),
     path('riders/<uuid:id>/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_riders-list'),
     path('riders/<uuid:id>/suspend/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-suspend'),
+    path('riders/<uuid:id>/profile-photo-lock/', admin_riders_view.AdminRiderProfilePhotoLockView.as_view(), name='admin_rider-profile-photo-lock'),
     path('riders/<uuid:id>/document-status/', admin_riders_view.AdminRiderDocumentverificationView.as_view(), name='admin_rider-document-status'),
     path('riders/<uuid:id>/document/', admin_riders_view.AdminRiderRetrieveDestroyView.as_view(), name='admin_rider-document'),
     path('riders/<uuid:id>/orders/', admin_riders_view.AdminRiderOrderListView.as_view(), name='admin_rider-orders-list'),

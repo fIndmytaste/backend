@@ -1998,8 +1998,12 @@ class UploadRiderDocumentView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            rider = Rider.objects.get(id=id)
+            rider = Rider.objects.select_related('user').get(id=id)
         except Rider.DoesNotExist:
+            return bad_request_response(message='Rider not found', status_code=404)
+        # Only the rider themselves (or staff) may change a rider's documents
+        # and photo; this used to accept any logged-in user for any rider id.
+        if rider.user_id != request.user.id and not (request.user.is_staff or request.user.is_superuser):
             return bad_request_response(message='Rider not found', status_code=404)
 
         # Update extra fields
@@ -2042,6 +2046,14 @@ class UploadRiderDocumentView(generics.GenericAPIView):
                             )
                         })
                         continue
+                    if doc_type == 'profile_photo' and not rider.can_change_profile_photo():
+                        # Locked photo: report it, but still save the other
+                        # documents so re-submission keeps working.
+                        failed_documents.append({
+                            'document_type': doc_type,
+                            'reason': rider.PROFILE_PHOTO_LOCKED_MESSAGE,
+                        })
+                        continue
                     try:
                         if doc_type == 'profile_photo':
                             from helpers.backblaze import upload_to_backblaze
@@ -2051,6 +2063,8 @@ class UploadRiderDocumentView(generics.GenericAPIView):
                             upload_result = upload_to_backblaze(image_file, filename)
                             if upload_result and upload_result.get('downloadUrl'):
                                 rider.user.profile_image_url = upload_result['downloadUrl']
+                                # Any admin grant is used up; rider.save() below persists it.
+                                rider.profile_photo_change_allowed = False
                                 # Counted like any other document, otherwise a
                                 # rider who only re-uploads their photo gets a
                                 # 400 back on a request that actually worked.
@@ -2128,6 +2142,9 @@ class RiderGuarantorUpdateView(generics.GenericAPIView):
         try:
             rider = Rider.objects.get(id=id)
         except Rider.DoesNotExist:
+            return bad_request_response(message='Rider not found', status_code=404)
+        # Same rule as document upload: only the rider themselves or staff.
+        if rider.user_id != request.user.id and not (request.user.is_staff or request.user.is_superuser):
             return bad_request_response(message='Rider not found', status_code=404)
         # Remove old guarantors
         
