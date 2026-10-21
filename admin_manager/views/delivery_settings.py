@@ -235,6 +235,13 @@ CONFIG_META = {
         'description': 'Maximum service fee in NGN',
         'default': 500.0, 'min_value': 0, 'max_value': 100000,
     },
+    # Flat service fee charged on every order. Once an admin saves this, it
+    # replaces the percentage-of-order fee above (see DeliveryConfig).
+    'service_fee_amount': {
+        'category': 'pricing', 'data_type': 'float',
+        'description': 'Fixed service fee per order in NGN',
+        'default': 0.0, 'min_value': 0, 'max_value': 100000,
+    },
 }
 
 # Order preserved for a stable, readable GET response.
@@ -312,6 +319,9 @@ class AdminDeliveryConfigView(APIView):
         for key in CONFIG_KEYS:
             value = config.get(key, CONFIG_META[key]['default'])
             data[key] = _tiers_out(value) if key == 'base_pricing_tiers' else value
+        # Until a fixed amount is saved, orders still use the legacy
+        # percentage fee; the page shows which one is live.
+        data['service_fee_mode'] = 'fixed' if DeliveryConfig.SERVICE_FEE_FIXED_AMOUNT is not None else 'percentage'
         return success_response(message="Delivery configuration retrieved.", data=data)
 
     def patch(self, request):

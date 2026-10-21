@@ -1829,6 +1829,65 @@ def process_refund(order:Order):
 
 
 
+def accept_pending_order(order, accepted_by_admin=None):
+    """
+    Accept a pending order on the vendor's side and open it to riders.
+
+    Shared by the vendor app and the admin dashboard's "Accept for vendor"
+    button, so both take exactly the same path. The row is locked first, so a
+    vendor and an admin pressing accept at the same moment cannot both run it
+    and notify riders twice.
+
+    Returns (accepted: bool, message: str).
+    """
+    from django.db import transaction as db_transaction
+
+    with db_transaction.atomic():
+        locked = Order.objects.select_for_update().filter(pk=order.pk).first()
+        if locked is None:
+            return False, "Order not found."
+        if locked.status != 'pending':
+            return False, f"Cannot accept an order that is already '{locked.status}'."
+        locked.status = 'confirmed'
+        locked.delivery_status = 'confirmed'
+        locked.save()
+
+    order.refresh_from_db()
+
+    # Notify customer via socket and push
+    send_order_accepted_notification_customer(order)
+
+    # send push notification to riders
+    send_new_order_push_notification_riders(order)
+
+    order.status = 'looking_for_rider'
+    order.save()
+
+    if accepted_by_admin is not None and order.vendor_id:
+        # Tell the vendor so they are not surprised by a rider arriving.
+        title = "Order accepted for you"
+        body = (
+            f"Find My Taste accepted order #{order.track_id} on your behalf. "
+            "Please prepare it for pickup."
+        )
+        try:
+            Notification.objects.create(user=order.vendor.user, title=title, content=body)
+            notification_helper.send_to_user_async(
+                user=order.vendor.user,
+                title=title,
+                body=body,
+                data={
+                    "event": "order_accepted_by_admin",
+                    "order_id": str(order.id),
+                    "screen": "order_management",
+                },
+            )
+        except Exception as error:
+            print(f"Admin-accept vendor notification error: {error}")
+
+    return True, "Order accepted successfully."
+
+
 class VendorOrderActionAPIView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = VendorOrderActionSerializer
@@ -1863,26 +1922,9 @@ class VendorOrderActionAPIView(generics.GenericAPIView):
 
         action = request.data.get('action')
         if action == 'accept':
-            order.status = 'confirmed'
-            order.delivery_status = 'confirmed'
-            order.save()
-
-            # Notify customer via socket and push
-            send_order_accepted_notification_customer(order)
-
-
-            # order.status = 'looking_for_rider'
-            # order.delivery_status = 'awaiting_rider'
-            # order.save()
-
-            # send push notification to riders
-            send_new_order_push_notification_riders(order)
-
-            order.status = 'looking_for_rider'
-            order.save()
-            # 
-
-
+            accepted, message = accept_pending_order(order)
+            if not accepted:
+                return bad_request_response(message=message)
             return success_response(message="Order accepted successfully.")
         
         elif action == 'reject':

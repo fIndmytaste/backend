@@ -200,6 +200,23 @@ class RiderDocumentverificationSerializer(serializers.ModelSerializer):
         fields = ['document_status']
 
 
+def normalize_full_name(value):
+    """Collapse repeated/odd whitespace. Any number of names is fine (first,
+    middle, surname, compound names); the apps ask for at least two."""
+    cleaned = ' '.join(str(value or '').split())
+    if not cleaned:
+        raise ValidationError('Please enter your name.')
+    if len(cleaned) > 64:
+        raise ValidationError('Name is too long (64 characters at most).')
+    return cleaned
+
+
+def _phone_verification_required():
+    # Apps block on phone verification only while this flag is on.
+    from account.views.verification import phone_verification_required
+    return phone_verification_required()
+
+
 class UserSerializer(serializers.ModelSerializer):
     staff_profile = ProfileSerializer(read_only=True)
     password = serializers.CharField(write_only=True)
@@ -212,8 +229,11 @@ class UserSerializer(serializers.ModelSerializer):
             'role', "password", "phone_number", "profile_image",
             "bank_account", "bank_name", "bank_account_name", 'referral_code',
             'referral_free_bonus', 'is_verified', 'created_at',
-            'updated_at', 'staff_profile', 'dob'
+            'updated_at', 'staff_profile', 'dob',
+            'phone_verified', 'auth_provider', 'marketing_emails_opt_in',
         ]
+        # Only the SMS code flow may mark a number verified.
+        read_only_fields = ['phone_verified', 'auth_provider']
 
     def get_profile_image(self, obj: User):
         return obj.get_profile_image()
@@ -260,6 +280,11 @@ class UserSerializer(serializers.ModelSerializer):
             representation['delivery_zone'] = (
                 rider_data.get('current_zone') if rider_data else None
             )
+            # Lets the rider app show the name field as locked.
+            representation['can_change_name'] = (
+                rider_obj.can_change_name() if rider_obj else True
+            )
+            representation['phone_verification_required'] = _phone_verification_required()
             return representation
 
         elif instance.role == 'vendor':
@@ -269,10 +294,12 @@ class UserSerializer(serializers.ModelSerializer):
                 VendorSerializer(vendor_obj).data if vendor_obj else None
             )
             representation['profile_image'] = instance.get_profile_image()
+            representation['phone_verification_required'] = _phone_verification_required()
             return representation
 
         representation = super().to_representation(instance)
         representation['profile_image'] = instance.get_profile_image()
+        representation['phone_verification_required'] = _phone_verification_required()
         return representation
 
     def create(self, validated_data):
@@ -336,8 +363,13 @@ class PasswordChangeSerializer(serializers.Serializer):
 
 
 class RegisterSerializer(serializers.Serializer):
-    full_name = serializers.CharField(max_length=20, required=True)
+    # 64 matches User.full_name. It used to be 20, which rejected most
+    # three-part names ("Olanrewaju Taiwo Adebayo" is 24 characters).
+    full_name = serializers.CharField(max_length=64, required=True)
     phone_number = serializers.CharField(max_length=20, required=True)
+
+    def validate_full_name(self, value):
+        return normalize_full_name(value)
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True)
     referral_code = serializers.CharField(
@@ -378,8 +410,13 @@ class RegisterOTPResedSerializer(serializers.Serializer):
 
 
 class RegisterVendorSerializer(serializers.Serializer):
-    full_name = serializers.CharField(max_length=20, required=True)
+    # 64 matches User.full_name. It used to be 20, which rejected most
+    # three-part names ("Olanrewaju Taiwo Adebayo" is 24 characters).
+    full_name = serializers.CharField(max_length=64, required=True)
     phone_number = serializers.CharField(max_length=20, required=True)
+
+    def validate_full_name(self, value):
+        return normalize_full_name(value)
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True)
     referral_code = serializers.CharField(

@@ -385,6 +385,16 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'rider.process_weekly_rider_payouts',
         'schedule': crontab(day_of_week='friday', hour=10, minute=0),
     },
+    # Pay rider reward bonuses as targets are reached (admin "Rider Rewards").
+    'evaluate-rider-rewards': {
+        'task': 'admin_manager.evaluate_rider_rewards',
+        'schedule': crontab(minute='*/30'),
+    },
+    # Pay out cleared balances for vendors on automatic payouts.
+    'process-vendor-auto-payouts': {
+        'task': 'wallet.process_vendor_auto_payouts',
+        'schedule': crontab(hour=9, minute=0),
+    },
 }
 
 

@@ -132,9 +132,40 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
             if email:
                 if User.objects.filter(email=email).exclude(id=user.id).exists():
                     return bad_request_response('Email already exists')
-                
+
+            # Riders cannot rename themselves (their name must match their
+            # verified documents) unless an admin has granted one change.
+            rider = None
+            name_changed = False
+            new_name = serializer.validated_data.get('full_name')
+            if new_name is not None:
+                new_name = ' '.join(str(new_name).split())
+                serializer.validated_data['full_name'] = new_name
+                name_changed = new_name != ' '.join((user.full_name or '').split())
+            if name_changed and user.role == 'rider':
+                rider = Rider.objects.filter(user=user).select_related('user').first()
+                if rider is not None and not rider.can_change_name():
+                    return bad_request_response(
+                        message=Rider.NAME_LOCKED_MESSAGE,
+                        group='NAME_LOCKED',
+                        status_code=status.HTTP_403_FORBIDDEN,
+                    )
+
+            # A verified badge belongs to a number; a new number starts unverified.
+            new_phone = serializer.validated_data.get('phone_number')
+            phone_changed = (
+                new_phone is not None
+                and str(new_phone).strip() != (user.phone_number or '').strip()
+            )
+
             serializer.save()
-            return success_response(serializer.data)
+            if phone_changed and user.phone_verified:
+                user.phone_verified = False
+                user.phone_verified_at = None
+                user.save(update_fields=['phone_verified', 'phone_verified_at', 'updated_at'])
+            if rider is not None and name_changed:
+                rider.consume_name_change_grant()
+            return success_response(UserSerializer(user).data)
         return bad_request_response(serializer.errors)
 
 

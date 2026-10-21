@@ -86,6 +86,24 @@ class User(AbstractBaseUser, PermissionsMixin):
     referred_by = models.ForeignKey(
         'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='referrees')
 
+    # Phone ownership, proven by an SMS code (Termii). Reset whenever the
+    # number changes, so "verified" always refers to the current number.
+    phone_verified = models.BooleanField(default=False)
+    phone_verified_at = models.DateTimeField(null=True, blank=True)
+
+    # How the account signs in. Google accounts have no usable password.
+    auth_provider = models.CharField(
+        max_length=16,
+        choices=(('email', 'Email'), ('google', 'Google')),
+        default='email',
+    )
+
+    # Promotional email campaigns respect this; transactional mail does not.
+    marketing_emails_opt_in = models.BooleanField(
+        default=True,
+        help_text="Receives promotional email campaigns. Unsubscribe links turn this off.",
+    )
+
     objects = UserManager()
     USERNAME_FIELD = "email"
 
@@ -315,6 +333,19 @@ class Vendor(models.Model):
             "contact support."
         ),
     )
+
+    # Automatic payouts: the vendor asks (auto_payout_requested) and an admin
+    # switches it on (auto_payout_enabled), or the admin turns it on directly
+    # on the vendor's behalf. Only auto_payout_enabled moves money.
+    auto_payout_enabled = models.BooleanField(
+        default=False,
+        help_text="Pay this vendor's cleared balance out automatically on a schedule.",
+    )
+    auto_payout_requested = models.BooleanField(
+        default=False,
+        help_text="The vendor has asked for automatic payouts and is waiting for an admin.",
+    )
+    auto_payout_requested_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -773,6 +804,13 @@ class Rider(models.Model):
         default=False,
         help_text="Let this rider replace their profile photo once. Resets after they upload a new one.",
     )
+    # A rider's name has to match their verified documents, so riders cannot
+    # rename themselves. An admin grants one change at a time, used up by the
+    # next successful rename -- the same model as the photo lock above.
+    name_change_allowed = models.BooleanField(
+        default=False,
+        help_text="Let this rider change their name once. Resets after they save a new name.",
+    )
 
     # Performance metrics (cached/denormalized for quick access)
     on_time_delivery_rate = models.DecimalField(
@@ -824,6 +862,21 @@ class Rider(models.Model):
         if self.profile_photo_change_allowed:
             self.profile_photo_change_allowed = False
             self.save(update_fields=['profile_photo_change_allowed'])
+
+    NAME_LOCKED_MESSAGE = (
+        "Your name is locked to match your verified documents. "
+        "Contact support if you need to change it."
+    )
+
+    def can_change_name(self):
+        """A rider without a name may set one; renaming needs an admin grant."""
+        has_name = bool(self.user_id and (self.user.full_name or '').strip())
+        return not has_name or self.name_change_allowed
+
+    def consume_name_change_grant(self):
+        if self.name_change_allowed:
+            self.name_change_allowed = False
+            self.save(update_fields=['name_change_allowed'])
 
     def __str__(self):
         name = (self.user.full_name or '').strip() if self.user_id else ''
@@ -1026,6 +1079,9 @@ class VerificationCode(models.Model):
         blank=True,
 
     )
+    # The number a 'phone' code was sent to, so the code proves that exact
+    # number and cannot be redeemed after the number is edited.
+    target = models.CharField(max_length=20, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1148,6 +1204,9 @@ class StaffPagePermission(models.Model):
         ('push-notifications', 'Push Notifications'),
         ('pricing', 'Pricing'),
         ('delivery-settings', 'Delivery Settings'),
+        ('email-campaigns', 'Email Campaigns'),
+        ('rider-rewards', 'Rider Rewards'),
+        ('app-settings', 'App Updates & Support'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -1,0 +1,65 @@
+<!-- templates/emails/campaign.html
+     Promotional / update email sent from the admin "Email Campaigns" page.
+     Same look as emails/base.html, plus the logo and an unsubscribe link.
+     Styles are inline because Gmail and Outlook drop <style> blocks. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <title>{{ campaign.subject }}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#EEF7F3; font-family:'Segoe UI', Helvetica, Arial, sans-serif; color:#1F2937;">
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0;">{{ campaign.preheader }}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#EEF7F3;">
+        <tr>
+            <td align="center" style="padding:32px 16px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; background-color:#FFFFFF; border-radius:16px; overflow:hidden;">
+                    <tr>
+                        <td align="center" style="background-color:#02C897; padding:24px;">
+                            <img src="{{ logo_url }}" width="96" height="96" alt="Find my Taste" style="display:block; border:0; border-radius:16px;">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:32px 32px 8px 32px; font-size:16px; line-height:1.6; color:#374151;">
+                            {% if campaign.heading %}
+                            <h1 style="margin:0 0 16px 0; font-size:22px; line-height:1.3; color:#1F2937;">{{ campaign.heading }}</h1>
+                            {% endif %}
+                            {% if greeting_name %}<p style="margin:0 0 16px 0;">Hi {{ greeting_name }},</p>{% endif %}
+                            {% for paragraph in paragraphs %}
+                            <p style="margin:0 0 16px 0;">{{ paragraph|linebreaksbr }}</p>
+                            {% endfor %}
+                            {% if campaign.cta_label and campaign.cta_url %}
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 16px 0;">
+                                <tr>
+                                    <td align="center" style="background-color:#02C897; border-radius:10px;">
+                                        <a href="{{ campaign.cta_url }}" style="display:inline-block; padding:14px 28px; font-size:15px; font-weight:700; color:#FFFFFF; text-decoration:none;">{{ campaign.cta_label }}</a>
+                                    </td>
+                                </tr>
+                            </table>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 32px 32px 32px; font-size:14px; line-height:1.6; color:#6B7280;">
+                            Cheers,<br>
+                            <strong style="color:#1F2937;">The Find my Taste team</strong>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align="center" style="background-color:#F6FBF9; border-top:1px solid #E3F1EB; padding:20px 24px; font-size:12px; line-height:1.6; color:#9CA3AF;">
+                            Need help? Contact <a href="mailto:support@findmytaste.com.ng" style="color:#02A57C; text-decoration:none;">support@findmytaste.com.ng</a><br>
+                            {% if unsubscribe_url %}
+                            You are receiving this because you have a Find my Taste account.
+                            <a href="{{ unsubscribe_url }}" style="color:#02A57C;">Unsubscribe</a> from promotional emails.<br>
+                            {% endif %}
+                            &copy; {{ current_year }} Find my Taste. All rights reserved.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

@@ -9,6 +9,7 @@ from account.models import User, Vendor, VirtualAccount
 from helpers.paystack_fees import record_collection_fee, record_payout_fee
 from helpers.response.response_format import bad_request_response, success_response, internal_server_error_response
 from wallet.models import Wallet, WalletTransaction
+from wallet.receipts import withdrawal_narration
 
 logger = logging.getLogger(__name__)
 
@@ -114,12 +115,17 @@ class PaystackManager:
 
         recipient_code = recipient_response.json()['data']['recipient_code']
 
+        # Paystack passes `reason` to the bank as the transfer narration, so
+        # it is what riders and vendors see on their statement. Make it say
+        # who paid, what for, and the reference their receipt shows.
+        narration = withdrawal_narration(transaction_obj, reason)
+
         # Initiate transfer
         data = {
             "source": "balance",
             "amount": int(Decimal(str(amount)) * 100),  # Convert to kobo
             "recipient": recipient_code,
-            "reason": reason,
+            "reason": narration,
             "reference": str(transaction_obj.id)
         }
         response = requests.post(

@@ -429,6 +429,7 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'track_id',
             'status',
             'delivery_status',
+            'payment_status',
             'address',
             'total_amount',
             'delivery_fee',

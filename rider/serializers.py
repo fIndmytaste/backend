@@ -56,8 +56,8 @@ class OrderSerializer(serializers.ModelSerializer):
                     'time':instance.actual_pickup_time
                 }
                 representation['pick_up_details'] = pick_up_details
-                representation['distance'] = 10.05
-                representation['earning'] = 4000
+                representation['distance'] = instance.ensure_total_distance() or 0
+                representation['earning'] = self._compute_rider_display_earning(instance)
 
                 order_items = (
                     OrderItem.objects
@@ -85,6 +85,10 @@ class OrderSerializer(serializers.ModelSerializer):
         # rider_display_earning = delivery fee after platform commission is deducted.
         # PlatformSettings is fetched once per serializer instance, not per order.
         representation['rider_display_earning'] = self._compute_rider_display_earning(instance)
+
+        # Vendor -> customer distance in km, for the rider home and order cards.
+        distance_km = instance.ensure_total_distance()
+        representation['total_distance'] = distance_km if distance_km is not None else 0
 
         return representation
 
@@ -195,7 +199,7 @@ class RiderOrderDetailSerializer(serializers.Serializer):
             'is_marketplace_order': bool(instance.vendor and instance.vendor.is_marketplace),
             'is_salary_order': bool(instance.rider and instance.rider.is_in_house_rider),
             'delivery_fee': float(instance.delivery_fee or 0),
-            'total_distance': float(instance.total_distance or 0),
+            'total_distance': instance.ensure_total_distance() or 0,
             'estimated_pickup_time': estimated_pickup_time,
             'estimated_dropoff_time': estimated_dropoff_time,
             'actual_pickup_time': instance.actual_pickup_time.isoformat() if instance.actual_pickup_time else None,

@@ -18,7 +18,8 @@ class Wallet(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Wallet for {self.user.email}"
+        name = (self.user.full_name or '').strip()
+        return f"{name} ({self.user.email})" if name else f"Wallet for {self.user.email}"
 
     def deposit(self, amount):
         """
@@ -52,7 +53,8 @@ class WalletTransaction(models.Model):
         ('deposit', 'Deposit'),
         ('withdrawal', 'Withdrawal'),
         ('purchase', 'Purchase'),
-        ('earning', 'Rider Earning')
+        ('earning', 'Rider Earning'),
+        ('reward', 'Rider Reward'),
     ]
 
     TRANSACTION_STATUS = [
@@ -67,6 +69,7 @@ class WalletTransaction(models.Model):
         'withdrawal': 'WTD',
         'purchase': 'PAY',
         'earning': 'ERN',
+        'reward': 'RWD',
     }
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

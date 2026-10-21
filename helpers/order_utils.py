@@ -293,6 +293,33 @@ class DeliveryConfig:
         return self.get_config('max_service_fee')
 
     @property
+    def SERVICE_FEE_FIXED_AMOUNT(self):
+        """Flat per-order service fee set on the admin Delivery Settings
+        page, or None while it has never been saved (legacy percentage fee
+        then still applies, so deploying this changes no prices by itself)."""
+        value = self.get_config('service_fee_amount', None)
+        if value is None:
+            return None
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return None
+
+    def service_fee_for(self, order_value):
+        """Service fee for an order of `order_value` naira."""
+        try:
+            order_value = float(order_value or 0)
+        except (TypeError, ValueError):
+            order_value = 0.0
+        if order_value <= 0:
+            return 0.0
+        fixed = self.SERVICE_FEE_FIXED_AMOUNT
+        if fixed is not None:
+            return fixed
+        raw = (float(self.SERVICE_FEE_PERCENTAGE) / 100) * order_value
+        return min(raw, float(self.MAX_SERVICE_FEE))
+
+    @property
     def MAX_SURGE_MULTIPLIER(self):
         return self.get_config('max_surge_multiplier')
 
@@ -1526,14 +1553,11 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
         logger.debug(
             f"Fee with surcharges: ₦{fee_with_surcharges:.2f} for calculation {calculation_id}")
 
-        # 7.1 Calculate service fee (Chowdeck style: percentage of order value, capped)
-        service_fee = 0.0
-        if order_value > 0:
-            raw_service_fee = (
-                DeliveryConfig.SERVICE_FEE_PERCENTAGE / 100) * order_value
-            service_fee = min(raw_service_fee, DeliveryConfig.MAX_SERVICE_FEE)
-            logger.debug(
-                f"Service fee: ₦{service_fee:.2f} (based on {DeliveryConfig.SERVICE_FEE_PERCENTAGE}% of ₦{order_value:.2f}, capped at ₦{DeliveryConfig.MAX_SERVICE_FEE:.2f}) for calculation {calculation_id}")
+        # 7.1 Service fee: the fixed amount from Delivery Settings, or the
+        # legacy capped percentage of order value until one is saved.
+        service_fee = DeliveryConfig.service_fee_for(order_value)
+        logger.debug(
+            f"Service fee: ₦{service_fee:.2f} for calculation {calculation_id}")
 
         # 8. Apply loyalty discount
         logger.debug(
@@ -1968,13 +1992,8 @@ def calculate_delivery_price_v2(origin_lat: float, origin_lon: float, dest_lat: 
     op_fee = float(DeliveryConfig.PLATFORM_OPERATIONAL_FEE)
     customer_fee = rider_fee + op_fee + estate_fee
 
-    # 5. Service Fee (Existing logic)
-    service_fee = 0.0
-    if order_value > 0:
-        raw_service_fee = (
-            float(DeliveryConfig.SERVICE_FEE_PERCENTAGE) / 100) * float(order_value)
-        service_fee = min(raw_service_fee, float(
-            DeliveryConfig.MAX_SERVICE_FEE))
+    # 5. Service Fee: fixed amount, or legacy percentage until one is saved
+    service_fee = DeliveryConfig.service_fee_for(order_value)
 
     return {
         "success": True,

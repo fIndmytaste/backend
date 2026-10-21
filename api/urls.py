@@ -24,6 +24,13 @@ from api.views import (
 )
 from rider.views import ConfirmOrderPaymentAPIView, EnhancedRiderViewSet, MakeOrderPayment, NearbyRidersView, OrderPaymentWebhookView, OrderTrackingDetailView, OrderViewSet, RiderGuarantorUpdateView, RiderOrderDetailView, RiderViewSet, UploadRiderDocumentView, WebSocketSimulationView
 from vendor.views import AllMarketPlaceCategoriesView,SingleMarketPlaceCategoryVendorsView, SingleMarketPlaceCategoryView
+from admin_manager.views.public import (
+    EmailUnsubscribeView,
+    RiderRewardProgressView,
+    SupportContactOptionsView,
+    VendorAutoPayoutRequestView,
+)
+from helpers.app_version import AppVersionCheckView
 
 
 
@@ -46,6 +53,12 @@ urlpatterns = [
     path('popups/<uuid:id>/', PopupAnnouncementDetailView.as_view(), name='popup-detail'),
     path('popups/<uuid:id>/click/', MarkPopupClickedView.as_view(), name='popup-click-record'),
     path('auth/',include("account.urls.auth")),
+    # App updates, support options, campaigns, payouts and rewards
+    path('app-version/check/', AppVersionCheckView.as_view(), name='app-version-check'),
+    path('support/contact-options/', SupportContactOptionsView.as_view(), name='support-contact-options'),
+    path('email/unsubscribe/<str:token>/', EmailUnsubscribeView.as_view(), name='email-unsubscribe'),
+    path('vendor/auto-payout/', VendorAutoPayoutRequestView.as_view(), name='vendor-auto-payout'),
+    path('riders/rewards/progress/', RiderRewardProgressView.as_view(), name='rider-rewards-progress'),
     path('products/',include("product.urls")),
     path('vendor/',include("vendor.urls")),
     path('vendors/',include("vendor.urls")),

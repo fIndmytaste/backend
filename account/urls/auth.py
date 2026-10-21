@@ -1,5 +1,6 @@
 from django.urls import path
 from account.views import auth as auth_view
+from account.views import verification as verification_view
 from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
@@ -16,4 +17,7 @@ urlpatterns = [
     path('verify-login/', auth_view.VerifyOTPAPIView.as_view(), name='verify-otp'),
     path('password/reset/', auth_view.PasswordResetRequestView.as_view(), name='password-reset-request'),
     path('password/reset/verify/', auth_view.PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
+    path('phone/send-code/', verification_view.PhoneOTPSendView.as_view(), name='phone-send-otp'),
+    path('phone/confirm-code/', verification_view.PhoneOTPVerifyView.as_view(), name='phone-verify-otp'),
+    path('google/', verification_view.GoogleSignInView.as_view(), name='google-sign-in'),
 ]

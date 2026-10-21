@@ -36,6 +36,7 @@ from admin_manager.views.product_creation_lock import (
     AdminVendorToggleProductCreationLockView,
 )
 from admin_manager.views.staff_permissions import StaffPagePermissionsView
+from admin_manager.views import growth as growth_view
 from admin_manager.views.vendor_products import (
     AdminVendorCategoryListCreateView,
     AdminVendorProductCreateView,
@@ -204,4 +205,26 @@ urlpatterns = [
     # customer-facing surge-engine parameters (DeliveryConfiguration).
     path('pricing/platform-settings/', AdminPlatformSettingsView.as_view(), name='admin-platform-settings'),
     path('pricing/delivery-config/', AdminDeliveryConfigView.as_view(), name='admin-delivery-config'),
+
+    # Operations
+    path('riders/<uuid:id>/name-lock/', growth_view.AdminRiderNameLockView.as_view(), name='admin-rider-name-lock'),
+    path('orders/<uuid:id>/accept-for-vendor/', growth_view.AdminAcceptOrderForVendorView.as_view(), name='admin-accept-order-for-vendor'),
+    path('vendor/<uuid:vendor_id>/auto-payout/', growth_view.AdminVendorAutoPayoutView.as_view(), name='admin-vendor-auto-payout'),
+    path('auto-payout-requests/', growth_view.AdminAutoPayoutRequestListView.as_view(), name='admin-auto-payout-requests'),
+
+    # App updates & support contact
+    path('app-versions/', growth_view.AdminAppVersionListView.as_view(), name='admin-app-versions'),
+    path('app-versions/<uuid:id>/', growth_view.AdminAppVersionDetailView.as_view(), name='admin-app-version-detail'),
+    path('support-settings/', growth_view.AdminSupportSettingsView.as_view(), name='admin-support-settings'),
+
+    # Email campaigns
+    path('email-campaigns/', growth_view.AdminEmailCampaignListView.as_view(), name='admin-email-campaigns'),
+    path('email-campaigns/<uuid:id>/', growth_view.AdminEmailCampaignDetailView.as_view(), name='admin-email-campaign-detail'),
+    path('email-campaigns/<uuid:id>/send/', growth_view.AdminEmailCampaignSendView.as_view(), name='admin-email-campaign-send'),
+    path('email-campaigns/<uuid:id>/test/', growth_view.AdminEmailCampaignTestView.as_view(), name='admin-email-campaign-test'),
+
+    # Rider rewards
+    path('rider-rewards/', growth_view.AdminRiderRewardListView.as_view(), name='admin-rider-rewards'),
+    path('rider-rewards/<uuid:id>/', growth_view.AdminRiderRewardDetailView.as_view(), name='admin-rider-reward-detail'),
+    path('rider-rewards/<uuid:id>/awards/', growth_view.AdminRiderRewardAwardListView.as_view(), name='admin-rider-reward-awards'),
 ]

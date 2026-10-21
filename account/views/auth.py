@@ -10,6 +10,7 @@ from helpers.app_scope import check_app_access
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.tokens import TokenManager
 from helpers.email import emailService
+from account.views.verification import code_sent_message, deliver_verification_code
 from helpers.push_notification import send_login_notification
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -98,19 +99,16 @@ class LoginAPIView(generics.GenericAPIView):
                     code_obj.code = '1234'
                     code_obj.save()
 
-                # Send verification code via email
-                try:
-                    emailService.send_login_verification_code(
-                        user_email=user.email,
-                        user_name=user.full_name,
-                        verification_code=code_obj.code
-                    )
-                except Exception as e:pass
-                    # return bad_request_response(message=f'Error sending email :: {code_obj.code}')
+                # SMS to a verified phone while phone verification is on,
+                # otherwise email (see deliver_verification_code).
+                delivery = deliver_verification_code(user, code_obj, purpose='login')
 
-                
                 return success_response(
                     message='Please verify your login with the OTP sent.'
+                    if delivery['channel'] == 'email'
+                    else code_sent_message(delivery),
+                    data={'otp_channel': delivery['channel'],
+                          'otp_destination': delivery['destination']},
                 )
 
             else:
@@ -355,21 +353,16 @@ class RegisterAPIView(generics.GenericAPIView):
             verification_type='email'
         )
 
-        try:
-            # Send verification code via email
-            emailService.send_verification_code(
-                user_email=valid_user.email,
-                user_name=valid_user.full_name,
-                verification_code=code_obj.code
-            )
-        except Exception as e:
-            print(f"Error sending email: {e}")    
+        delivery = deliver_verification_code(
+            valid_user, code_obj, purpose='register', phone=valid_user.phone_number)
 
         return success_response(
-            # add message that verification code has been sent to their email
-            message='Verification code has been sent to your email.',
+            message='Verification code has been sent to your email.'
+            if delivery['channel'] == 'email' else code_sent_message(delivery),
             data={
-                "email":email
+                "email":email,
+                "otp_channel": delivery['channel'],
+                "otp_destination": delivery['destination'],
             }
 
         )
@@ -426,23 +419,16 @@ class RegisterVendorAPIView(generics.GenericAPIView):
             user=valid_user,
             verification_type='email'
         )
-        # Send email with verification code
-        try:
-            emailService.send_verification_code(
-                user_email=valid_user.email,
-                user_name=valid_user.full_name,
-                verification_code=code_obj.code
-            )
-        except Exception as e:
-            print(f"Error sending email: {e}")
-
-        #!TODO Send verification code to email (not implemented here)
+        delivery = deliver_verification_code(
+            valid_user, code_obj, purpose='register', phone=valid_user.phone_number)
 
         return success_response(
-            # add message that verification code has been sent to their email
-            message='Verification code has been sent to your email.',
+            message='Verification code has been sent to your email.'
+            if delivery['channel'] == 'email' else code_sent_message(delivery),
             data={
-                "email":email
+                "email":email,
+                "otp_channel": delivery['channel'],
+                "otp_destination": delivery['destination'],
             }
 
         )
@@ -502,23 +488,16 @@ class RegisterRiderAPIView(generics.GenericAPIView):
             user=valid_user,
             verification_type='email'
         )
-        # Send email with verification code
-        try:
-            emailService.send_verification_code(
-                user_email=valid_user.email,
-                user_name=valid_user.full_name,
-                verification_code=code_obj.code
-            )
-        except Exception as e:
-            print(f"Error sending email: {e}")
-
-        #!TODO Send verification code to email (not implemented here)
+        delivery = deliver_verification_code(
+            valid_user, code_obj, purpose='register', phone=valid_user.phone_number)
 
         return success_response(
-            # add message that verification code has been sent to their email
-            message='Verification code has been sent to your email.',
+            message='Verification code has been sent to your email.'
+            if delivery['channel'] == 'email' else code_sent_message(delivery),
             data={
-                "email":email
+                "email":email,
+                "otp_channel": delivery['channel'],
+                "otp_destination": delivery['destination'],
             }
 
         )
@@ -557,19 +536,14 @@ class ResendOTPAPIView(generics.GenericAPIView):
             verification_type='email'
         )
 
-        # Send the new verification code via email
-        try:
-            emailService.send_verification_code(
-                user_email=user.email,
-                user_name=user.full_name,
-                verification_code=code_obj.code
-            )
-        except Exception as e:
-            print(f"Error sending email: {e}")
-            # return bad_request_response(message="Failed to send verification code.")
+        delivery = deliver_verification_code(
+            user, code_obj, purpose='register', phone=user.phone_number)
 
         return success_response(
             message='Verification code has been resent to your email.'
+            if delivery['channel'] == 'email' else code_sent_message(delivery, 'resent'),
+            data={'otp_channel': delivery['channel'],
+                  'otp_destination': delivery['destination']},
         )
 
 class ResendOTPLoginAPIView(generics.GenericAPIView):
@@ -601,19 +575,13 @@ class ResendOTPLoginAPIView(generics.GenericAPIView):
             verification_type='login'
         )
 
-        # Send the new verification code via email
-        try:
-            emailService.send_verification_code(
-                user_email=user.email,
-                user_name=user.full_name,
-                verification_code=code_obj.code
-            )
-        except Exception as e:
-            print(f"Error sending email: {e}")
-            # return bad_request_response(message="Failed to send verification code.")
+        delivery = deliver_verification_code(user, code_obj, purpose='login')
 
         return success_response(
             message='Verification code has been resent to your email.'
+            if delivery['channel'] == 'email' else code_sent_message(delivery, 'resent'),
+            data={'otp_channel': delivery['channel'],
+                  'otp_destination': delivery['destination']},
         )
 
 
@@ -656,6 +624,13 @@ class RegisterAccountVerifyAPIView(generics.GenericAPIView):
         user = code_obj.user
         user.is_verified = True
         user.is_active = True
+        if code_obj.target:
+            # The code went by SMS, so entering it proves the phone number
+            # too; no separate phone OTP step is needed after sign-up.
+            from account.views.verification import local_phone_format
+            user.phone_number = local_phone_format(code_obj.target)
+            user.phone_verified = True
+            user.phone_verified_at = timezone.now()
         user.save()
         code_obj.delete() 
         tokens = TokenManager.get_tokens_for_user(user)

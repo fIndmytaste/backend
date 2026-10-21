@@ -78,3 +78,44 @@ class PopupAnnouncementAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+from admin_manager.models import (  # noqa: E402
+    AppVersionPolicy,
+    EmailCampaign,
+    RiderRewardAward,
+    RiderRewardProgram,
+    SupportSettings,
+)
+
+
+@admin.register(AppVersionPolicy)
+class AppVersionPolicyAdmin(admin.ModelAdmin):
+    list_display = ('app', 'platform', 'latest_version', 'minimum_version', 'is_active', 'updated_at')
+    list_filter = ('app', 'platform', 'is_active')
+
+
+@admin.register(SupportSettings)
+class SupportSettingsAdmin(admin.ModelAdmin):
+    list_display = ('whatsapp_number', 'whatsapp_enabled', 'live_chat_enabled', 'support_email', 'updated_at')
+
+
+@admin.register(EmailCampaign)
+class EmailCampaignAdmin(admin.ModelAdmin):
+    list_display = ('subject', 'audience', 'status', 'recipient_count', 'sent_count', 'failed_count', 'sent_at')
+    list_filter = ('status', 'audience')
+    search_fields = ('subject',)
+    readonly_fields = ('status', 'recipient_count', 'sent_count', 'failed_count', 'last_error', 'sent_at')
+
+
+@admin.register(RiderRewardProgram)
+class RiderRewardProgramAdmin(admin.ModelAdmin):
+    list_display = ('name', 'target_deliveries', 'bonus_amount', 'period', 'is_active')
+    list_filter = ('is_active', 'period')
+
+
+@admin.register(RiderRewardAward)
+class RiderRewardAwardAdmin(admin.ModelAdmin):
+    list_display = ('program', 'rider', 'period_start', 'period_end', 'deliveries_counted', 'amount', 'created_at')
+    list_filter = ('program',)
+    readonly_fields = ('program', 'rider', 'period_start', 'period_end', 'deliveries_counted', 'amount', 'wallet_transaction')

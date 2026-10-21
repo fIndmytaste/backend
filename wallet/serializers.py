@@ -74,10 +74,17 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
     reference_code = serializers.SerializerMethodField()
     order_track_id = serializers.SerializerMethodField()
     status_display = serializers.SerializerMethodField()
+    # Branded withdrawal receipt (narration, bank, references); null for
+    # other transaction types.
+    receipt = serializers.SerializerMethodField()
 
     class Meta:
         model = WalletTransaction
-        fields = ['id', 'wallet', 'amount', 'transaction_type','reference_code','description', 'status', 'status_display', 'created_at', 'order_track_id']
+        fields = ['id', 'wallet', 'amount', 'transaction_type','reference_code','description', 'status', 'status_display', 'created_at', 'order_track_id', 'receipt']
+
+    def get_receipt(self, obj):
+        from wallet.receipts import build_withdrawal_receipt
+        return build_withdrawal_receipt(obj)
 
     def get_status_display(self, obj):
         """Outcome in the four states the apps show.

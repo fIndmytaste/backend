@@ -1111,6 +1111,7 @@ class BuyerVendorCardSerializer(serializers.ModelSerializer):
     is_favorite = serializers.SerializerMethodField()
     category = SystemCategorySerializer()
     is_marketplace_vendor = serializers.SerializerMethodField()
+    distance_km = serializers.SerializerMethodField()
 
     class Meta:
         model = Vendor
@@ -1146,10 +1147,17 @@ class BuyerVendorCardSerializer(serializers.ModelSerializer):
             'starting_delivery_price',
             'category',
             'is_marketplace_vendor',
+            'distance_km',
         ]
 
     def get_thumbnail(self, obj: Vendor):
         return obj.thumbnail_url
+
+    def get_distance_km(self, obj: Vendor):
+        # Set by the distance sort in helpers.vendor_discovery when the
+        # request carried a location; absent otherwise.
+        distance = getattr(obj, 'distance_km', None)
+        return round(float(distance), 2) if distance is not None else None
 
     def get_logo(self, obj: Vendor):
         return obj.logo_url

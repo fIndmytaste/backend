@@ -1354,6 +1354,41 @@ class Order(models.Model):
 
         return None
 
+    def ensure_total_distance(self, save=True):
+        """
+        Vendor -> customer distance in km, filled in on first use.
+
+        Nothing populated total_distance when an order was placed, so the
+        rider app always received 0 and hid the distance. Compute the
+        straight-line (Haversine) distance from the vendor to the delivery
+        point once, store it, and return it. Returns None when either end has
+        no coordinates.
+        """
+        from math import radians, cos, sin, asin, sqrt
+
+        if self.total_distance:
+            return float(self.total_distance)
+
+        vendor = self.vendor
+        dest_lat = self.delivery_latitude or self.location_latitude
+        dest_lon = self.delivery_longitude or self.location_longitude
+        if not vendor or dest_lat is None or dest_lon is None:
+            return None
+        try:
+            lat1, lon1 = float(vendor.location_latitude), float(vendor.location_longitude)
+            lat2, lon2 = float(dest_lat), float(dest_lon)
+        except (TypeError, ValueError):
+            return None
+
+        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+        a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
+        distance_km = round(6371 * 2 * asin(sqrt(a)), 2)
+
+        self.total_distance = Decimal(str(distance_km))
+        if save and self.pk:
+            Order.objects.filter(pk=self.pk).update(total_distance=self.total_distance)
+        return distance_km
+
     def get_total_price(self):
         """Get the total price of the order."""
         order_items = OrderItem.objects.filter(order=self).prefetch_related('variant_selections')

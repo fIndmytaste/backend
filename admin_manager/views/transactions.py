@@ -38,6 +38,15 @@ class AdminGetTransactionsListView(generics.GenericAPIView):
         if transaction_type:
             queryset = queryset.filter(transaction_type=transaction_type)
 
+        # Whose transaction: customer (buyer), vendor or rider. A row's owner
+        # is its user, falling back to the wallet's user for older rows.
+        user_type = self.request.GET.get('user_type', '').strip().lower()
+        role = {'customer': 'buyer', 'buyer': 'buyer', 'vendor': 'vendor', 'rider': 'rider'}.get(user_type)
+        if role:
+            queryset = queryset.filter(
+                Q(user__role=role) | Q(user__isnull=True, wallet__user__role=role)
+            )
+
         queryset = filter_by_date_range(self.request, queryset)
 
         return queryset.order_by('-created_at')
