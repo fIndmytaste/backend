@@ -94,9 +94,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     # How the account signs in. Google accounts have no usable password.
     auth_provider = models.CharField(
         max_length=16,
-        choices=(('email', 'Email'), ('google', 'Google')),
+        choices=(('email', 'Email'), ('google', 'Google'), ('apple', 'Apple')),
         default='email',
     )
+    # Apple's stable user id ("sub"). Apple only shares the email on the
+    # first sign-in, so later sign-ins are matched on this.
+    apple_sub = models.CharField(max_length=255, unique=True, null=True, blank=True)
 
     # Promotional email campaigns respect this; transactional mail does not.
     marketing_emails_opt_in = models.BooleanField(

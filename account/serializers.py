@@ -211,6 +211,33 @@ def normalize_full_name(value):
     return cleaned
 
 
+def normalize_phone_number(value, required=True):
+    """Validate a phone number and store it in local form (08012345678).
+
+    Accepts 0801 234 5678, +2348012345678, 2348012345678 and the like.
+    """
+    from helpers.termii import normalize_nigerian_phone
+
+    raw = str(value or '').strip()
+    if not raw:
+        if required:
+            raise ValidationError('Please enter your phone number.')
+        return raw
+    international = normalize_nigerian_phone(raw)
+    if not international:
+        raise ValidationError('Enter a valid phone number, e.g. 08012345678.')
+    if international.startswith('234'):
+        if international[3] not in '789':
+            raise ValidationError('Enter a valid Nigerian mobile number, e.g. 08012345678.')
+        return '0' + international[3:]
+    return '+' + international
+
+
+def _sms_verification_available():
+    from helpers.termii import is_configured
+    return is_configured()
+
+
 def _phone_verification_required():
     # Apps block on phone verification only while this flag is on.
     from account.views.verification import phone_verification_required
@@ -237,6 +264,9 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_profile_image(self, obj: User):
         return obj.get_profile_image()
+
+    def validate_phone_number(self, value):
+        return normalize_phone_number(value, required=False)
 
     def validate_dob(self, value):
         """Validate that dob is in MM-DD format"""
@@ -285,6 +315,7 @@ class UserSerializer(serializers.ModelSerializer):
                 rider_obj.can_change_name() if rider_obj else True
             )
             representation['phone_verification_required'] = _phone_verification_required()
+            representation['sms_verification_available'] = _sms_verification_available()
             return representation
 
         elif instance.role == 'vendor':
@@ -295,11 +326,13 @@ class UserSerializer(serializers.ModelSerializer):
             )
             representation['profile_image'] = instance.get_profile_image()
             representation['phone_verification_required'] = _phone_verification_required()
+            representation['sms_verification_available'] = _sms_verification_available()
             return representation
 
         representation = super().to_representation(instance)
         representation['profile_image'] = instance.get_profile_image()
         representation['phone_verification_required'] = _phone_verification_required()
+        representation['sms_verification_available'] = _sms_verification_available()
         return representation
 
     def create(self, validated_data):
@@ -370,6 +403,9 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_full_name(self, value):
         return normalize_full_name(value)
+
+    def validate_phone_number(self, value):
+        return normalize_phone_number(value)
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True)
     referral_code = serializers.CharField(
@@ -417,6 +453,9 @@ class RegisterVendorSerializer(serializers.Serializer):
 
     def validate_full_name(self, value):
         return normalize_full_name(value)
+
+    def validate_phone_number(self, value):
+        return normalize_phone_number(value)
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True)
     referral_code = serializers.CharField(

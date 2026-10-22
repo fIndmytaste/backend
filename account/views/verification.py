@@ -39,6 +39,7 @@ from account.serializers import UserSerializer
 from helpers.app_scope import check_app_access, get_app_client
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.termii import TermiiError, normalize_nigerian_phone, send_sms
+from helpers.termii import is_configured as is_sms_configured
 from helpers.tokens import TokenManager
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,90 @@ def _google_client_ids():
     return [value.strip() for value in raw.split(',') if value.strip()]
 
 
+def social_sign_in(request, *, provider, email, full_name='', picture=None,
+                   email_trusted=True, apple_sub=None):
+    """
+    Shared by Google and Apple sign-in. Signs in the account for this email
+    (or Apple id), or creates a customer account. Returns a DRF response.
+
+    `needs_phone` in the response tells the app to collect (and, when SMS is
+    set up, verify) a phone number before continuing, since social sign-ups
+    arrive without one.
+    """
+    user = None
+    if apple_sub:
+        user = User.objects.filter(apple_sub=apple_sub).first()
+    if user is None and email:
+        existing = User.objects.filter(email=email).first()
+        if existing is not None and not email_trusted:
+            # Never hand over an existing account on an unverified email.
+            return bad_request_response(
+                message='Please sign in with your email and password instead.')
+        user = existing
+    is_new_user = False
+
+    if user is None:
+        if not email:
+            return bad_request_response(
+                message='We could not get your email from Apple. In Settings > Apple ID > '
+                        'Sign-In & Security > Sign in with Apple, remove Find My Taste and try again.')
+        # Only the customer app may create accounts this way; vendors and
+        # riders need their own onboarding.
+        app_client = get_app_client(request)
+        if app_client not in (None, 'customer'):
+            return bad_request_response(
+                message='Please create your account with email first, then sign in.')
+
+        referred_by = None
+        referral_code = (request.data.get('referral_code') or '').strip()
+        if referral_code:
+            referred_by = User.objects.filter(referral_code=referral_code).first()
+
+        user = User(
+            email=email,
+            full_name=(full_name or '').strip()[:64] or email.split('@')[0],
+            role='buyer',
+            is_verified=True,
+            is_active=True,
+            auth_provider=provider,
+            profile_image_url=picture or None,
+            referred_by=referred_by,
+            apple_sub=apple_sub,
+        )
+        user.set_unusable_password()
+        user.save()
+        is_new_user = True
+    else:
+        if not user.is_active:
+            return bad_request_response(
+                message='This account has been deactivated. Please contact support.')
+        access_error = check_app_access(user, request)
+        if access_error:
+            return bad_request_response(message=access_error)
+        updates = []
+        if email_trusted and not user.is_verified:
+            # The provider has just proven ownership of the email address.
+            user.is_verified = True
+            updates.append('is_verified')
+        if apple_sub and not user.apple_sub:
+            user.apple_sub = apple_sub
+            updates.append('apple_sub')
+        if updates:
+            user.save(update_fields=updates + ['updated_at'])
+
+    tokens = TokenManager.get_tokens_for_user(user)
+    return success_response(
+        message='You are now signed in.',
+        data={
+            'tokens': tokens,
+            'user': UserSerializer(user).data,
+            'is_new_user': is_new_user,
+            'needs_phone': not (user.phone_number or '').strip(),
+            'sms_verification_available': is_sms_configured(),
+        },
+    )
+
+
 class GoogleSignInView(generics.GenericAPIView):
     permission_classes = [AllowAny]
 
@@ -299,55 +384,88 @@ class GoogleSignInView(generics.GenericAPIView):
             return bad_request_response(
                 message='Your Google account email is not verified.')
 
-        email = info['email'].lower()
-        user = User.objects.filter(email=email).first()
-        is_new_user = False
+        return social_sign_in(
+            request,
+            provider='google',
+            email=info['email'].lower(),
+            full_name=info.get('name') or '',
+            picture=info.get('picture'),
+        )
 
-        if user is None:
-            # Only the customer app may create accounts this way; vendors and
-            # riders need their own onboarding.
-            app_client = get_app_client(request)
-            if app_client not in (None, 'customer'):
-                return bad_request_response(
-                    message='Please create your account with email first, then sign in.')
 
-            referred_by = None
-            referral_code = (request.data.get('referral_code') or '').strip()
-            if referral_code:
-                referred_by = User.objects.filter(referral_code=referral_code).first()
+APPLE_ISSUER = 'https://appleid.apple.com'
+APPLE_KEYS_URL = 'https://appleid.apple.com/auth/keys'
+_apple_jwks_client = None
 
-            full_name = (info.get('name') or '').strip()[:64] or email.split('@')[0]
-            user = User(
-                email=email,
-                full_name=full_name,
-                role='buyer',
-                is_verified=True,
-                is_active=True,
-                auth_provider='google',
-                profile_image_url=info.get('picture') or None,
-                referred_by=referred_by,
-            )
-            user.set_unusable_password()
-            user.save()
-            is_new_user = True
-        else:
-            if not user.is_active:
-                return bad_request_response(
-                    message='This account has been deactivated. Please contact support.')
-            access_error = check_app_access(user, request)
-            if access_error:
-                return bad_request_response(message=access_error)
-            if not user.is_verified:
-                # Google has just proven ownership of the email address.
-                user.is_verified = True
-                user.save(update_fields=['is_verified', 'updated_at'])
 
-        tokens = TokenManager.get_tokens_for_user(user)
-        return success_response(
-            message='You are now signed in.',
-            data={
-                'tokens': tokens,
-                'user': UserSerializer(user).data,
-                'is_new_user': is_new_user,
+def _apple_client_ids():
+    raw = config('APPLE_CLIENT_IDS', default='com.findmytaste.customer')
+    return [value.strip() for value in raw.split(',') if value.strip()]
+
+
+def verify_apple_identity_token(token):
+    """Check Apple's signature, issuer, audience and expiry; return the claims."""
+    import jwt
+
+    global _apple_jwks_client
+    if _apple_jwks_client is None:
+        # Caches Apple's public keys between requests.
+        _apple_jwks_client = jwt.PyJWKClient(APPLE_KEYS_URL)
+    signing_key = _apple_jwks_client.get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=['RS256'],
+        audience=_apple_client_ids(),
+        issuer=APPLE_ISSUER,
+    )
+
+
+class AppleSignInView(generics.GenericAPIView):
+    """
+    POST /auth/apple/  {"identity_token": "...", "full_name": "Ada Obi"}
+
+    Sign in with Apple (required by the App Store whenever Google sign-in is
+    offered on iOS). Apple sends the user's name only on the very first
+    sign-in, so the app forwards it as `full_name`.
+    """
+
+    permission_classes = [AllowAny]
+
+    @swagger_auto_schema(
+        operation_summary="Sign in or sign up with an Apple identity token",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['identity_token'],
+            properties={
+                'identity_token': openapi.Schema(type=openapi.TYPE_STRING),
+                'full_name': openapi.Schema(type=openapi.TYPE_STRING),
+                'referral_code': openapi.Schema(type=openapi.TYPE_STRING),
             },
+        ),
+        responses={200: 'Signed in', 400: 'Invalid token or wrong app'},
+    )
+    def post(self, request):
+        token = (request.data.get('identity_token') or '').strip()
+        if not token:
+            return bad_request_response(message='Apple sign-in failed. Please try again.')
+        try:
+            claims = verify_apple_identity_token(token)
+        except Exception as error:
+            logger.warning('Apple identity token rejected: %s', error)
+            return bad_request_response(message='Apple sign-in failed. Please try again.')
+
+        sub = claims.get('sub')
+        if not sub:
+            return bad_request_response(message='Apple sign-in failed. Please try again.')
+        email = (claims.get('email') or '').strip().lower() or None
+        email_verified = str(claims.get('email_verified', '')).lower() == 'true'
+
+        return social_sign_in(
+            request,
+            provider='apple',
+            email=email,
+            full_name=request.data.get('full_name') or '',
+            email_trusted=email_verified,
+            apple_sub=sub,
         )

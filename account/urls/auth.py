@@ -20,4 +20,5 @@ urlpatterns = [
     path('phone/send-code/', verification_view.PhoneOTPSendView.as_view(), name='phone-send-otp'),
     path('phone/confirm-code/', verification_view.PhoneOTPVerifyView.as_view(), name='phone-verify-otp'),
     path('google/', verification_view.GoogleSignInView.as_view(), name='google-sign-in'),
+    path('apple/', verification_view.AppleSignInView.as_view(), name='apple-sign-in'),
 ]

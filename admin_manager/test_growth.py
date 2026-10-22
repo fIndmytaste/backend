@@ -455,6 +455,7 @@ class GoogleSignInTests(APITestCase):
         res = self.client.post('/api/v1/auth/google/', {'id_token': 't'}, format='json')
         self.assertEqual(res.status_code, 200, res.data)
         self.assertTrue(res.data['data']['is_new_user'])
+        self.assertTrue(res.data['data']['needs_phone'])
         self.assertIn('access', res.data['data']['tokens'])
         user = User.objects.get(email='newperson@gmail.com')
         self.assertEqual(user.role, 'buyer')
@@ -546,3 +547,66 @@ class SmsInsteadOfEmailTests(APITestCase):
         res = self.client.post('/api/v1/auth/login/', {'email': 'off@example.com', 'password': 'pw'}, format='json')
         self.assertEqual(res.data['data']['otp_channel'], 'email')
         send_sms.assert_not_called()
+
+
+class PhoneValidationTests(APITestCase):
+    def _register(self, phone):
+        return self.client.post('/api/v1/auth/buyer-register/', {
+            'full_name': 'Phone Person', 'phone_number': phone,
+            'email': f'p{abs(hash(phone))}@example.com', 'password': 'Passw0rd!',
+        }, format='json')
+
+    def test_invalid_numbers_are_rejected(self):
+        for bad in ['12345', '0601234567', 'abc', '08012']:
+            self.assertEqual(self._register(bad).status_code, 400, bad)
+
+    def test_valid_numbers_are_stored_in_local_format(self):
+        res = self._register('+234 803 333 4444')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(User.objects.filter(phone_number='08033334444').exists())
+
+    def test_profile_update_validates_phone(self):
+        user = User.objects.create_user(email='pv@example.com', password='pw', role='buyer')
+        self.client.force_authenticate(user)
+        res = self.client.patch('/api/v1/account/profile/', {'phone_number': '123'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        res = self.client.patch('/api/v1/account/profile/', {'phone_number': '0905 111 2222'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        user.refresh_from_db()
+        self.assertEqual(user.phone_number, '09051112222')
+
+
+@override_settings(CACHES=LOCMEM)
+class AppleSignInTests(APITestCase):
+    @patch('account.views.verification.verify_apple_identity_token')
+    def test_new_apple_user_needs_phone_and_returning_user_matched_by_sub(self, verify):
+        verify.return_value = {'sub': 'apple-123', 'email': 'relay@privaterelay.appleid.com',
+                               'email_verified': 'true'}
+        res = self.client.post('/api/v1/auth/apple/', {'identity_token': 't', 'full_name': 'Ada Obi'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data['data']['is_new_user'])
+        self.assertTrue(res.data['data']['needs_phone'])
+        user = User.objects.get(apple_sub='apple-123')
+        self.assertEqual(user.full_name, 'Ada Obi')
+        self.assertEqual(user.auth_provider, 'apple')
+
+        # Later sign-ins carry no email; the Apple id still finds the account.
+        verify.return_value = {'sub': 'apple-123'}
+        res = self.client.post('/api/v1/auth/apple/', {'identity_token': 't'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertFalse(res.data['data']['is_new_user'])
+        self.assertEqual(res.data['data']['user']['id'], str(user.id))
+
+    @patch('account.views.verification.verify_apple_identity_token')
+    def test_unverified_email_never_takes_over_existing_account(self, verify):
+        User.objects.create_user(email='owner@example.com', password='pw', role='buyer')
+        verify.return_value = {'sub': 'apple-9', 'email': 'owner@example.com', 'email_verified': 'false'}
+        res = self.client.post('/api/v1/auth/apple/', {'identity_token': 't'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertFalse(User.objects.filter(apple_sub='apple-9').exists())
+
+    @patch('account.views.verification.verify_apple_identity_token')
+    def test_bad_token_rejected(self, verify):
+        verify.side_effect = Exception('bad signature')
+        res = self.client.post('/api/v1/auth/apple/', {'identity_token': 't'}, format='json')
+        self.assertEqual(res.status_code, 400)
