@@ -2011,3 +2011,34 @@ def calculate_delivery_price_v2(origin_lat: float, origin_lon: float, dest_lat: 
             "service_fee": round(service_fee, 2)
         }
     }
+
+
+def estimate_delivery_from(distance_km: Optional[float]) -> Dict[str, Any]:
+    """
+    "From" delivery price and time shown on vendor cards.
+
+    Uses the same distance tiers as checkout (get_base_fee, without peak
+    surges, so it is the lowest real price), kept within the admin's minimum
+    and maximum delivery fee and rounded DOWN to the nearest N100 so cards
+    show clean numbers (600, 1,000, 1,500) that never exceed the real price.
+
+    Time = preparation time + travel at the configured rider speed, rounded
+    up to 5 minutes. Without a distance (no customer location) the first
+    tier's flat price is used.
+    """
+    import math
+
+    distance = float(distance_km) if distance_km is not None else None
+    fee = get_base_fee(distance if distance is not None else 0.1)['base_fee']
+    try:
+        fee = max(float(DeliveryConfig.MIN_DELIVERY_FEE), min(fee, float(DeliveryConfig.MAX_DELIVERY_FEE)))
+    except (TypeError, ValueError):
+        pass
+    fee = int(math.floor(fee / 100.0) * 100)
+
+    prep = float(DeliveryConfig.PREPARATION_TIME_MINUTES or 15)
+    speed = float(DeliveryConfig.BASE_DELIVERY_SPEED_KMH or 25)
+    travel = (distance / speed * 60) if distance is not None else 10
+    minutes = int(math.ceil((prep + travel) / 5.0) * 5)
+    minutes = max(15, min(minutes, 120))
+    return {'fee': fee, 'minutes': minutes}

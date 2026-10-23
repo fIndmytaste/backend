@@ -489,7 +489,7 @@ class GoogleSignInTests(APITestCase):
 
 
 @override_settings(CACHES=LOCMEM)
-@patch.dict('os.environ', {'PHONE_VERIFICATION_REQUIRED': 'true'})
+@patch.dict('os.environ', {'PHONE_VERIFICATION_REQUIRED': 'true', 'TERMII_API_KEY': 'test-key'})
 class SmsInsteadOfEmailTests(APITestCase):
     @patch('account.views.verification.send_sms', return_value='m1')
     def test_signup_code_goes_by_sms_and_verifies_phone(self, send_sms):
@@ -610,3 +610,83 @@ class AppleSignInTests(APITestCase):
         verify.side_effect = Exception('bad signature')
         res = self.client.post('/api/v1/auth/apple/', {'identity_token': 't'}, format='json')
         self.assertEqual(res.status_code, 400)
+
+
+class PhoneVerificationNeedsTermiiTests(APITestCase):
+    @patch.dict('os.environ', {'PHONE_VERIFICATION_REQUIRED': 'true', 'TERMII_API_KEY': ''})
+    def test_flag_without_termii_requires_nothing(self):
+        from account.serializers import UserSerializer
+        user = User.objects.create_user(email='nt@example.com', password='pw', role='vendor')
+        data = UserSerializer(user).data
+        self.assertFalse(data['phone_verification_required'])
+        self.assertFalse(data['sms_verification_available'])
+
+
+class RiderTestDataCommandTests(TestCase):
+    def test_seed_reward_and_cleanup(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from admin_manager.rewards import evaluate_rider_rewards, rider_reward_progress
+
+        user = User.objects.create_user(email='Akakurup@yahoo.com', password='pw', role='rider', full_name='Pascal A')
+        rider = Rider.objects.create(user=user)
+        real = WalletTransaction.objects.create(
+            wallet=Wallet.objects.get(user=user), user=user, amount=500,
+            transaction_type='earning', status='completed', description='Real earning')
+
+        out = StringIO()
+        call_command('seed_rider_test_data', '--email', 'akakurup@yahoo.com', stdout=out)
+        self.assertIn('delivery code', out.getvalue())
+        self.assertEqual(Order.objects.filter(rider=rider).count(), 10)
+        self.assertTrue(all(o.total_distance for o in Order.objects.filter(rider=rider)))
+        progress = rider_reward_progress(rider)
+        self.assertEqual(progress[0]['completed_deliveries'], 8)
+        # QA vendor is never visible to customers.
+        self.assertFalse(Vendor.objects.get(user__email='qa-vendor@qa-test.findmytaste.ng').is_active)
+
+        # Finish the two open orders -> bonus is paid.
+        for order in Order.objects.filter(rider=rider).exclude(status='delivered'):
+            order.status = 'delivered'
+            order.delivered_at = timezone.now()
+            order.save()
+        self.assertEqual(evaluate_rider_rewards(), 1)
+        self.assertEqual(Wallet.objects.get(user=user).balance, Decimal('2000.00'))
+
+        # Running twice is refused.
+        with self.assertRaises(Exception):
+            call_command('seed_rider_test_data', '--email', 'akakurup@yahoo.com', stdout=StringIO())
+
+        call_command('cleanup_rider_test_data', '--email', 'akakurup@yahoo.com', stdout=StringIO())
+        self.assertEqual(Order.objects.filter(rider=rider).count(), 0)
+        self.assertFalse(RiderRewardProgram.objects.exists())
+        self.assertFalse(User.objects.filter(email__endswith='qa-test.findmytaste.ng').exists())
+        self.assertEqual(Wallet.objects.get(user=user).balance, Decimal('0.00'))
+        # The rider's real data is untouched.
+        self.assertTrue(WalletTransaction.objects.filter(pk=real.pk).exists())
+        self.assertTrue(Rider.objects.filter(pk=rider.pk).exists())
+        self.assertEqual(WalletTransaction.objects.filter(user=user).count(), 1)
+
+
+@override_settings(CACHES=LOCMEM)
+class DeliveryFromEstimateTests(TestCase):
+    def test_clean_rising_prices_and_times(self):
+        from helpers.order_utils import DeliveryConfig, estimate_delivery_from
+        cache.clear()
+        near = estimate_delivery_from(0.8)
+        mid = estimate_delivery_from(4.0)
+        far = estimate_delivery_from(9.0)
+        for est in (near, mid, far):
+            self.assertEqual(est['fee'] % 100, 0)
+            self.assertGreaterEqual(est['fee'], DeliveryConfig.MIN_DELIVERY_FEE // 100 * 100)
+            self.assertEqual(est['minutes'] % 5, 0)
+        self.assertLessEqual(near['fee'], mid['fee'])
+        self.assertLess(mid['fee'], far['fee'])
+        self.assertLess(near['minutes'], far['minutes'])
+
+    def test_vendor_card_shows_from_price_not_zero(self):
+        from vendor.serializers import BuyerVendorCardSerializer
+        vendor = make_vendor(email='card@example.com')
+        vendor.distance_km = 3.2
+        data = BuyerVendorCardSerializer(vendor).data
+        self.assertGreater(float(data['starting_delivery_price']), 0)
+        self.assertNotEqual(data['estimated_delivery_time'], '0:30:00')

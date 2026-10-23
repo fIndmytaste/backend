@@ -1153,6 +1153,23 @@ class BuyerVendorCardSerializer(serializers.ModelSerializer):
     def get_thumbnail(self, obj: Vendor):
         return obj.thumbnail_url
 
+    def to_representation(self, instance: Vendor):
+        data = super().to_representation(instance)
+        # Regular vendors: a realistic "From" delivery price and time for this
+        # customer's distance, instead of an unset starting price (shown as
+        # N0) and a flat 30 minutes. Marketplace vendors keep their own
+        # pricing and delivery window.
+        if not data.get('is_marketplace_vendor'):
+            try:
+                from helpers.order_utils import estimate_delivery_from
+                estimate = estimate_delivery_from(data.get('distance_km'))
+                data['starting_delivery_price'] = f"{estimate['fee']}.00"
+                minutes = estimate['minutes']
+                data['estimated_delivery_time'] = f"{minutes // 60}:{minutes % 60:02d}:00"
+            except Exception:
+                pass
+        return data
+
     def get_distance_km(self, obj: Vendor):
         # Set by the distance sort in helpers.vendor_discovery when the
         # request carried a location; absent otherwise.

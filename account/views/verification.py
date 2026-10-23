@@ -61,7 +61,10 @@ REVIEW_ACCOUNT_CODE = '123456'
 
 
 def phone_verification_required():
-    return config('PHONE_VERIFICATION_REQUIRED', default=False, cast=bool)
+    # Never block anyone on an SMS code that cannot be sent: the flag only
+    # takes effect once Termii is configured.
+    from helpers.termii import is_configured
+    return config('PHONE_VERIFICATION_REQUIRED', default=False, cast=bool) and is_configured()
 
 
 def mask_phone(international):
