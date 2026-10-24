@@ -10,17 +10,19 @@ thread so the admin's click is never lost.
 import logging
 import threading
 
-from django.conf import settings
 from django.core import signing
 from django.template.loader import render_to_string
 from django.utils import timezone
-from django.utils.html import strip_tags
+from django.utils.html import strip_tags, urlize
+from django.utils.safestring import mark_safe
 from decouple import config
+
+from helpers.email_branding import LOGO_SRC, SENDER, attach_logo
 
 logger = logging.getLogger(__name__)
 
 UNSUBSCRIBE_SALT = 'email-campaign-unsubscribe'
-FROM_EMAIL = 'Find My Taste <support@findmytaste.com.ng>'
+FROM_EMAIL = SENDER
 
 
 def public_base_url():
@@ -42,14 +44,40 @@ def user_id_from_unsubscribe_token(token):
         return None
 
 
+LINK_STYLE = 'style="color:#02A57C; text-decoration:underline;"'
+
+
+def linkify(text):
+    """
+    Turn web addresses the admin typed in the message into real links.
+
+    The message is plain text, so a pasted address used to arrive as words
+    that most inboxes would not open. Text is escaped first; "www." addresses
+    get https:// added.
+    """
+    html = urlize(text, nofollow=False, autoescape=True)
+    html = html.replace('<a href="http://www.', '<a href="https://www.')
+    return mark_safe(html.replace('<a href=', f'<a target="_blank" {LINK_STYLE} href='))
+
+
+def button_url(url):
+    """Make the button link absolute, so "findmytaste.com.ng/x" still opens."""
+    url = (url or '').strip()
+    if url and '://' not in url and not url.startswith(('mailto:', 'tel:')):
+        url = f'https://{url}'
+    return url
+
+
 def render_campaign(campaign, name=None, unsubscribe_url=None):
-    paragraphs = [p.strip() for p in (campaign.body or '').split('\n\n') if p.strip()]
+    paragraphs = [
+        linkify(p.strip()) for p in (campaign.body or '').split('\n\n') if p.strip()]
     context = {
         'campaign': campaign,
         'greeting_name': (name or '').split(' ')[0] if name else '',
         'paragraphs': paragraphs,
+        'cta_url': button_url(campaign.cta_url),
         'unsubscribe_url': unsubscribe_url,
-        'logo_url': f"{public_base_url()}{settings.STATIC_URL}images/findmytaste-logo.png",
+        'logo_src': LOGO_SRC,
         'current_year': timezone.now().year,
     }
     html = render_to_string('emails/campaign.html', context)
@@ -72,6 +100,7 @@ def send_campaign_email(campaign, email, name=None, unsubscribe_url=None):
         headers=headers,
     )
     message.attach_alternative(html, 'text/html')
+    attach_logo(message)
     try:
         message.send(fail_silently=False)
         return True

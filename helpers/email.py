@@ -8,6 +8,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
+from helpers.email_branding import LOGO_SRC, SENDER, attach_logo
+
 
 class EmailService:
     """
@@ -69,6 +71,8 @@ class EmailService:
         # Add HTML content if provided
         if html_content:
             email.attach_alternative(html_content, "text/html")
+            if LOGO_SRC in html_content:
+                attach_logo(email)
 
         # Add attachments if provided
         if attachments:
@@ -119,9 +123,14 @@ class EmailService:
         Returns:
             bool: True if the email was sent (or scheduled to be sent) successfully
         """
-        from_email = 'support@findmytaste.com.ng'
-        # The shared layout (emails/base.html) prints the year in its footer.
-        template_data = {"current_year": datetime.date.today().year, **template_data}
+        # A display name, so inboxes show "Find My Taste" rather than "support".
+        from_email = SENDER
+        # The shared layout (emails/base.html) prints the year and the logo.
+        template_data = {
+            "current_year": datetime.date.today().year,
+            "logo_src": LOGO_SRC,
+            **template_data,
+        }
         # Render HTML template
         html_content = render_to_string(template_name, template_data)
         

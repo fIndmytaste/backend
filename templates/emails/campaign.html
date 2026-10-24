@@ -18,7 +18,7 @@
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; background-color:#FFFFFF; border-radius:16px; overflow:hidden;">
                     <tr>
                         <td align="center" style="background-color:#02C897; padding:24px;">
-                            <img src="{{ logo_url }}" width="96" height="96" alt="Find my Taste" style="display:block; border:0; border-radius:16px;">
+                            <img src="{{ logo_src }}" width="88" height="88" alt="Find my Taste" style="display:block; width:88px; height:88px; border:3px solid #FFFFFF; border-radius:22px; font-family:Georgia, 'Times New Roman', serif; font-size:24px; font-weight:700; color:#FFFFFF;">
                         </td>
                     </tr>
                     <tr>
@@ -30,11 +30,11 @@
                             {% for paragraph in paragraphs %}
                             <p style="margin:0 0 16px 0;">{{ paragraph|linebreaksbr }}</p>
                             {% endfor %}
-                            {% if campaign.cta_label and campaign.cta_url %}
+                            {% if campaign.cta_label and cta_url %}
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 16px 0;">
                                 <tr>
                                     <td align="center" style="background-color:#02C897; border-radius:10px;">
-                                        <a href="{{ campaign.cta_url }}" style="display:inline-block; padding:14px 28px; font-size:15px; font-weight:700; color:#FFFFFF; text-decoration:none;">{{ campaign.cta_label }}</a>
+                                        <a href="{{ cta_url }}" target="_blank" style="display:inline-block; padding:14px 28px; font-size:15px; font-weight:700; color:#FFFFFF; text-decoration:none;">{{ campaign.cta_label }}</a>
                                     </td>
                                 </tr>
                             </table>

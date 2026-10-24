@@ -354,6 +354,9 @@ class AdminSupportSettingsView(generics.GenericAPIView):
 
 class EmailCampaignSerializer(serializers.ModelSerializer):
     audience_size = serializers.SerializerMethodField()
+    # Text, not URLField: "findmytaste.com.ng/promo" is accepted and saved
+    # with https:// in front instead of being rejected.
+    cta_url = serializers.CharField(max_length=500, required=False, allow_blank=True)
 
     class Meta:
         model = EmailCampaign
@@ -372,6 +375,20 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
         if obj.status != 'draft':
             return obj.recipient_count
         return obj.recipients().count()
+
+    def validate_cta_url(self, value):
+        from django.core.validators import URLValidator
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from admin_manager.campaigns import button_url
+
+        value = button_url(value)
+        if value:
+            try:
+                URLValidator(schemes=['http', 'https'])(value)
+            except DjangoValidationError:
+                raise serializers.ValidationError(
+                    "Enter a full web link, like https://findmytaste.com.ng/offers.")
+        return value
 
     def validate(self, attrs):
         label = attrs.get('cta_label', getattr(self.instance, 'cta_label', ''))

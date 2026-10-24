@@ -431,13 +431,69 @@ class CampaignTests(TestCase):
         self.assertIn('List-Unsubscribe', mail.outbox[0].extra_headers)
         html = mail.outbox[0].alternatives[0][0]
         self.assertIn('Hi Promo', html)
-        self.assertIn('findmytaste-logo.png', html)
+        self.assertIn('cid:findmytaste-logo', html)
 
         path = unsubscribe_url_for(user).split('/api/v1')[1]
         res = self.client.get('/api/v1' + path)
         self.assertEqual(res.status_code, 200)
         user.refresh_from_db()
         self.assertFalse(user.marketing_emails_opt_in)
+
+
+class EmailBrandingTests(TestCase):
+    """Logo embedded in every email, and admin links that actually open."""
+
+    def _sent_message(self, send):
+        from django.core import mail
+        with self.settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend'):
+            send()
+        self.assertEqual(len(mail.outbox), 1)
+        return mail.outbox[0].message()
+
+    def _inline_logo(self, message):
+        parts = [p for p in message.walk() if p.get('Content-ID') == '<findmytaste-logo>']
+        self.assertEqual(len(parts), 1)
+        self.assertEqual(parts[0].get_content_type(), 'image/png')
+        self.assertTrue(parts[0].get_payload(decode=True).startswith(b'\x89PNG'))
+
+    def test_campaign_embeds_logo_and_links_body_addresses(self):
+        from admin_manager.campaigns import send_campaign_email
+
+        campaign = EmailCampaign(
+            subject='Deals', audience='all',
+            body='See https://findmytaste.com.ng/deals?a=1&b=2 or www.example.com today.\n\n<b>not html</b>',
+            cta_label='Order now', cta_url='https://findmytaste.com.ng/order')
+        message = self._sent_message(lambda: send_campaign_email(campaign, 'a@example.com', name='Ada'))
+        self.assertEqual(message.get_content_type(), 'multipart/related')
+        self._inline_logo(message)
+        html = next(p for p in message.walk() if p.get_content_type() == 'text/html').get_payload(decode=True).decode()
+        self.assertIn('src="cid:findmytaste-logo"', html)
+        self.assertIn('href="https://findmytaste.com.ng/deals?a=1&amp;b=2"', html)
+        self.assertIn('href="https://www.example.com"', html)
+        self.assertIn('href="https://findmytaste.com.ng/order"', html)
+        self.assertIn('&lt;b&gt;not html&lt;/b&gt;', html)
+        self.assertIn('Find My Taste <support@findmytaste.com.ng>', message['From'])
+
+    def test_button_link_without_https_is_saved_with_it(self):
+        from admin_manager.views.growth import EmailCampaignSerializer
+
+        ok = EmailCampaignSerializer(data={
+            'subject': 'S', 'body': 'B', 'cta_label': 'Go', 'cta_url': 'findmytaste.com.ng/promo'})
+        self.assertTrue(ok.is_valid(), ok.errors)
+        self.assertEqual(ok.validated_data['cta_url'], 'https://findmytaste.com.ng/promo')
+        bad = EmailCampaignSerializer(data={
+            'subject': 'S', 'body': 'B', 'cta_label': 'Go', 'cta_url': 'not a link'})
+        self.assertFalse(bad.is_valid())
+
+    def test_transactional_emails_embed_logo(self):
+        from helpers.email import EmailService
+
+        message = self._sent_message(lambda: EmailService().send_email_with_template(
+            'b@example.com', 'emails/account_activation.html',
+            {'user_name': 'Bola', 'verification_code': '123456', 'expiry_time': '24 hours'},
+            'Verify', async_send=False))
+        self._inline_logo(message)
+        self.assertIn('Find My Taste <support@findmytaste.com.ng>', message['From'])
 
 
 @override_settings(CACHES=LOCMEM)
