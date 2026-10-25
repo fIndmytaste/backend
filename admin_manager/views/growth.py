@@ -504,6 +504,70 @@ class AdminEmailCampaignTestView(generics.GenericAPIView):
         return success_response(message=f"Test email sent to {email}.")
 
 
+class AdminContactsExportView(generics.GenericAPIView):
+    """
+    GET email-campaigns/contacts.csv?audience=customers|vendors|riders|all
+                                    &include_unsubscribed=1
+
+    Customers, vendors and riders as a CSV ready to import into Brevo (or any
+    mailing tool). Column names are the ones Brevo maps automatically: EMAIL,
+    FIRSTNAME, LASTNAME and SMS (phone with country code). People who
+    unsubscribed from promotional emails are left out unless asked for.
+    """
+
+    permission_classes = [page_permission('email-campaigns')]
+    ROLES = {'customers': 'buyer', 'vendors': 'vendor', 'riders': 'rider'}
+    ROLE_LABELS = {'buyer': 'customer', 'vendor': 'vendor', 'rider': 'rider'}
+
+    def get(self, request):
+        import csv
+        from django.http import HttpResponse
+        from account.models import User
+        from helpers.termii import normalize_nigerian_phone
+
+        audience = request.GET.get('audience', 'all')
+        if audience != 'all' and audience not in self.ROLES:
+            return bad_request_response(message="Choose customers, vendors, riders or all.")
+        include_unsubscribed = request.GET.get('include_unsubscribed') in ('1', 'true')
+
+        users = User.objects.filter(is_active=True).exclude(email__isnull=True).exclude(email='')
+        if audience == 'all':
+            users = users.filter(role__in=list(self.ROLES.values()))
+        else:
+            users = users.filter(role=self.ROLES[audience])
+        if not include_unsubscribed:
+            users = users.filter(marketing_emails_opt_in=True)
+        users = users.order_by('created_at')
+
+        businesses = dict(Vendor.objects.filter(user__in=users).values_list('user_id', 'name'))
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        filename = f"findmytaste-{audience}-{timezone.localdate().isoformat()}.csv"
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response.write('\ufeff')  # BOM so Excel shows names with accents correctly
+        writer = csv.writer(response)
+        writer.writerow([
+            'EMAIL', 'FIRSTNAME', 'LASTNAME', 'SMS', 'ROLE', 'BUSINESS_NAME',
+            'SIGNED_UP', 'MARKETING_OPT_IN',
+        ])
+        for user in users.only(
+                'id', 'email', 'full_name', 'phone_number', 'role', 'created_at',
+                'marketing_emails_opt_in').iterator():
+            names = (user.full_name or '').split()
+            phone = normalize_nigerian_phone(user.phone_number)
+            writer.writerow([
+                user.email.strip().lower(),
+                names[0] if names else '',
+                ' '.join(names[1:]),
+                f'+{phone}' if phone else '',
+                self.ROLE_LABELS.get(user.role, user.role),
+                businesses.get(user.id, ''),
+                timezone.localtime(user.created_at).date().isoformat() if user.created_at else '',
+                'yes' if user.marketing_emails_opt_in else 'no',
+            ])
+        return response
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Rider rewards
 # ─────────────────────────────────────────────────────────────────────────────

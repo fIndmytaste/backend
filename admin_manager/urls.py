@@ -219,6 +219,7 @@ urlpatterns = [
 
     # Email campaigns
     path('email-campaigns/', growth_view.AdminEmailCampaignListView.as_view(), name='admin-email-campaigns'),
+    path('email-campaigns/contacts.csv', growth_view.AdminContactsExportView.as_view(), name='admin-email-contacts-export'),
     path('email-campaigns/<uuid:id>/', growth_view.AdminEmailCampaignDetailView.as_view(), name='admin-email-campaign-detail'),
     path('email-campaigns/<uuid:id>/send/', growth_view.AdminEmailCampaignSendView.as_view(), name='admin-email-campaign-send'),
     path('email-campaigns/<uuid:id>/test/', growth_view.AdminEmailCampaignTestView.as_view(), name='admin-email-campaign-test'),

@@ -444,6 +444,44 @@ class CampaignTests(TestCase):
         self.assertFalse(user.marketing_emails_opt_in)
 
 
+class ContactsExportTests(APITestCase):
+    def test_csv_for_brevo(self):
+        import csv, io
+        admin = User.objects.create_user(email='boss@example.com', password='pw', role='admin')
+        User.objects.create_user(email='Ada@Example.com', password='pw', role='buyer',
+                                 full_name='John Michael Doe', phone_number='08012345678')
+        User.objects.create_user(email='out@example.com', password='pw', role='buyer',
+                                 marketing_emails_opt_in=False)
+        User.objects.create_user(email='r@example.com', password='pw', role='rider')
+        vendor = make_vendor()
+        self.client.force_authenticate(admin)
+
+        res = self.client.get('/api/v1/admin-manager/email-campaigns/contacts.csv?audience=customers')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('attachment; filename="findmytaste-customers-', res['Content-Disposition'])
+        rows = list(csv.DictReader(io.StringIO(res.content.decode('utf-8-sig'))))
+        self.assertEqual([r['EMAIL'] for r in rows], ['ada@example.com'])
+        self.assertEqual(rows[0]['FIRSTNAME'], 'John')
+        self.assertEqual(rows[0]['LASTNAME'], 'Michael Doe')
+        self.assertEqual(rows[0]['SMS'], '+2348012345678')
+
+        res = self.client.get('/api/v1/admin-manager/email-campaigns/contacts.csv?audience=vendors')
+        rows = list(csv.DictReader(io.StringIO(res.content.decode('utf-8-sig'))))
+        self.assertEqual(rows[0]['BUSINESS_NAME'], vendor.name)
+
+        res = self.client.get(
+            '/api/v1/admin-manager/email-campaigns/contacts.csv?audience=all&include_unsubscribed=1')
+        emails = {r['EMAIL'] for r in csv.DictReader(io.StringIO(res.content.decode('utf-8-sig')))}
+        self.assertTrue({'ada@example.com', 'out@example.com', 'r@example.com'} <= emails)
+        self.assertNotIn('boss@example.com', emails)
+
+    def test_staff_without_page_cannot_export(self):
+        staff = User.objects.create_user(email='s@example.com', password='pw', role='buyer', is_staff=True)
+        self.client.force_authenticate(staff)
+        res = self.client.get('/api/v1/admin-manager/email-campaigns/contacts.csv')
+        self.assertEqual(res.status_code, 403)
+
+
 class EmailBrandingTests(TestCase):
     """Logo embedded in every email, and admin links that actually open."""
 
