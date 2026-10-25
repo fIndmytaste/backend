@@ -370,14 +370,18 @@ class ReceiptTests(TestCase):
             wallet=Wallet.objects.get(user=user), user=user, amount=Decimal('15000'),
             transaction_type='withdrawal', status='completed', description='Withdrawal from wallet')
         narration = withdrawal_narration(txn, 'Withdrawal from balance')
-        self.assertTrue(narration.startswith('Find My Taste withdrawal'))
-        self.assertIn(txn.reference_code, narration)
+        self.assertEqual(narration, f'Find My Taste rider withdrawal NGN 15,000.00 ref {txn.reference_code}')
 
         receipt = build_withdrawal_receipt(txn)
         self.assertEqual(receipt['bank_name'], 'GTBank')
         self.assertEqual(receipt['account_number_masked'], mask_account_number('0123456789'))
         self.assertTrue(receipt['account_number_masked'].endswith('6789'))
         self.assertEqual(receipt['recipient_name'], 'Kemi Ade')
+        self.assertTrue(receipt['narration'].startswith(
+            'Withdrawal of NGN 15,000.00 from your Find My Taste rider wallet to KEMI ADE, GTBank '))
+        self.assertIn('6789 on ', receipt['narration'])
+        self.assertTrue(receipt['narration'].endswith(f'Ref {txn.reference_code}.'))
+        self.assertTrue(receipt['bank_narration'].startswith('Find My Taste rider withdrawal'))
 
     def test_non_withdrawals_have_no_receipt(self):
         user = User.objects.create_user(email='rc2@example.com', password='pw', role='rider')
@@ -473,6 +477,21 @@ class EmailBrandingTests(TestCase):
         self.assertIn('href="https://findmytaste.com.ng/order"', html)
         self.assertIn('&lt;b&gt;not html&lt;/b&gt;', html)
         self.assertIn('Find My Taste <support@findmytaste.com.ng>', message['From'])
+
+    def test_campaigns_can_use_their_own_mail_server(self):
+        from admin_manager.campaigns import campaign_connection
+
+        with patch.dict('os.environ', {}, clear=False):
+            import os
+            os.environ.pop('CAMPAIGN_EMAIL_HOST', None)
+            self.assertIsNone(campaign_connection())
+        with patch.dict('os.environ', {
+                'CAMPAIGN_EMAIL_HOST': 'smtp.zoho.com', 'CAMPAIGN_EMAIL_PORT': '465',
+                'CAMPAIGN_EMAIL_USER': 'support@findmytaste.com.ng', 'CAMPAIGN_EMAIL_PASSWORD': 'x'}):
+            connection = campaign_connection()
+        self.assertEqual(connection.host, 'smtp.zoho.com')
+        self.assertTrue(connection.use_ssl)
+        self.assertFalse(connection.use_tls)
 
     def test_button_link_without_https_is_saved_with_it(self):
         from admin_manager.views.growth import EmailCampaignSerializer

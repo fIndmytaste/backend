@@ -84,7 +84,34 @@ def render_campaign(campaign, name=None, unsubscribe_url=None):
     return html, strip_tags(html)
 
 
-def send_campaign_email(campaign, email, name=None, unsubscribe_url=None):
+def campaign_connection():
+    """
+    Mail server for campaigns. Defaults to the normal one (Brevo).
+
+    Brevo routes every link through its click tracker (sendibt3.com), which
+    can't be switched off for SMTP mail and has been answering "This link is
+    temporarily unavailable". Setting CAMPAIGN_EMAIL_HOST (for example
+    smtp.zoho.com with the support@ mailbox) sends campaigns from a server
+    that leaves links as they are.
+    """
+    host = config('CAMPAIGN_EMAIL_HOST', default='')
+    if not host:
+        return None
+    from django.core.mail import get_connection
+    port = config('CAMPAIGN_EMAIL_PORT', default=587, cast=int)
+    return get_connection(
+        'django.core.mail.backends.smtp.EmailBackend',
+        host=host,
+        port=port,
+        username=config('CAMPAIGN_EMAIL_USER', default=''),
+        password=config('CAMPAIGN_EMAIL_PASSWORD', default=''),
+        use_tls=port != 465,
+        use_ssl=port == 465,
+        timeout=30,
+    )
+
+
+def send_campaign_email(campaign, email, name=None, unsubscribe_url=None, connection=None):
     from django.core.mail import EmailMultiAlternatives
 
     html, text = render_campaign(campaign, name=name, unsubscribe_url=unsubscribe_url)
@@ -98,6 +125,7 @@ def send_campaign_email(campaign, email, name=None, unsubscribe_url=None):
         from_email=FROM_EMAIL,
         to=[email],
         headers=headers,
+        connection=connection or campaign_connection(),
     )
     message.attach_alternative(html, 'text/html')
     attach_logo(message)
@@ -119,10 +147,12 @@ def send_campaign(campaign_id):
 
     sent = failed = 0
     last_error = ''
+    connection = campaign_connection()  # one login for the whole run
     for user in campaign.recipients().only('id', 'email', 'full_name').iterator():
         ok = send_campaign_email(
             campaign, user.email, name=user.full_name,
             unsubscribe_url=unsubscribe_url_for(user),
+            connection=connection,
         )
         if ok:
             sent += 1
