@@ -1408,6 +1408,22 @@ class Order(models.Model):
 
         return settlement_total.quantize(Decimal('0.01'))
 
+    @staticmethod
+    def rider_fee_basis(delivery_fee, original_delivery_fee):
+        """
+        The delivery fee the rider's pay is worked out from.
+
+        Normally what the customer paid. When the customer got free delivery
+        (a full delivery bonus: 0, or the ₦0.01 token older apps are sent) the
+        rider is still paid for the trip, from the fee before the bonus.
+        """
+        from decimal import Decimal
+
+        paid = Decimal(str(delivery_fee or 0))
+        if paid >= 1:
+            return paid
+        return Decimal(str(original_delivery_fee or 0)) or paid
+
     def calculate_rider_earning_amount(self):
         """What the rider is paid: the delivery fee minus the service fee.
 
@@ -1418,7 +1434,7 @@ class Order(models.Model):
         """
         from decimal import Decimal
 
-        amount = Decimal(str(self.delivery_fee or self.original_delivery_fee or 0))
+        amount = self.rider_fee_basis(self.delivery_fee, self.original_delivery_fee)
         service_fee = Decimal(str(self.service_fee or 0))
         return max(Decimal('0.00'), amount - service_fee).quantize(Decimal('0.01'))
 

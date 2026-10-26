@@ -240,6 +240,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
 
         delivery_fee = None
         quoted_service_fee = 0
+        quoted_original_fee = 0
         if delivery_fee_id:
             try:
                 delivery_fee_record = DeliveryFee.objects.get(id=delivery_fee_id, user=user, vendor=vendor, is_active=True )
@@ -259,6 +260,9 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
             delivery_fee = delivery_fee_record.amount
             # Platform's cut of that fee; the rider is paid the remainder.
             quoted_service_fee = delivery_fee_record.service_fee or 0
+            # Fee before the customer's delivery bonus/promo; with free
+            # delivery the rider is paid from this.
+            quoted_original_fee = delivery_fee_record.original_amount or 0
 
         location_latitude = None
         location_longitude = None
@@ -372,7 +376,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 promo_code = request.data.get('promo_code')
 
                 # Delivery fee calculation (reuse logic)
-                original_delivery_fee = Decimal('0.00')
+                original_delivery_fee = Decimal(str(quoted_original_fee or 0))
                 promo_info = {"is_applied": False, "discount_amount": 0}
 
                 # Compute subtotal from in-memory data — no extra DB query needed
@@ -444,7 +448,7 @@ class CustomerCreateOrderWithVariantsView(generics.GenericAPIView):
                 # a distance-based fare here made the rider app display more
                 # than the customer was charged.
                 order.rider_earning = order.calculate_net_rider_earning(
-                    Decimal(str(delivery_fee or original_delivery_fee or 0))
+                    Order.rider_fee_basis(delivery_fee, original_delivery_fee)
                 )
                 
                 order.payment_method = request.data.get('payment_method','wallet')
@@ -1258,6 +1262,12 @@ class GetDeliveryFeeView(generics.GenericAPIView):
         
 
         # create the delicery record here if needed
+        # Customer apps before 1.0.4 (31) read a 0 fee as "this vendor can't
+        # deliver to you" and block checkout, so a full delivery bonus gets a
+        # token ₦0.01 there. Newer apps send this header and show "Free".
+        if float(delivery_fee) <= 0 and request.headers.get('X-Free-Delivery-Supported') != '1':
+            delivery_fee = Decimal('0.01')
+
         record = DeliveryFee.objects.create(
             user=user,
             amount=float(delivery_fee),
@@ -1486,7 +1496,7 @@ class CustomerCreateOrderView(generics.GenericAPIView):
                 # a distance-based fare here made the rider app display more
                 # than the customer was charged.
                 order.rider_earning = order.calculate_net_rider_earning(
-                    Decimal(str(delivery_fee or original_delivery_fee or 0))
+                    Order.rider_fee_basis(delivery_fee, original_delivery_fee)
                 )
                 order.save()
 
@@ -1737,7 +1747,7 @@ class CustomerCreateOrderMobileView(generics.GenericAPIView):
                 # Net of the platform's rider commission, based on the delivery
                 # fee the customer paid — not a separate distance fare.
                 order.rider_earning = order.calculate_net_rider_earning(
-                    Decimal(str(delivery_fee or original_delivery_fee or 0))
+                    Order.rider_fee_basis(delivery_fee, original_delivery_fee)
                 )
                 order.save()
                 order.save_vendor_and_commision()

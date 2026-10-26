@@ -249,6 +249,80 @@ class ServiceFeeTests(TestCase):
         self.assertEqual(DeliveryConfig.service_fee_for(0), 0.0)
 
 
+@override_settings(CACHES=LOCMEM)
+class DeliveryBonusTests(APITestCase):
+    """A delivery bonus (delivery_percentage_off) on the customer's account."""
+
+    DEST = (6.5300, 3.3850)  # ~1 km from make_vendor's location
+
+    def setUp(self):
+        from helpers.models import DeliveryConfiguration
+        cache.clear()
+        DeliveryConfiguration.objects.create(
+            key='service_fee_amount', category='pricing', data_type='float',
+            value='150', default_value='0', description='Fixed service fee')
+        cache.clear()
+        self.vendor = make_vendor(delivery_radius_km=50)
+
+    def _fee(self, user):
+        from helpers.order_utils import calculate_delivery_fee
+        return calculate_delivery_fee(
+            origin_lat=float(self.vendor.location_latitude),
+            origin_lon=float(self.vendor.location_longitude),
+            dest_lat=self.DEST[0], dest_lon=self.DEST[1],
+            item_count=1, order_value=5000,
+            user_id=str(user.id), customer_id=str(user.id), vendor_id=str(self.vendor.id))
+
+    def test_full_bonus_means_nothing_to_pay(self):
+        user = User.objects.create_user(email='free@example.com', password='pw', role='buyer',
+                                        delivery_percentage_off=Decimal('100'))
+        result = self._fee(user)
+        self.assertEqual(result['delivery_fee'], 0)
+        self.assertEqual(result['service_fee'], 0)
+        self.assertEqual(result['total_fee'], 0)
+
+        self.client.force_authenticate(user)
+        url = (f'/api/v1/products/vendor/{self.vendor.id}/delivery-fee/'
+               f'?latitude={self.DEST[0]}&longitude={self.DEST[1]}&item_count=1&order_value=5000')
+        res = self.client.get(url, HTTP_X_FREE_DELIVERY_SUPPORTED='1')
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(float(res.json()['data']['delivery_fee']), 0.0)
+
+        # Older apps treat 0 as "can't deliver here": they get a token amount.
+        res = self.client.get(url)
+        self.assertEqual(float(res.json()['data']['delivery_fee']), 0.01)
+
+    def test_rider_is_still_paid_on_free_delivery(self):
+        user = User.objects.create_user(email='free2@example.com', password='pw', role='buyer',
+                                        delivery_percentage_off=Decimal('100'))
+        result = self._fee(user)
+        self.assertGreater(result['original_fee'], 0)  # fee before the bonus is kept
+
+        self.assertEqual(Order.rider_fee_basis(0, result['original_fee']),
+                         Decimal(str(result['original_fee'])))
+        self.assertEqual(Order.rider_fee_basis(Decimal('0.01'), 1200), Decimal('1200'))
+        self.assertEqual(Order.rider_fee_basis(900, 1200), Decimal('900'))
+
+        order = Order(user=user, vendor=self.vendor, delivery_fee=Decimal('0'),
+                      original_delivery_fee=Decimal('1200'), service_fee=Decimal('0'))
+        self.assertEqual(order.calculate_net_rider_earning(), Decimal('1200.00'))
+
+    def test_partial_bonus_keeps_service_fee_and_is_not_applied_twice(self):
+        regular = User.objects.create_user(email='reg@example.com', password='pw', role='buyer')
+        half = User.objects.create_user(email='half@example.com', password='pw', role='buyer',
+                                        delivery_percentage_off=Decimal('50'))
+        full_price = self._fee(regular)
+        discounted = self._fee(half)
+        self.assertAlmostEqual(full_price['service_fee'], 150)
+        self.assertAlmostEqual(discounted['service_fee'], 150)
+        self.assertAlmostEqual(discounted['delivery_fee'], full_price['delivery_fee'] / 2, places=2)
+
+        by_vendor = self.vendor.calculate_delivery_fee_by_vendor(
+            1, dest_lat=self.DEST[0], dest_lon=self.DEST[1], user=half, order_value=5000)
+        self.assertAlmostEqual(float(by_vendor['total_fee']), discounted['total_fee'], places=2)
+        self.assertAlmostEqual(float(by_vendor['service_fee']), 150)
+
+
 class RiderRewardTests(TestCase):
     def setUp(self):
         self.vendor = make_vendor()

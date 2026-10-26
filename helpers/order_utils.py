@@ -1253,7 +1253,9 @@ def apply_promo_code(
 
     effective_delivery_fee = current_fee if current_fee is not None else delivery_fee
 
-    if not effective_delivery_fee:
+    # 0 is a real fee (free delivery from a delivery bonus); only a missing
+    # fee is an error.
+    if effective_delivery_fee is None:
         raise ValueError("Delivery fee must be provided to apply promo code")
     
     promo_info = {
@@ -1581,12 +1583,6 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
             logger.debug(
                 f"No customer ID provided for calculation {calculation_id}")
 
-        # Apply delivery percentage off (after surcharges, before min/max)
-        if delivery_discount_percentage is not None and delivery_discount_percentage > 0:
-            discount_amount = (delivery_discount_percentage / 100) * final_fee
-            logger.debug(
-                f"Applying delivery percentage off: {delivery_discount_percentage}% (₦{discount_amount:.2f}) for calculation {calculation_id}")
-            final_fee -= discount_amount
         # Apply min/max constraints
         original_final_fee = final_fee
         final_fee = max(DeliveryConfig.MIN_DELIVERY_FEE, min(
@@ -1595,11 +1591,24 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
             logger.debug(
                 f"Fee constrained from ₦{original_final_fee:.2f} to ₦{final_fee:.2f} for calculation {calculation_id}")
 
+        # The fee before any bonus or promo: what the rider is paid from when
+        # the customer gets free delivery.
+        pre_bonus_fee = final_fee
+
+        # Apply the delivery bonus (percentage off) after the min/max limits.
+        # It used to run before them, so a 100% bonus brought the fee to 0
+        # and the minimum fee then put it straight back.
+        if delivery_discount_percentage is not None and delivery_discount_percentage > 0:
+            discount_amount = (float(delivery_discount_percentage) / 100) * final_fee
+            logger.debug(
+                f"Applying delivery percentage off: {delivery_discount_percentage}% (₦{discount_amount:.2f}) for calculation {calculation_id}")
+            final_fee = max(0, final_fee - discount_amount)
+
         # --- NEW PROMO CODE SYSTEM INTEGRATION ---
         from account.models import Vendor
         vendor_obj = Vendor.objects.filter(id=vendor_id).first() if vendor_id else None
         
-        original_final_fee = final_fee # Save before promo
+        original_final_fee = pre_bonus_fee  # Before the bonus and promo
         
         promo_info = apply_promo_code(
             promo_code=promo_code,
@@ -1614,6 +1623,15 @@ def calculate_delivery_fee(origin_lat: float, origin_lon: float, dest_lat: float
         if promo_info["is_applied"] and promo_info["affects_delivery"]:
             final_fee -= promo_info["discount_amount"]
             final_fee = max(0, final_fee)
+
+        # Free delivery (a 100% delivery bonus or a free-delivery promo) means
+        # nothing to pay at checkout, so the service fee is waived too.
+        delivery_bonus_applied = bool(
+            (delivery_discount_percentage is not None and delivery_discount_percentage > 0)
+            or (promo_info["is_applied"] and promo_info["affects_delivery"])
+        )
+        if delivery_bonus_applied and final_fee <= 0:
+            service_fee = 0.0
 
         # 8.1 Final total including service fee
         grand_total = final_fee + service_fee

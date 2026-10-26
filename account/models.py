@@ -507,6 +507,7 @@ class Vendor(models.Model):
         delivery_fee = None
         promo_info = {"is_applied": False, "discount_amount": 0, "affects_delivery": False}
         service_fee = Decimal('0.00')
+        bonus_already_applied = False
         is_in_marketplace = MarketPlace.objects.filter(vendors=self).first()
         logger.info(
             "[delivery_fee] vendor=%s is_in_marketplace=%s item_count=%s",
@@ -531,6 +532,10 @@ class Vendor(models.Model):
             original_delivery_fee = delivery_fee_info['original_fee']
             promo_info = delivery_fee_info.get(
                 'promo_info', {"is_applied": False, "discount_amount": 0})
+            # calculate_delivery_fee already applied the delivery bonus and
+            # included (or waived) the service fee.
+            bonus_already_applied = True
+            service_fee = Decimal(str(delivery_fee_info.get('service_fee') or 0))
         else:
             if item_count <= 0:
                 return {
@@ -560,6 +565,8 @@ class Vendor(models.Model):
                 original_delivery_fee = delivery_fee_info['original_fee']
                 promo_info = delivery_fee_info.get(
                     'promo_info', {"is_applied": False, "discount_amount": 0})
+                bonus_already_applied = True
+                service_fee = Decimal(str(delivery_fee_info.get('service_fee') or 0))
             else:
                 delivery_zone = None
                 if dest_lat is not None and dest_lon is not None:
@@ -651,12 +658,11 @@ class Vendor(models.Model):
                     delivery_discount_percentage = platform_settings.delivery_percentage_off
             except Exception:
                 pass
-        # Apply delivery percentage off
+        if bonus_already_applied:
+            # calculate_delivery_fee applied the bonus already; applying it
+            # again discounted twice, including the service fee.
+            delivery_discount_percentage = None
         original_delivery_fee = delivery_fee  # Save before platform percentage discount
-        if delivery_fee is not None and delivery_discount_percentage is not None and delivery_discount_percentage > 0:
-            discount_amount = (
-                Decimal(delivery_discount_percentage) / Decimal('100')) * Decimal(delivery_fee)
-            delivery_fee = Decimal(delivery_fee) - discount_amount
 
         # Manual promo handling for the marketplace path.
         if is_in_marketplace:
@@ -667,7 +673,8 @@ class Vendor(models.Model):
             # Apply the same minimum/maximum delivery fee configured in Delivery
             # Settings. Zone pricing bypassed these limits entirely, so a zone
             # could charge below the floor or above the ceiling the admin set.
-            # Applied before promo, so a promo can still discount past the floor.
+            # Applied before the bonus and promo, so both can still discount
+            # past the floor (a 100% bonus used to be lifted back to it).
             if delivery_fee > 0:
                 try:
                     from helpers.order_utils import DeliveryConfig
@@ -678,6 +685,13 @@ class Vendor(models.Model):
                     logger.warning(
                         "[delivery_fee] could not apply min/max limits: %s", limit_error
                     )
+            original_delivery_fee = delivery_fee
+
+            # Delivery bonus (percentage off).
+            if delivery_discount_percentage is not None and delivery_discount_percentage > 0:
+                discount_amount = (
+                    Decimal(delivery_discount_percentage) / Decimal('100')) * Decimal(delivery_fee)
+                delivery_fee = max(Decimal('0.00'), Decimal(delivery_fee) - discount_amount)
 
             if promo_code and delivery_fee > 0:
                 distance_km = 0.0
@@ -709,6 +723,14 @@ class Vendor(models.Model):
                 delivery_fee = Decimal(delivery_fee) - \
                     Decimal(str(promo_info["discount_amount"]))
                 delivery_fee = max(Decimal('0.00'), delivery_fee)
+
+            # Free delivery means nothing to pay: no service fee either.
+            bonus_applied = (
+                (delivery_discount_percentage is not None and delivery_discount_percentage > 0)
+                or (promo_info["is_applied"] and promo_info["affects_delivery"])
+            )
+            if bonus_applied and delivery_fee <= 0:
+                service_fee = Decimal('0.00')
 
             total_fee = delivery_fee + service_fee
             if promo_info["is_applied"] and not promo_info["affects_delivery"]:
