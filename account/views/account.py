@@ -690,14 +690,11 @@ class MyVirtualAccountNumberView(generics.GenericAPIView):
         if not user.email or user.email == '':
             return bad_request_response(message='Set your email to proceed.')
 
-        full_name = user.full_name
-        full_name_split = full_name.split(' ')
-        if len(full_name_split) > 1:
-            first_name = full_name_split[0]
-            last_name = full_name_split[1]
-        else:
-            first_name = full_name
-            last_name = ''
+        # First word is the first name; everything after it is kept as the
+        # last name, so "John Michael Doe" no longer loses "Doe".
+        full_name_split = user.full_name.split()
+        first_name = full_name_split[0] if full_name_split else user.full_name
+        last_name = ' '.join(full_name_split[1:])
 
         #  create a virtual customer for the user
         klass = PaystackManager()

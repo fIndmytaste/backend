@@ -59,6 +59,16 @@ class RegistrationNameTests(APITestCase):
         }, format='json')
         self.assertEqual(res.status_code, 200, res.data)
 
+    def test_rider_signup_accepts_three_names(self):
+        res = self.client.post('/api/v1/auth/rider-register/', {
+            'full_name': 'John Michael Doe',
+            'phone_number': '08012345679',
+            'email': 'three.rider@example.com',
+            'password': 'Passw0rd!',
+        }, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(User.objects.get(email='three.rider@example.com').full_name, 'John Michael Doe')
+
 
 @override_settings(CACHES=LOCMEM)
 class PhoneVerificationTests(APITestCase):
