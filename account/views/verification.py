@@ -38,7 +38,7 @@ from account.models import User, VerificationCode
 from account.serializers import UserSerializer
 from helpers.app_scope import check_app_access, get_app_client
 from helpers.response.response_format import bad_request_response, success_response
-from helpers.termii import TermiiError, normalize_nigerian_phone, send_sms
+from helpers.termii import TermiiError, normalize_nigerian_phone, send_sms, send_voice_code
 from helpers.termii import is_configured as is_sms_configured
 from helpers.tokens import TokenManager
 
@@ -59,6 +59,28 @@ REVIEW_ACCOUNT_EMAILS = {
 }
 REVIEW_ACCOUNT_CODE = '123456'
 
+# "Call me instead": calls cost more than SMS, and the resend endpoints work
+# without signing in, so calls get their own, tighter limit per account.
+VOICE_CODE_RESEND_SECONDS = 60
+VOICE_CODE_MAX_PER_HOUR = 3
+
+
+def voice_call_blocked(user):
+    """Reason a code call can't be placed for [user] right now, or None."""
+    if not is_sms_configured():
+        return 'Calls are not available right now.'
+    if cache.get(f'voice_code_cooldown:{user.id}'):
+        return 'Please wait a minute before asking for another call.'
+    if cache.get(f'voice_code_hourly:{user.id}', 0) >= VOICE_CODE_MAX_PER_HOUR:
+        return 'Too many calls requested. Please try again in an hour.'
+    return None
+
+
+def record_voice_call(user):
+    cache.set(f'voice_code_cooldown:{user.id}', True, VOICE_CODE_RESEND_SECONDS)
+    hourly_key = f'voice_code_hourly:{user.id}'
+    cache.set(hourly_key, cache.get(hourly_key, 0) + 1, 60 * 60)
+
 
 def phone_verification_required():
     # Never block anyone on an SMS code that cannot be sent: the flag only
@@ -73,7 +95,7 @@ def mask_phone(international):
     return f"{local[:4]}•••{local[-4:]}" if len(local) >= 8 else local
 
 
-def deliver_verification_code(user, code_obj, purpose='login', phone=None):
+def deliver_verification_code(user, code_obj, purpose='login', phone=None, voice=False):
     """
     Send a sign-up or sign-in code, by SMS when phone verification is on,
     otherwise (or if the SMS fails) by email.
@@ -84,8 +106,11 @@ def deliver_verification_code(user, code_obj, purpose='login', phone=None):
     * Sign-in (purpose='login'): SMS only to an already *verified* number;
       an unverified number may be wrong, so those users still get email.
 
+    With [voice] (the app's "Call me instead"), the same number is phoned
+    and the code read out, for networks that never deliver our SMS.
+
     Review/QA accounts always use email (their fixed codes).
-    Returns {'channel': 'sms'|'email', 'destination': masked target}.
+    Returns {'channel': 'sms'|'voice'|'email', 'destination': masked target}.
     """
     from helpers.email import emailService
 
@@ -96,6 +121,16 @@ def deliver_verification_code(user, code_obj, purpose='login', phone=None):
             target = normalize_nigerian_phone(phone or user.phone_number)
         elif user.phone_verified:
             target = normalize_nigerian_phone(user.phone_number)
+
+    if target and voice:
+        try:
+            send_voice_code(target, code_obj.code)
+            code_obj.target = target
+            code_obj.save(update_fields=['target', 'updated_at'])
+            record_voice_call(user)
+            return {'channel': 'voice', 'destination': mask_phone(target)}
+        except TermiiError as error:
+            logger.warning('Code call to user %s failed, sending SMS instead: %s', user.id, error)
 
     if target:
         try:
@@ -125,6 +160,8 @@ def deliver_verification_code(user, code_obj, purpose='login', phone=None):
 
 
 def code_sent_message(delivery, verb='sent'):
+    if delivery['channel'] == 'voice':
+        return f"We're calling {delivery['destination']} now to read out your code."
     if delivery['channel'] == 'sms':
         return f"A verification code has been {verb} to your phone ({delivery['destination']})."
     return f"A verification code has been {verb} to your email."
@@ -167,8 +204,15 @@ class PhoneOTPSendView(generics.GenericAPIView):
             return bad_request_response(
                 message='Too many codes requested. Please try again in an hour.')
 
+        voice = request.data.get('channel') == 'voice'
+        if voice:
+            blocked = voice_call_blocked(user)
+            if blocked:
+                return bad_request_response(message=blocked)
+
         is_review_account = user.email.lower() in REVIEW_ACCOUNT_EMAILS
-        code = REVIEW_ACCOUNT_CODE if is_review_account else f'{secrets.randbelow(10**6):06d}'
+        # Never starts with 0, so it can also be read out by phone.
+        code = REVIEW_ACCOUNT_CODE if is_review_account else str(100000 + secrets.randbelow(900000))
 
         VerificationCode.objects.filter(user=user, verification_type='phone').delete()
         VerificationCode.objects.create(
@@ -177,11 +221,15 @@ class PhoneOTPSendView(generics.GenericAPIView):
 
         if not is_review_account:
             try:
-                send_sms(
-                    target,
-                    f'Your Find My Taste verification code is {code}. '
-                    f'It expires in {PHONE_CODE_TTL_MINUTES} minutes. Do not share it with anyone.',
-                )
+                if voice:
+                    send_voice_code(target, code)
+                    record_voice_call(user)
+                else:
+                    send_sms(
+                        target,
+                        f'Your Find My Taste verification code is {code}. '
+                        f'It expires in {PHONE_CODE_TTL_MINUTES} minutes. Do not share it with anyone.',
+                    )
             except TermiiError as error:
                 VerificationCode.objects.filter(user=user, verification_type='phone').delete()
                 return bad_request_response(message=str(error))
@@ -190,8 +238,10 @@ class PhoneOTPSendView(generics.GenericAPIView):
         cache.set(hourly_key, sent_this_hour + 1, 60 * 60)
 
         return success_response(
-            message='A verification code has been sent to your phone.',
+            message=(f"We're calling {mask_phone(target)} now to read out your code."
+                     if voice else 'A verification code has been sent to your phone.'),
             data={
+                'channel': 'voice' if voice else 'sms',
                 'phone_number': local_phone_format(target),
                 'expires_in_minutes': PHONE_CODE_TTL_MINUTES,
                 'resend_after_seconds': PHONE_CODE_RESEND_SECONDS,

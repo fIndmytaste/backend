@@ -687,6 +687,72 @@ class GoogleSignInTests(APITestCase):
 
 @override_settings(CACHES=LOCMEM)
 @patch.dict('os.environ', {'PHONE_VERIFICATION_REQUIRED': 'true', 'TERMII_API_KEY': 'test-key'})
+class VoiceCodeTests(APITestCase):
+    """'Call me instead' when a network never delivers our SMS."""
+
+    def setUp(self):
+        cache.clear()
+
+    @patch('account.views.verification.send_voice_code', return_value='v1')
+    @patch('account.views.verification.send_sms', return_value='m1')
+    def test_signup_code_by_call_and_rate_limited(self, send_sms, send_voice):
+        self.client.post('/api/v1/auth/rider-register/', {
+            'full_name': 'John Doe', 'phone_number': '0906 123 4567',
+            'email': 'caller@example.com', 'password': 'Passw0rd!',
+        }, format='json')
+        res = self.client.post('/api/v1/auth/resend-otp/',
+                               {'email': 'caller@example.com', 'channel': 'voice'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['data']['otp_channel'], 'voice')
+        self.assertIn("calling", res.data['message'])
+        to, code = send_voice.call_args[0]
+        self.assertEqual(to, '2349061234567')
+
+        user = User.objects.get(email='caller@example.com')
+        latest = VerificationCode.objects.filter(
+            user=user, verification_type='email').order_by('created_at').last()
+        self.assertEqual(code, latest.code)
+        res = self.client.post('/api/v1/auth/verify/', {'email': user.email, 'code': code}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+
+        # A second call straight away is refused (calls cost more than SMS).
+        res = self.client.post('/api/v1/auth/resend-otp-login/',
+                               {'email': 'caller@example.com', 'channel': 'voice'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(send_voice.call_count, 1)
+
+    @patch('account.views.verification.send_voice_code', return_value='v1')
+    def test_phone_screen_call(self, send_voice):
+        user = User.objects.create_user(email='ph@example.com', password='pw', role='rider',
+                                        phone_number='09061234567')
+        self.client.force_authenticate(user)
+        res = self.client.post('/api/v1/auth/phone/send-code/', {'channel': 'voice'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['data']['channel'], 'voice')
+        to, code = send_voice.call_args[0]
+        self.assertEqual(to, '2349061234567')
+        self.assertFalse(code.startswith('0'))
+        self.assertEqual(len(code), 6)
+
+    def test_codes_starting_with_zero_are_not_read_out(self):
+        from helpers.termii import TermiiError, send_voice_code
+        with self.assertRaises(TermiiError):
+            send_voice_code('2349061234567', '012345')
+
+    @patch('helpers.termii.requests.post')
+    def test_termii_voice_request(self, post):
+        from helpers.termii import send_voice_code
+        post.return_value.ok = True
+        post.return_value.json.return_value = {'code': 'ok', 'message_id': 'x1'}
+        self.assertEqual(send_voice_code('2349061234567', '4821'), 'x1')
+        url = post.call_args[0][0]
+        self.assertTrue(url.endswith('/api/sms/otp/send/voice'))
+        self.assertEqual(post.call_args[1]['json']['code'], 4821)
+        self.assertEqual(post.call_args[1]['json']['phone_number'], '2349061234567')
+
+
+@override_settings(CACHES=LOCMEM)
+@patch.dict('os.environ', {'PHONE_VERIFICATION_REQUIRED': 'true', 'TERMII_API_KEY': 'test-key'})
 class SmsInsteadOfEmailTests(APITestCase):
     @patch('account.views.verification.send_sms', return_value='m1')
     def test_signup_code_goes_by_sms_and_verifies_phone(self, send_sms):

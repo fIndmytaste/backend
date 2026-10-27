@@ -96,3 +96,44 @@ def send_sms(to, message):
         to, response.status_code, body or response.text[:300],
     )
     raise TermiiError('Could not send the SMS right now. Please try again.')
+
+
+def send_voice_code(to, code):
+    """
+    Phone [to] and read out [code] (Termii Voice Call API).
+
+    The fallback when an SMS never arrives: some networks reject our sender
+    ID (Termii swaps in another one and the network drops it), but a call
+    always gets through. Codes must be 4-8 digits and must not start with 0
+    (Termii takes the code as a number). Raises TermiiError on failure.
+    """
+    api_key = config('TERMII_API_KEY', default='')
+    if not api_key:
+        raise TermiiError('Calls are not configured yet. Please try again later.')
+    code = str(code)
+    if not (code.isdigit() and 4 <= len(code) <= 8 and not code.startswith('0')):
+        raise TermiiError('This code cannot be read out by phone. Request a new code.')
+
+    base_url = config('TERMII_BASE_URL', default=DEFAULT_BASE_URL).rstrip('/')
+    payload = {'api_key': api_key, 'phone_number': to, 'code': int(code)}
+    try:
+        response = requests.post(
+            f'{base_url}/api/sms/otp/send/voice', json=payload, timeout=15)
+    except requests.RequestException as error:
+        logger.error('Termii voice request failed: %s', error)
+        raise TermiiError('Could not call you right now. Please try again.') from error
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if response.ok and (body.get('code') == 'ok' or body.get('message_id') or body.get('pinId')):
+        return body.get('message_id') or body.get('pinId')
+
+    logger.error(
+        'Termii rejected voice code to %s (%s): %s',
+        to, response.status_code, body or response.text[:300],
+    )
+    raise TermiiError('Could not call you right now. Please try again.')
+

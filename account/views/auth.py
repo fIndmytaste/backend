@@ -10,7 +10,7 @@ from helpers.app_scope import check_app_access
 from helpers.response.response_format import bad_request_response, success_response
 from helpers.tokens import TokenManager
 from helpers.email import emailService
-from account.views.verification import code_sent_message, deliver_verification_code
+from account.views.verification import code_sent_message, deliver_verification_code, voice_call_blocked
 from helpers.push_notification import send_login_notification
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -530,6 +530,14 @@ class ResendOTPAPIView(generics.GenericAPIView):
         if user.is_verified:
             return bad_request_response(message="User is already verified.")
 
+        # "Call me instead" from the code screen, for numbers whose network
+        # never delivers our SMS.
+        voice = request.data.get('channel') == 'voice'
+        if voice:
+            blocked = voice_call_blocked(user)
+            if blocked:
+                return bad_request_response(message=blocked)
+
         # Generate a new verification code
         code_obj = VerificationCode.objects.create(
             user=user,
@@ -537,7 +545,7 @@ class ResendOTPAPIView(generics.GenericAPIView):
         )
 
         delivery = deliver_verification_code(
-            user, code_obj, purpose='register', phone=user.phone_number)
+            user, code_obj, purpose='register', phone=user.phone_number, voice=voice)
 
         return success_response(
             message='Verification code has been resent to your email.'
@@ -569,13 +577,19 @@ class ResendOTPLoginAPIView(generics.GenericAPIView):
         except User.DoesNotExist:
             return bad_request_response(message="User with this email does not exist.")
 
+        voice = request.data.get('channel') == 'voice'
+        if voice:
+            blocked = voice_call_blocked(user)
+            if blocked:
+                return bad_request_response(message=blocked)
+
         # Generate a new verification code
         code_obj = VerificationCode.objects.create(
             user=user,
             verification_type='login'
         )
 
-        delivery = deliver_verification_code(user, code_obj, purpose='login')
+        delivery = deliver_verification_code(user, code_obj, purpose='login', voice=voice)
 
         return success_response(
             message='Verification code has been resent to your email.'
