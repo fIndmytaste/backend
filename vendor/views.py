@@ -513,6 +513,17 @@ class ProductsListCreateView(generics.GenericAPIView):
         return success_response(response_serializer.data, status_code=status.HTTP_201_CREATED)
 
 
+# Day-to-day availability, which a locked store must still control itself:
+# marking an item unavailable/sold out (or back) is not a catalogue change.
+AVAILABILITY_FIELDS = {'is_active', 'stock'}
+
+
+def _is_availability_change(request):
+    """True when the request only touches availability, with no files."""
+    keys = set(request.data.keys())
+    return bool(keys) and keys <= AVAILABILITY_FIELDS and not request.FILES
+
+
 def _vendor_product_or_error(request, product_id, *, for_modification):
     """Resolve a product the requesting vendor is actually allowed to touch.
 
@@ -629,8 +640,12 @@ class ProductGetUpdateDeleteView(generics.GenericAPIView):
         responses={200: ProductSerializer}
     )
     def patch(self, request, product_id):
+        # The product lock freezes the catalogue (names, prices, deleting),
+        # not availability: a locked store was told to "contact support"
+        # just to mark an item unavailable.
         product, error = _vendor_product_or_error(
-            request, product_id, for_modification=True,
+            request, product_id,
+            for_modification=not _is_availability_change(request),
         )
         if error:
             return error

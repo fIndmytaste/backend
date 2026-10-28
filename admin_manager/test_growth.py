@@ -333,6 +333,42 @@ class DeliveryBonusTests(APITestCase):
         self.assertAlmostEqual(float(by_vendor['service_fee']), 150)
 
 
+class LockedStoreAvailabilityTests(APITestCase):
+    """A store with locked products can still mark items (un)available."""
+
+    def setUp(self):
+        from product.models import Product, VendorCategory
+        self.vendor = make_vendor(product_creation_locked=True)
+        self.vendor.user.is_verified = True
+        self.vendor.user.save()
+        menu = VendorCategory.objects.create(vendor=self.vendor, name='Menu')
+        self.product = Product.objects.create(
+            vendor=self.vendor, name='Amala', price=Decimal('1500'), category=menu,
+            stock=10, is_active=True)
+        self.client.force_authenticate(self.vendor.user)
+        self.url = f'/api/v1/vendors/product/{self.product.id}/'
+
+    def test_availability_toggle_allowed(self):
+        res = self.client.patch(self.url, {'is_active': False}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        self.product.refresh_from_db()
+        self.assertFalse(self.product.is_active)
+
+        res = self.client.patch(self.url, {'is_active': True}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        self.product.refresh_from_db()
+        self.assertTrue(self.product.is_active)
+
+    def test_other_changes_still_locked(self):
+        res = self.client.patch(self.url, {'price': '900'}, format='json')
+        self.assertEqual(res.status_code, 403)
+        res = self.client.patch(self.url, {'is_active': False, 'price': '900'}, format='json')
+        self.assertEqual(res.status_code, 403)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.price, Decimal('1500'))
+        self.assertTrue(self.product.is_active)
+
+
 class RiderRewardTests(TestCase):
     def setUp(self):
         self.vendor = make_vendor()
