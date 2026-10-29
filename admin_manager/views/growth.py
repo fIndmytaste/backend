@@ -220,6 +220,50 @@ class AdminVendorAutoPayoutView(generics.GenericAPIView):
         )
 
 
+class AdminVendorPictureView(generics.GenericAPIView):
+    """
+    POST vendor/<id>/picture/  multipart {"image": <file>}
+
+    Set a vendor's store picture (the one customers see and the vendor app
+    shows on its profile) from the admin dashboard. Stored the same way as
+    the vendor app's own upload.
+    """
+
+    permission_classes = [page_permission('vendor')]
+
+    def post(self, request, vendor_id):
+        import os
+        import uuid
+        from helpers.backblaze import upload_to_backblaze
+        from vendor.serializers import VendorImageUploadSerializer
+
+        vendor = Vendor.objects.filter(id=vendor_id).first()
+        if vendor is None:
+            return bad_request_response(message="Vendor not found.", status_code=404)
+
+        serializer = VendorImageUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return bad_request_response(message=_first_error(serializer.errors))
+        image = serializer.validated_data['image']
+
+        extension = os.path.splitext(image.name)[1].lower() or '.jpg'
+        file_name = f"vendor_thumbnails/{vendor.id}_{uuid.uuid4()}{extension}"
+        try:
+            url = (upload_to_backblaze(image, file_name) or {}).get('downloadUrl')
+        except Exception as error:
+            logger.error("Admin picture upload for vendor %s failed: %s", vendor.id, error)
+            url = None
+        if not url:
+            return bad_request_response(
+                message="The picture could not be uploaded. Please try again.", status_code=502)
+
+        vendor.thumbnail_url = url
+        vendor.save(update_fields=['thumbnail_url', 'updated_at'])
+        logger.info("Admin %s set the picture for vendor %s", request.user.id, vendor.id)
+        return success_response(
+            message="Store picture updated.", data={'thumbnail_url': url})
+
+
 class AdminAutoPayoutRequestListView(generics.GenericAPIView):
     """GET auto-payout-requests/  vendors who asked for automatic payouts."""
 

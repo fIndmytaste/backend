@@ -369,6 +369,46 @@ class LockedStoreAvailabilityTests(APITestCase):
         self.assertTrue(self.product.is_active)
 
 
+class AdminVendorPictureTests(APITestCase):
+    def _image(self, name='store.png', content_type='image/png'):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        buf = io.BytesIO()
+        Image.new('RGB', (4, 4), 'green').save(buf, format='PNG')
+        return SimpleUploadedFile(name, buf.getvalue(), content_type=content_type)
+
+    @patch('helpers.backblaze.upload_to_backblaze',
+           return_value={'downloadUrl': 'https://files.example.com/store.png'})
+    def test_admin_sets_store_picture(self, upload):
+        vendor = make_vendor()
+        admin = User.objects.create_user(email='boss2@example.com', password='pw', role='admin')
+        self.client.force_authenticate(admin)
+        res = self.client.post(f'/api/v1/admin-manager/vendor/{vendor.id}/picture/',
+                               {'image': self._image()}, format='multipart')
+        self.assertEqual(res.status_code, 200, res.content)
+        vendor.refresh_from_db()
+        self.assertEqual(vendor.thumbnail_url, 'https://files.example.com/store.png')
+        self.assertTrue(upload.call_args[0][1].startswith(f'vendor_thumbnails/{vendor.id}_'))
+
+    @patch('helpers.backblaze.upload_to_backblaze')
+    def test_only_admins_and_valid_images(self, upload):
+        vendor = make_vendor()
+        self.client.force_authenticate(vendor.user)
+        res = self.client.post(f'/api/v1/admin-manager/vendor/{vendor.id}/picture/',
+                               {'image': self._image()}, format='multipart')
+        self.assertEqual(res.status_code, 403)
+
+        admin = User.objects.create_user(email='boss3@example.com', password='pw', role='admin')
+        self.client.force_authenticate(admin)
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        res = self.client.post(f'/api/v1/admin-manager/vendor/{vendor.id}/picture/',
+                               {'image': SimpleUploadedFile('a.txt', b'hello', content_type='text/plain')},
+                               format='multipart')
+        self.assertEqual(res.status_code, 400)
+        upload.assert_not_called()
+
+
 class RiderRewardTests(TestCase):
     def setUp(self):
         self.vendor = make_vendor()

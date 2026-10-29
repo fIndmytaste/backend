@@ -85,6 +85,7 @@ urlpatterns = [
     path('vendor/<uuid:vendor_id>/', admin_vendor_view.AdminVendorDetailView.as_view(), name='admin_product_view-vendor_detail'),
     path('vendor/<uuid:vendor_id>/products/', admin_vendor_view.AdminVendorProductListView.as_view(), name='admin_product_view-vendor_products'),
     path('vendor/<uuid:vendor_id>/overview/', admin_vendor_view.AdminVendorOverviewView.as_view(), name='admin_product_view-vendor_overview'),
+    path('vendor/<uuid:vendor_id>/picture/', growth_view.AdminVendorPictureView.as_view(), name='admin-vendor-picture'),
     path('vendor/<uuid:vendor_id>/suspend/', admin_vendor_view.AdminVendorSuspendView.as_view(), name='admin_product_view-vendor_suspend'),
     path('vendor/<uuid:vendor_id>/delete/', admin_vendor_view.AdminVendorDeleteView.as_view(), name='admin_product_view-vendor_delete'),
     path('vendor/<uuid:vendor_id>/ratings/', admin_vendor_view.AdminVendorRatingListView.as_view(), name='admin_vendor-ratings-list'),
